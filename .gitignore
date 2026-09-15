@@ -1,0 +1,26 @@
+# Unreal Engine regenerated artifacts (never commit)
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+
+# Template download cache (the 920 MB zip is not project source)
+downloaded/
+
+# Visual Studio / IDE
+.vs/
+.vscode/
+*.sln
+*.slnx
+*.suo
+*.user
+*.opensdf
+*.sdf
+*.opendb
+*.db
+
+# OS junk
+Thumbs.db
+.DS_Store
+desktop.ini
