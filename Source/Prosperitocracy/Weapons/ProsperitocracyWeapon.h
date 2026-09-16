@@ -14,7 +14,9 @@ class AProsperitocracyStatHostActor;
 class APawn;
 class UGameplayEffect;
 class USkeletalMeshComponent;
+class UProsperitocracyLoadoutComponent;
 class UProsperitocracyStatTable;
+struct FProsperitocracyWeaponAmmo;
 
 /**
  * AProsperitocracyWeapon
@@ -49,15 +51,16 @@ public:
 	AProsperitocracyWeapon();
 
 	/**
-	 * Take the gun's place in the world: which slot it is, its numbers, and what its shot applies.
+	 * Take the gun's place in the world: which slot it is, its numbers, what its shot applies, and
+	 * where its ammo lives.
 	 *
 	 * Called by the owner's loadout component, which is the only thing that can say which slot this
-	 * gun is — the rig that created it never does. The numbers and the effect its shot applies arrive
-	 * together, because they are one decision. Callable again whenever the loadout changes what this
-	 * body carries (a body can be two guns: the pistol's body is also the SMG's).
+	 * gun is — the rig that created it never does. All of it arrives together, because it is one
+	 * decision. Callable again whenever the loadout changes what this body carries (a body can be two
+	 * guns: the pistol's body is also the SMG's).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
-	bool ApplyLoadoutEntry(const FGameplayTag& InSlot, UProsperitocracyStatTable* InStatBlock, TSubclassOf<UGameplayEffect> InDamageEffectClass, APawn* InOwningPawn = nullptr);
+	bool ApplyLoadoutEntry(const FGameplayTag& InSlot, UProsperitocracyStatTable* InStatBlock, TSubclassOf<UGameplayEffect> InDamageEffectClass, UProsperitocracyLoadoutComponent* InOwnerLoadout, APawn* InOwningPawn = nullptr);
 
 	/**
 	 * Make sure this gun has its numbers, and return whether it does.
@@ -82,7 +85,7 @@ public:
 
 	/** True when the magazine is empty — what decides their dry-fire branch, not a refused cadence. */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
-	bool IsMagazineEmpty() const { return MagazineAmmo <= 0; }
+	bool IsMagazineEmpty() const;
 
 	/**
 	 * Reload = a MAG SWAP, not a top-up: whatever is left in the magazine is wasted, never returned
@@ -135,11 +138,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
 	float GetSecondsBetweenShots() const;
 
+	/** Rounds in the magazine right now. Read from the owner's ammo store for this gun's slot. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
-	int32 GetMagazineAmmo() const { return MagazineAmmo; }
+	int32 GetMagazineAmmo() const;
 
+	/** Rounds in this slot's spare magazines. Read from the owner's ammo store. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
-	int32 GetSpareAmmo() const { return SpareAmmo; }
+	int32 GetSpareAmmo() const;
 
 	/** The aim circle's current drift, in degrees. The bullet and the reticle add the SAME value. */
 	FVector2D GetAimDriftDegrees() const { return AimDriftDegrees; }
@@ -179,6 +184,15 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "Prosperitocracy|Weapon")
 	TObjectPtr<AProsperitocracyStatHostActor> StatHost;
 
+	/**
+	 * The owner's loadout, which is where this gun's AMMO lives — one store per slot, on the carrier.
+	 *
+	 * Nothing about this gun's ammo is kept on the gun: the rig re-creates gun actors, and a magazine
+	 * that lived here would come back full every time. Handed over when the loadout dresses the gun.
+	 */
+	UPROPERTY(Transient)
+	TObjectPtr<UProsperitocracyLoadoutComponent> OwnerLoadout;
+
 	//~ Runtime state.
 	UPROPERTY(Transient) TObjectPtr<APawn> OwningPawn;
 
@@ -191,8 +205,6 @@ protected:
 	/** One warning per gun, not one per shot, for why the loadout could not dress it. */
 	bool bDressFailureLogged = false;
 
-	int32 MagazineAmmo = 0;
-	int32 SpareAmmo = 0;
 	float LastShotTime = -BIG_NUMBER;
 	FVector2D AimDriftDegrees = FVector2D::ZeroVector;
 
@@ -201,6 +213,12 @@ private:
 
 	/** One magazine's worth of rounds, from this gun's own MagSize stat. */
 	int32 MagazineSize() const;
+
+	/** How many magazines this gun carries, from its own Capacity stat. */
+	int32 MagazineCapacity() const;
+
+	/** This gun's ammo in its slot's store, or null when undressed or the slot holds none yet. */
+	const FProsperitocracyWeaponAmmo* FindAmmo() const;
 
 	/** Say once, per gun, why the loadout could not dress it — each reason names a different fix. */
 	void LogDressFailureOnce(EProsperitocracyWeaponDressResult Result, const AActor* RigOwner);

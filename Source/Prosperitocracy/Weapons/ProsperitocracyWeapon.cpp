@@ -64,7 +64,7 @@ bool AProsperitocracyWeapon::EnsureInitialized()
 
 	// What am I? The loadout that owns this rig's guns answers. The gun does not look itself up, and
 	// cannot: the rig created it without saying which slot it is, and one body can be two guns.
-	const UProsperitocracyLoadoutComponent* LoadoutComponent = RigOwner->FindComponentByClass<UProsperitocracyLoadoutComponent>();
+	UProsperitocracyLoadoutComponent* LoadoutComponent = RigOwner->FindComponentByClass<UProsperitocracyLoadoutComponent>();
 	if (!LoadoutComponent)
 	{
 		DressResult = EProsperitocracyWeaponDressResult::NoLoadout;
@@ -136,12 +136,17 @@ void AProsperitocracyWeapon::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
-bool AProsperitocracyWeapon::ApplyLoadoutEntry(const FGameplayTag& InSlot, UProsperitocracyStatTable* InStatBlock, TSubclassOf<UGameplayEffect> InDamageEffectClass, APawn* InOwningPawn)
+bool AProsperitocracyWeapon::ApplyLoadoutEntry(const FGameplayTag& InSlot, UProsperitocracyStatTable* InStatBlock, TSubclassOf<UGameplayEffect> InDamageEffectClass, UProsperitocracyLoadoutComponent* InOwnerLoadout, APawn* InOwningPawn)
 {
-	// Which slot this gun is, its numbers, and what a shot applies are one decision, so they arrive
-	// together — handed over by the loadout, which is the only thing that can say which slot this is.
+	// Which slot this gun is, its numbers, what a shot applies, and where its ammo lives are one
+	// decision, so they arrive together — handed over by the loadout, which is the only thing that
+	// can say which slot this is.
 	Slot = InSlot;
 	DamageEffectClass = InDamageEffectClass;
+	if (InOwnerLoadout)
+	{
+		OwnerLoadout = InOwnerLoadout;
+	}
 
 	if (InStatBlock)
 	{
@@ -162,6 +167,14 @@ bool AProsperitocracyWeapon::ApplyLoadoutEntry(const FGameplayTag& InSlot, UPros
 		return false;
 	}
 
+	// No loadout means nowhere for this gun's ammo to live, and a gun with no ammo home is not a
+	// working gun. Refuse rather than dress it into a state where it can never fire.
+	if (!OwnerLoadout)
+	{
+		UE_LOG(LogProsperitocracy, Warning, TEXT("[Weapon] %s was handed its numbers with no loadout to keep its ammo in — it cannot fire."), *GetName());
+		return false;
+	}
+
 	// The gun's GAS home. Spawned once, owned by the pawn, and fed the block's (stat, base) pairs —
 	// the same act as the character's health component feeding Health.
 	if (!StatHost)
@@ -177,17 +190,16 @@ bool AProsperitocracyWeapon::ApplyLoadoutEntry(const FGameplayTag& InSlot, UPros
 		StatHost->InitializeFromStatBlock(StatBlock);
 	}
 
-	// Ammo. The loaded magazine is ONE OF the Capacity magazines, so the spare pool is
-	// (Capacity x MagSize) minus the one in the gun. More magazines never makes a magazine bigger.
-	const int32 MagSize = MagazineSize();
-	const int32 Capacity = FMath::Max(0, FMath::RoundToInt(GetWeaponStat(EProsperitocracyStat::Capacity)));
-	MagazineAmmo = MagSize;
-	SpareAmmo = FMath::Max(0, Capacity * MagSize - MagSize);
+	// Ammo, in the owner's store for this slot. This first ask is what fills the magazine: the loaded
+	// magazine is ONE OF the Capacity magazines, so the spare pool is (Capacity x MagSize) minus the
+	// one in the gun — and more magazines never makes a magazine bigger.
+	OwnerLoadout->GetOrCreateAmmoForSlot(Slot, MagazineSize(), MagazineCapacity());
+
 	LastShotTime = -BIG_NUMBER;
 	bInitialized = true;
 
 	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s ready — slot %s | block %s | mag %d spare %d | rate %.2f/s | %s"),
-		*GetName(), *Slot.ToString(), *GetNameSafe(StatBlock), MagazineAmmo, SpareAmmo,
+		*GetName(), *Slot.ToString(), *GetNameSafe(StatBlock), GetMagazineAmmo(), GetSpareAmmo(),
 		GetSecondsBetweenShots() > 0.0f ? (1.0f / GetSecondsBetweenShots()) : 0.0f,
 		IsFullAuto() ? TEXT("FullAuto") : TEXT("SemiAuto"));
 
@@ -197,7 +209,7 @@ bool AProsperitocracyWeapon::ApplyLoadoutEntry(const FGameplayTag& InSlot, UPros
 bool AProsperitocracyWeapon::TryConsumeRound()
 {
 	// A gun that has not met its loadout yet has no magazine; the answer is no.
-	if (!EnsureInitialized())
+	if (!EnsureInitialized() || !OwnerLoadout)
 	{
 		return false;
 	}
@@ -215,27 +227,34 @@ bool AProsperitocracyWeapon::TryConsumeRound()
 		return false;
 	}
 
-	if (MagazineAmmo <= 0)
+	FProsperitocracyWeaponAmmo& Ammo = OwnerLoadout->GetOrCreateAmmoForSlot(Slot, MagazineSize(), MagazineCapacity());
+	if (Ammo.Magazine <= 0)
 	{
 		// Empty. The gun's own graph plays its dry-fire sound and montage.
 		LastShotTime = World->GetTimeSeconds();
 		return false;
 	}
 
-	--MagazineAmmo;
+	--Ammo.Magazine;
 	LastShotTime = World->GetTimeSeconds();
 	return true;
 }
 
 bool AProsperitocracyWeapon::ReloadFromStats()
 {
-	if (!EnsureInitialized())
+	if (!EnsureInitialized() || !OwnerLoadout)
 	{
 		return false;
 	}
 
 	const int32 MagSize = MagazineSize();
-	if (SpareAmmo <= 0 || MagSize <= 0)
+	if (MagSize <= 0)
+	{
+		return false;
+	}
+
+	FProsperitocracyWeaponAmmo& Ammo = OwnerLoadout->GetOrCreateAmmoForSlot(Slot, MagSize, MagazineCapacity());
+	if (Ammo.Spare <= 0)
 	{
 		return false;
 	}
@@ -243,12 +262,40 @@ bool AProsperitocracyWeapon::ReloadFromStats()
 	// A mag swap, not a top-up: the rounds left in this magazine are thrown away. They are NOT
 	// returned to the pool (Design/combat.md), and a partial magazine is loaded when the pool has
 	// less than a full one left.
-	const int32 Loaded = FMath::Min(MagSize, SpareAmmo);
-	MagazineAmmo = Loaded;
-	SpareAmmo -= Loaded;
+	const int32 Loaded = FMath::Min(MagSize, Ammo.Spare);
+	Ammo.Magazine = Loaded;
+	Ammo.Spare -= Loaded;
 
-	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s reloaded — mag %d spare %d"), *GetName(), MagazineAmmo, SpareAmmo);
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s (%s) reloaded — mag %d spare %d"),
+		*GetName(), *Slot.ToString(), Ammo.Magazine, Ammo.Spare);
 	return true;
+}
+
+bool AProsperitocracyWeapon::IsMagazineEmpty() const
+{
+	// Undressed means no magazine yet, which is empty as far as the gun's own dry-fire branch is
+	// concerned — the same answer the gun gave when the magazine count lived on it.
+	const FProsperitocracyWeaponAmmo* Ammo = FindAmmo();
+	return !Ammo || Ammo->Magazine <= 0;
+}
+
+int32 AProsperitocracyWeapon::GetMagazineAmmo() const
+{
+	const FProsperitocracyWeaponAmmo* Ammo = FindAmmo();
+	return Ammo ? Ammo->Magazine : 0;
+}
+
+int32 AProsperitocracyWeapon::GetSpareAmmo() const
+{
+	const FProsperitocracyWeaponAmmo* Ammo = FindAmmo();
+	return Ammo ? Ammo->Spare : 0;
+}
+
+const FProsperitocracyWeaponAmmo* AProsperitocracyWeapon::FindAmmo() const
+{
+	// The ammo is the slot's, not the gun's: read it out of the owner's store through the one key
+	// this gun has — the slot it was told it is.
+	return (OwnerLoadout && Slot.IsValid()) ? OwnerLoadout->FindAmmoForSlot(Slot) : nullptr;
 }
 
 USkeletalMeshComponent* AProsperitocracyWeapon::GetWeaponMesh() const
@@ -281,6 +328,11 @@ float AProsperitocracyWeapon::GetSecondsBetweenShots() const
 int32 AProsperitocracyWeapon::MagazineSize() const
 {
 	return FMath::Max(0, FMath::RoundToInt(GetWeaponStat(EProsperitocracyStat::MagSize)));
+}
+
+int32 AProsperitocracyWeapon::MagazineCapacity() const
+{
+	return FMath::Max(0, FMath::RoundToInt(GetWeaponStat(EProsperitocracyStat::Capacity)));
 }
 
 bool AProsperitocracyWeapon::CanFireNow() const

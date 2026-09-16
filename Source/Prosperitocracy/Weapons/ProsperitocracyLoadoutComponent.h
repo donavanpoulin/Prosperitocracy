@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "GameplayTagContainer.h"
 #include "Weapons/ProsperitocracyLoadout.h"
 
 #include "ProsperitocracyLoadoutComponent.generated.h"
@@ -12,10 +13,34 @@ class AProsperitocracyWeapon;
 class UGameplayEffect;
 
 /**
+ * The magazine and the spare pool of ONE slot. Runtime state, never authored data.
+ *
+ * The magazine in the gun and the rounds in the pool are the CARRIER's, not the gun actor's: the rig
+ * re-creates gun actors (a slot switch, a level change), and anything kept on the gun dies with it —
+ * a full magazine every time, which is a free reload nobody asked for. Keyed by slot, the pistol's
+ * magazine is the Secondary slot's magazine: it outlives the gun, and it is the same pool if a
+ * different weapon is ever swapped into that slot.
+ */
+USTRUCT(BlueprintType)
+struct FProsperitocracyWeaponAmmo
+{
+	GENERATED_BODY()
+
+	/** Rounds in the magazine that is in the gun right now. */
+	UPROPERTY(BlueprintReadOnly, Category = "Ammo")
+	int32 Magazine = 0;
+
+	/** Rounds in the spare magazines this slot carries. */
+	UPROPERTY(BlueprintReadOnly, Category = "Ammo")
+	int32 Spare = 0;
+};
+
+/**
  * UProsperitocracyLoadoutComponent
  *
- * The character's half of the loadout: it holds what this character carries and answers the one
- * question a gun cannot answer about itself — "which slot am I, and what does this slot carry?".
+ * The character's half of the loadout: it holds what this character carries, and it owns that
+ * carrier's ammo. It answers the one question a gun cannot answer about itself — "which slot am I,
+ * what does this slot carry, and how much is left in it?".
  *
  * The gun does NOT look itself up, and this is the point of the component: the template's rig creates
  * its guns itself and says nothing about which slot they are, so the loadout — which knows every slot
@@ -55,5 +80,24 @@ public:
 	 * different to whoever reads the log — nothing carried for that body, a body carried twice, a
 	 * missing stat block, or a weapon whose own slot tag disagrees with where it is carried.
 	 */
-	EProsperitocracyWeaponDressResult DressGun(AProsperitocracyWeapon* Gun) const;
+	EProsperitocracyWeaponDressResult DressGun(AProsperitocracyWeapon* Gun);
+
+	//~ Ammo — one store per slot, owned here rather than on the gun that fires it.
+
+	/**
+	 * The ammo this slot holds, created from that slot's numbers the first time it is asked for.
+	 *
+	 * The first ask is what fills the magazine: MagSize rounds loaded, and a spare pool of
+	 * (Capacity x MagSize) minus the one already in the gun — the loaded magazine IS one of the
+	 * Capacity magazines. More magazines never makes a magazine bigger.
+	 */
+	FProsperitocracyWeaponAmmo& GetOrCreateAmmoForSlot(const FGameplayTag& Slot, int32 MagazineSize, int32 MagazineCapacity);
+
+	/** The ammo this slot holds as it stands, or null when it holds none yet. Creates nothing. */
+	const FProsperitocracyWeaponAmmo* FindAmmoForSlot(const FGameplayTag& Slot) const;
+
+private:
+	/** One entry per slot this carrier has fired or reloaded, keyed by the slot's tag. */
+	UPROPERTY(Transient)
+	TMap<FGameplayTag, FProsperitocracyWeaponAmmo> AmmoBySlot;
 };

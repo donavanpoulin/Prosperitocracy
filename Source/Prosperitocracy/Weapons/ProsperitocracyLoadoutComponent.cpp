@@ -23,7 +23,7 @@ TSubclassOf<UGameplayEffect> UProsperitocracyLoadoutComponent::GetGunDamageEffec
 	return Loadout ? Loadout->GunDamageEffectClass : nullptr;
 }
 
-EProsperitocracyWeaponDressResult UProsperitocracyLoadoutComponent::DressGun(AProsperitocracyWeapon* Gun) const
+EProsperitocracyWeaponDressResult UProsperitocracyLoadoutComponent::DressGun(AProsperitocracyWeapon* Gun)
 {
 	if (!Gun)
 	{
@@ -59,7 +59,32 @@ EProsperitocracyWeaponDressResult UProsperitocracyLoadoutComponent::DressGun(APr
 		return EProsperitocracyWeaponDressResult::SlotMismatch;
 	}
 
-	return Gun->ApplyLoadoutEntry(Slot, StatBlock, Loadout->GunDamageEffectClass, Cast<APawn>(GetOwner()))
+	// This component goes with the numbers, because it is where the ammo for that slot lives.
+	return Gun->ApplyLoadoutEntry(Slot, StatBlock, Loadout->GunDamageEffectClass, this, Cast<APawn>(GetOwner()))
 		? EProsperitocracyWeaponDressResult::Dressed
 		: EProsperitocracyWeaponDressResult::Undressed;
+}
+
+FProsperitocracyWeaponAmmo& UProsperitocracyLoadoutComponent::GetOrCreateAmmoForSlot(const FGameplayTag& Slot, int32 MagazineSize, int32 MagazineCapacity)
+{
+	// One store per slot. The first ask fills the magazine; every later ask — a gun the rig
+	// re-created, a reload, the readout — is answered by this same store, which is what makes a free
+	// magazine impossible rather than merely unlikely.
+	if (FProsperitocracyWeaponAmmo* Existing = AmmoBySlot.Find(Slot))
+	{
+		return *Existing;
+	}
+
+	const int32 Rounds = FMath::Max(0, MagazineSize);
+	const int32 Magazines = FMath::Max(0, MagazineCapacity);
+
+	FProsperitocracyWeaponAmmo& Ammo = AmmoBySlot.Add(Slot);
+	Ammo.Magazine = Rounds;
+	Ammo.Spare = FMath::Max(0, Magazines * Rounds - Rounds);
+	return Ammo;
+}
+
+const FProsperitocracyWeaponAmmo* UProsperitocracyLoadoutComponent::FindAmmoForSlot(const FGameplayTag& Slot) const
+{
+	return AmmoBySlot.Find(Slot);
 }
