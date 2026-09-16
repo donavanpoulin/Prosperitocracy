@@ -24,6 +24,9 @@ public class Prosperitocracy : ModuleRules
 		// PhysicsCore landed with the ability layer: UPhysicalMaterialWithTags derives from UPhysicalMaterial,
 		// which lives there (Physics/PhysicalMaterialWithTags.h). The linker named it — unresolved
 		// UPhysicalMaterial ctor/dtor/vtable in PhysicalMaterialWithTags.cpp.obj — not a guess.
+		// Niagara landed with the weapon: AProsperitocracyWeapon spawns the template's own muzzle-flash
+		// system per shot (UNiagaraFunctionLibrary / UNiagaraComponent / UNiagaraSystem live there).
+		// The plugin itself is enabled by default in 5.8 and the project already ships Niagara assets.
 		PublicDependencyModuleNames.AddRange(
 			new string[] {
 				"Core",
@@ -32,7 +35,8 @@ public class Prosperitocracy : ModuleRules
 				"PhysicsCore",
 				"GameplayAbilities",
 				"GameplayTasks",
-				"GameplayTags"
+				"GameplayTags",
+				"Niagara"
 			}
 		);
 		PrivateDependencyModuleNames.AddRange(

@@ -11,12 +11,12 @@
 #include "ProsperitocracyStatTable.generated.h"
 
 struct FProsperitocracyStatTableEntry;
-// CUT 2026-09-16 (port of box 3.2): `class UProsperitocracyEquipmentDefinition;` stood here.
-// The WeaponBody property below needed it, and UHT will not accept a forward declaration for a
-// class used in a UPROPERTY — it fails the build with "Unable to find 'class' with name
-// 'UProsperitocracyEquipmentDefinition'". Porting the real class pulls in UProsperitocracyAbilitySet
-// and UProsperitocracyEquipmentInstance, i.e. the ability/equipment stack. The property is cut
-// instead, and BOTH the class and the property come back with the weapons port (Part 5).
+class UProsperitocracyWeaponBodyData;
+// RESTORED 2026-09-16. This declaration stood as `UProsperitocracyEquipmentDefinition` and was cut
+// when box 3.2 landed, because that class drags in Lyra's equipment/ability stack (see the WeaponBody
+// comment below). The weapons batch replaces that dependency rather than porting it: the body is now
+// OUR UProsperitocracyWeaponBodyData (an asset holding the gun's mesh, anims, sounds and FX), so a
+// gun still knows which body it rides on and nothing Lyra-shaped is pulled in to say it.
 
 /**
  * FProsperitocracyStatTableEntry
@@ -68,22 +68,26 @@ public:
 	FGameplayTag GetFireMode() const { return FireMode; }
 
 	/**
-	 * The weapon's BODY — the equipment definition (WID) that carries the mesh actor, the
-	 * per-body weapon instance (montages + anim sets), and the ONE universal ability set.
-	 * A gun = this stat block; the body is shared by every gun on the same body. This is
-	 * what makes "new gun = one stat block" true: the stat block knows everything about
-	 * itself, including which body it rides on.
+	 * The weapon's BODY — the asset that carries the mesh, the per-body anims, the shot sound and
+	 * attenuation, the muzzle FX, the tracer and the impact decal. A gun IS its stat block; the body
+	 * is shared by every gun on the same rig (pistol+SMG on WBD_Pistol, both rifles on WBD_Rifle),
+	 * which is what keeps "a new gun = one stat block" true.
 	 *
-	 * CUT 2026-09-16 (port of box 3.2) — the property stood here in the old project:
+	 * Empty on a thing that is not a ranged weapon (melee, a grenade, a character baseline block).
+	 * Presence-is-scope: no body, no gun.
 	 *
-	 *     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Stat")
-	 *     TSoftClassPtr<UProsperitocracyEquipmentDefinition> WeaponBody;
-	 *
-	 * It is not a design change and nothing else read it yet: UHT rejects a forward-declared
-	 * class in a UPROPERTY, and the real UProsperitocracyEquipmentDefinition pulls in
-	 * UProsperitocracyAbilitySet + UProsperitocracyEquipmentInstance (the equipment stack).
-	 * Restore this property, and the class declaration above it, with the weapons port (Part 5).
+	 * HISTORY: this property was cut on 2026-09-16 (box 3.2) as
+	 * `TSoftClassPtr<UProsperitocracyEquipmentDefinition>` — UHT rejects a forward-declared class in a
+	 * UPROPERTY, and the real class pulls in UProsperitocracyAbilitySet + UProsperitocracyEquipmentInstance,
+	 * i.e. Lyra's equipment stack. It comes back here typed to our own body asset instead: same job
+	 * (the stat block knows which body it rides on), no Lyra chain behind it.
 	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Stat")
+	TSoftObjectPtr<UProsperitocracyWeaponBodyData> WeaponBody;
+
+	/** The weapon's body asset, or null on a thing that is not a gun. Defined in the .cpp so this
+	 *  header does not have to know the body asset's type. */
+	UProsperitocracyWeaponBodyData* GetWeaponBody() const;
 
 	/**
 	 * Builds the canonical default entry list for the universal stat table — every stat-ID
