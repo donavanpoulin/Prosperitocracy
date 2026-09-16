@@ -68,6 +68,21 @@ public:
 	FGameplayTag GetFireMode() const { return FireMode; }
 
 	/**
+	 * The thing's SLOT — also a tag, not a stat, and for the same reason (Design/weapons.md): "It is
+	 * tagged with one slot, and the tag IS the slot: it goes in that slot, period." One of
+	 * Prosperitocracy.Weapon.Slot.Primary / .Secondary / .Special / .Grenade.
+	 *
+	 * It lives HERE, on the weapon, and not on the loadout entry that carries it: a weapon knows what
+	 * it is wherever it is (in a loadout, picked up off the floor, on an enemy), and a slot can refuse
+	 * a weapon whose tag is not that slot. A thing without the tag (a character baseline block) is not
+	 * a weapon and lives in no slot.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Stat")
+	FGameplayTag Slot;
+
+	FGameplayTag GetSlot() const { return Slot; }
+
+	/**
 	 * The weapon's BODY — the asset that carries the mesh, the per-body anims, the shot sound and
 	 * attenuation, the muzzle FX, the tracer and the impact decal. A gun IS its stat block; the body
 	 * is shared by every gun on the same rig (pistol+SMG on WBD_Pistol, both rifles on WBD_Rifle),

@@ -6,6 +6,7 @@
 #include "Engine/HitResult.h"
 #include "GameFramework/Actor.h"
 #include "Stats/ProsperitocracyStat.h"
+#include "Weapons/ProsperitocracyLoadout.h"
 
 #include "ProsperitocracyWeapon.generated.h"
 
@@ -48,13 +49,15 @@ public:
 	AProsperitocracyWeapon();
 
 	/**
-	 * Point the gun at its numbers: spawn its GAS home, push the block's bases into it, and fill the
-	 * first magazine. The gun's own BeginPlay calls this with what its owner's LOADOUT says this body
-	 * is made of — the numbers and the effect its shot applies arrive together, because they are one
-	 * decision. Callable again whenever the loadout changes what this body carries.
+	 * Take the gun's place in the world: which slot it is, its numbers, and what its shot applies.
+	 *
+	 * Called by the owner's loadout component, which is the only thing that can say which slot this
+	 * gun is — the rig that created it never does. The numbers and the effect its shot applies arrive
+	 * together, because they are one decision. Callable again whenever the loadout changes what this
+	 * body carries (a body can be two guns: the pistol's body is also the SMG's).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
-	void InitializeFromStatBlock(UProsperitocracyStatTable* InStatBlock, TSubclassOf<UGameplayEffect> InDamageEffectClass, APawn* InOwningPawn = nullptr);
+	bool ApplyLoadoutEntry(const FGameplayTag& InSlot, UProsperitocracyStatTable* InStatBlock, TSubclassOf<UGameplayEffect> InDamageEffectClass, APawn* InOwningPawn = nullptr);
 
 	/**
 	 * Make sure this gun has its numbers, and return whether it does.
@@ -104,6 +107,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
 	UProsperitocracyStatTable* GetStatBlock() const { return StatBlock; }
 
+	/**
+	 * Which slot of its owner's loadout this gun came out of — told to it by the loadout, never
+	 * looked up by the gun. Invalid until it is dressed.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	FGameplayTag GetSlot() const { return Slot; }
+
+	/** What the loadout answered when this gun asked to be dressed. Dressed once it has numbers. */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	EProsperitocracyWeaponDressResult GetDressResult() const { return DressResult; }
+
 	AProsperitocracyStatHostActor* GetStatHost() const { return StatHost; }
 
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
@@ -135,6 +149,14 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	/**
+	 * Which slot of its owner's loadout this gun is. Handed over by the loadout, along with the
+	 * numbers — a gun cannot read it off itself, and it must not guess it from its blueprint, because
+	 * one body can be two guns (the pistol's body is also the SMG's).
+	 */
+	UPROPERTY(Transient)
+	FGameplayTag Slot;
+
+	/**
 	 * The numbers, handed over by the loadout when this gun came up.
 	 *
 	 * Deliberately NOT a default on the gun blueprint. A default is a second copy of an answer that
@@ -163,8 +185,11 @@ protected:
 	/** Whether the numbers are in hand. False until the loadout has answered. */
 	bool bInitialized = false;
 
-	/** One warning per gun, not one per shot, when the loadout carries no entry for this body. */
-	bool bNoLoadoutEntryWarned = false;
+	/** What the loadout answered. Undressed until it is asked, and until the gun is in the rig. */
+	EProsperitocracyWeaponDressResult DressResult = EProsperitocracyWeaponDressResult::Undressed;
+
+	/** One warning per gun, not one per shot, for why the loadout could not dress it. */
+	bool bDressFailureLogged = false;
 
 	int32 MagazineAmmo = 0;
 	int32 SpareAmmo = 0;
@@ -176,4 +201,7 @@ private:
 
 	/** One magazine's worth of rounds, from this gun's own MagSize stat. */
 	int32 MagazineSize() const;
+
+	/** Say once, per gun, why the loadout could not dress it — each reason names a different fix. */
+	void LogDressFailureOnce(EProsperitocracyWeaponDressResult Result, const AActor* RigOwner);
 };

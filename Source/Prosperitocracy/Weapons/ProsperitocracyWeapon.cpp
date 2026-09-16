@@ -51,6 +51,9 @@ bool AProsperitocracyWeapon::EnsureInitialized()
 	}
 	if (!RigOwner)
 	{
+		// Not in the rig yet. Normal at BeginPlay for a gun the rig re-creates on a slot switch, and
+		// the reason this door is asked again on first use. Not a failure, so it is not logged.
+		DressResult = EProsperitocracyWeaponDressResult::Undressed;
 		return false;
 	}
 
@@ -59,29 +62,66 @@ bool AProsperitocracyWeapon::EnsureInitialized()
 		OwningPawn = Cast<APawn>(RigOwner);
 	}
 
-	// What am I? Ask the loadout that owns this rig's guns, and be told. The gun holds no copy of the
-	// answer, so it cannot hold a stale one: the numbers come from the one asset that owns them.
+	// What am I? The loadout that owns this rig's guns answers. The gun does not look itself up, and
+	// cannot: the rig created it without saying which slot it is, and one body can be two guns.
 	const UProsperitocracyLoadoutComponent* LoadoutComponent = RigOwner->FindComponentByClass<UProsperitocracyLoadoutComponent>();
-	const FProsperitocracyWeaponSlot* Entry = LoadoutComponent
-		? LoadoutComponent->FindSlotForBodyClass(GetClass())
-		: nullptr;
-
-	if (!Entry)
+	if (!LoadoutComponent)
 	{
-		if (!bNoLoadoutEntryWarned)
-		{
-			bNoLoadoutEntryWarned = true;
-			UE_LOG(LogProsperitocracy, Warning,
-				TEXT("[Weapon] %s: the loadout on %s carries no entry for this gun blueprint — it has no numbers and cannot fire."),
-				*GetName(), *GetNameSafe(RigOwner));
-		}
+		DressResult = EProsperitocracyWeaponDressResult::NoLoadout;
+		LogDressFailureOnce(DressResult, RigOwner);
 		return false;
 	}
 
-	InitializeFromStatBlock(Entry->StatBlock.LoadSynchronous(),
-		LoadoutComponent->GetGunDamageEffectClass(), OwningPawn);
+	DressResult = LoadoutComponent->DressGun(this);
+	if (DressResult != EProsperitocracyWeaponDressResult::Dressed)
+	{
+		LogDressFailureOnce(DressResult, RigOwner);
+	}
 
 	return bInitialized;
+}
+
+void AProsperitocracyWeapon::LogDressFailureOnce(EProsperitocracyWeaponDressResult Result, const AActor* RigOwner)
+{
+	if (bDressFailureLogged)
+	{
+		return;
+	}
+
+	// Undressed means "not asked yet / not in the rig yet" and Dressed is the working case; neither is
+	// a failure, and neither may burn the one warning this gun has.
+	switch (Result)
+	{
+	case EProsperitocracyWeaponDressResult::NoLoadout:
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("[Weapon] %s: %s has no loadout component — this gun has no numbers and cannot fire."),
+			*GetName(), *GetNameSafe(RigOwner));
+		break;
+	case EProsperitocracyWeaponDressResult::NoEntry:
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("[Weapon] %s: the loadout on %s carries nothing for this gun blueprint — it has no numbers and cannot fire."),
+			*GetName(), *GetNameSafe(RigOwner));
+		break;
+	case EProsperitocracyWeaponDressResult::AmbiguousEntry:
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("[Weapon] %s: more than one slot in the loadout on %s carries this gun blueprint, so the blueprint cannot say which slot it is — the equip path has to tell it."),
+			*GetName(), *GetNameSafe(RigOwner));
+		break;
+	case EProsperitocracyWeaponDressResult::NoStatBlock:
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("[Weapon] %s: the loadout entry for this blueprint carries no stat block — no numbers, so it cannot fire."),
+			*GetName());
+		break;
+	case EProsperitocracyWeaponDressResult::SlotMismatch:
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("[Weapon] %s: the stat block's slot tag is not the slot it is carried in — one of the two is wrong, so this gun was not dressed."),
+			*GetName());
+		break;
+	default:
+		return;
+	}
+
+	bDressFailureLogged = true;
 }
 
 void AProsperitocracyWeapon::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -96,9 +136,11 @@ void AProsperitocracyWeapon::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
-void AProsperitocracyWeapon::InitializeFromStatBlock(UProsperitocracyStatTable* InStatBlock, TSubclassOf<UGameplayEffect> InDamageEffectClass, APawn* InOwningPawn)
+bool AProsperitocracyWeapon::ApplyLoadoutEntry(const FGameplayTag& InSlot, UProsperitocracyStatTable* InStatBlock, TSubclassOf<UGameplayEffect> InDamageEffectClass, APawn* InOwningPawn)
 {
-	// The numbers and what a shot applies are one decision, so they are handed over together.
+	// Which slot this gun is, its numbers, and what a shot applies are one decision, so they arrive
+	// together — handed over by the loadout, which is the only thing that can say which slot this is.
+	Slot = InSlot;
 	DamageEffectClass = InDamageEffectClass;
 
 	if (InStatBlock)
@@ -116,8 +158,8 @@ void AProsperitocracyWeapon::InitializeFromStatBlock(UProsperitocracyStatTable* 
 
 	if (!StatBlock)
 	{
-		UE_LOG(LogProsperitocracy, Warning, TEXT("[Weapon] %s was initialized with no stat block — it has no numbers and cannot fire."), *GetName());
-		return;
+		UE_LOG(LogProsperitocracy, Warning, TEXT("[Weapon] %s was given no stat block — it has no numbers and cannot fire."), *GetName());
+		return false;
 	}
 
 	// The gun's GAS home. Spawned once, owned by the pawn, and fed the block's (stat, base) pairs —
@@ -144,10 +186,12 @@ void AProsperitocracyWeapon::InitializeFromStatBlock(UProsperitocracyStatTable* 
 	LastShotTime = -BIG_NUMBER;
 	bInitialized = true;
 
-	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s ready — block %s | mag %d spare %d | rate %.2f/s | %s"),
-		*GetName(), *GetNameSafe(StatBlock), MagazineAmmo, SpareAmmo,
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s ready — slot %s | block %s | mag %d spare %d | rate %.2f/s | %s"),
+		*GetName(), *Slot.ToString(), *GetNameSafe(StatBlock), MagazineAmmo, SpareAmmo,
 		GetSecondsBetweenShots() > 0.0f ? (1.0f / GetSecondsBetweenShots()) : 0.0f,
 		IsFullAuto() ? TEXT("FullAuto") : TEXT("SemiAuto"));
+
+	return true;
 }
 
 bool AProsperitocracyWeapon::TryConsumeRound()
