@@ -18,11 +18,17 @@ public class Prosperitocracy : ModuleRules
 
 		// Deliberately minimal while the module is empty. Dependencies are added as each system is ported,
 		// so the container never carries a link to a plugin the game does not actually use yet.
+		// GAS landed with the attribute sets: it is the ONE evaluator every stat resolves through
+		// (Design/stats.md), so nothing numeric can work without it. GameplayTasks is GAS's own
+		// dependency; GameplayTags is required by NativeGameplayTags.h.
 		PublicDependencyModuleNames.AddRange(
 			new string[] {
 				"Core",
 				"CoreUObject",
-				"Engine"
+				"Engine",
+				"GameplayAbilities",
+				"GameplayTasks",
+				"GameplayTags"
 			}
 		);
 
