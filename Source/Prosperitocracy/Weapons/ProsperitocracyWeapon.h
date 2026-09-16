@@ -131,6 +131,15 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Prosperitocracy|Weapon")
 	TSubclassOf<UGameplayEffect> DamageEffectClass;
 
+	/**
+	 * The impact particle, spawned at the landing point on the surface normal. This one is NOT on the
+	 * body asset, because the template's own Impact_VFX used the same system for every gun
+	 * (NS_Imacts both branches) — reading it off their WeaponSystem graph, not assumed. Their function
+	 * also gated it on the hit having a physical material; so does this.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Prosperitocracy|Weapon")
+	TSoftObjectPtr<UNiagaraSystem> ImpactVFX;
+
 	//~ Resolved body assets: loaded once, in ApplyBody, and kept alive here.
 	UPROPERTY(Transient) TObjectPtr<UAnimationAsset> GunFireAnim;
 	UPROPERTY(Transient) TObjectPtr<UAnimationAsset> GunReloadAnim;

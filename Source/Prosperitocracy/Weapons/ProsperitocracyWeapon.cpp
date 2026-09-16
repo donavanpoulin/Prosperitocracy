@@ -26,6 +26,7 @@
 #include "Sound/SoundConcurrency.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
 #include "Stats/ProsperitocracyStatTable.h"
+#include "UObject/ConstructorHelpers.h"
 #include "Weapons/ProsperitocracyWeaponBodyData.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyWeapon)
@@ -44,6 +45,15 @@ AProsperitocracyWeapon::AProsperitocracyWeapon()
 	WeaponMesh->SetGenerateOverlapEvents(false);
 	WeaponMesh->bOwnerNoSee = false;
 	WeaponMesh->CastShadow = true;
+
+	// The impact particle — the template's own, and the same system for every gun: their own
+	// Impact_VFX function picked NS_Imacts on both branches of its select. Set here so the gun works
+	// with no editor step, the same way the old project's feedback component hard-pointed its assets.
+	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> ImpactVFXFinder(TEXT("/Game/Weapons/Effects/Particles/Impacts/NS_Imacts.NS_Imacts"));
+	if (ImpactVFXFinder.Succeeded())
+	{
+		ImpactVFX = ImpactVFXFinder.Object;
+	}
 }
 
 void AProsperitocracyWeapon::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -331,6 +341,17 @@ void AProsperitocracyWeapon::PlayShotFeedback(const FHitResult& Hit, const FVect
 	{
 		const FTransform DecalTransform(Hit.ImpactNormal.Rotation(), Hit.ImpactPoint, ImpactDecalScale);
 		GetWorld()->SpawnActor<AActor>(ImpactDecalClass, DecalTransform);
+	}
+
+	// The impact particle, at the landing point on the normal — and only when the surface has a
+	// physical material, which is the condition the template's own function used.
+	if (Hit.bBlockingHit && Hit.PhysMaterial.IsValid())
+	{
+		if (UNiagaraSystem* ImpactSystem = ImpactVFX.Get())
+		{
+			UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+				GetWorld(), ImpactSystem, Hit.ImpactPoint, Hit.ImpactNormal.Rotation());
+		}
 	}
 }
 
