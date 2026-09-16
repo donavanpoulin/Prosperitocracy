@@ -142,7 +142,7 @@ bool AProsperitocracyWeapon::ApplyLoadoutEntry(const FGameplayTag& InSlot, UPros
 	// decision, so they arrive together — handed over by the loadout, which is the only thing that
 	// can say which slot this is.
 	Slot = InSlot;
-	DamageEffectClass = InDamageEffectClass;
+	ShotDamageEffectClass = InDamageEffectClass;
 	if (InOwnerLoadout)
 	{
 		OwnerLoadout = InOwnerLoadout;
@@ -150,7 +150,7 @@ bool AProsperitocracyWeapon::ApplyLoadoutEntry(const FGameplayTag& InSlot, UPros
 
 	if (InStatBlock)
 	{
-		StatBlock = InStatBlock;
+		StatBlockAsset = InStatBlock;
 	}
 	if (InOwningPawn)
 	{
@@ -161,7 +161,7 @@ bool AProsperitocracyWeapon::ApplyLoadoutEntry(const FGameplayTag& InSlot, UPros
 		OwningPawn = Cast<APawn>(GetAttachParentActor());
 	}
 
-	if (!StatBlock)
+	if (!StatBlockAsset)
 	{
 		UE_LOG(LogProsperitocracy, Warning, TEXT("[Weapon] %s was given no stat block — it has no numbers and cannot fire."), *GetName());
 		return false;
@@ -187,7 +187,7 @@ bool AProsperitocracyWeapon::ApplyLoadoutEntry(const FGameplayTag& InSlot, UPros
 	}
 	if (StatHost)
 	{
-		StatHost->InitializeFromStatBlock(StatBlock);
+		StatHost->InitializeFromStatBlock(StatBlockAsset);
 	}
 
 	// Ammo, in the owner's store for this slot. This first ask is what fills the magazine: the loaded
@@ -199,7 +199,7 @@ bool AProsperitocracyWeapon::ApplyLoadoutEntry(const FGameplayTag& InSlot, UPros
 	bInitialized = true;
 
 	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s ready — slot %s | block %s | mag %d spare %d | rate %.2f/s | %s"),
-		*GetName(), *Slot.ToString(), *GetNameSafe(StatBlock), GetMagazineAmmo(), GetSpareAmmo(),
+		*GetName(), *Slot.ToString(), *GetNameSafe(StatBlockAsset), GetMagazineAmmo(), GetSpareAmmo(),
 		GetSecondsBetweenShots() > 0.0f ? (1.0f / GetSecondsBetweenShots()) : 0.0f,
 		IsFullAuto() ? TEXT("FullAuto") : TEXT("SemiAuto"));
 
@@ -316,7 +316,7 @@ float AProsperitocracyWeapon::GetWeaponStat(EProsperitocracyStat Stat) const
 
 bool AProsperitocracyWeapon::IsFullAuto() const
 {
-	return StatBlock && (StatBlock->GetFireMode() == ProsperitocracyGameplayTags::Weapon_FireMode_FullAuto);
+	return StatBlockAsset && (StatBlockAsset->GetFireMode() == ProsperitocracyGameplayTags::Weapon_FireMode_FullAuto);
 }
 
 float AProsperitocracyWeapon::GetSecondsBetweenShots() const
@@ -369,9 +369,9 @@ void AProsperitocracyWeapon::ApplyShotDamage(const FHitResult& Hit)
 		return;
 	}
 
-	if (!DamageEffectClass)
+	if (!ShotDamageEffectClass)
 	{
-		UE_LOG(LogProsperitocracy, Warning, TEXT("[Damage] %s has no DamageEffectClass set — hit %s and applied nothing. This is a bug, not a missing feature."), *GetName(), *GetNameSafe(HitActor));
+		UE_LOG(LogProsperitocracy, Warning, TEXT("[Damage] %s has no shot damage effect set — hit %s and applied nothing. This is a bug, not a missing feature."), *GetName(), *GetNameSafe(HitActor));
 		return;
 	}
 
@@ -392,7 +392,7 @@ void AProsperitocracyWeapon::ApplyShotDamage(const FHitResult& Hit)
 		UE_LOG(LogProsperitocracy, Warning, TEXT("[Damage] %s: the effect context is not ours — no lines or falloff will resolve. Check AbilitySystemGlobalsClassName in DefaultGame.ini."), *GetName());
 	}
 
-	const FGameplayEffectSpecHandle SpecHandle = SourceAbilitySystemComponent->MakeOutgoingSpec(DamageEffectClass, 1.0f, Context);
+	const FGameplayEffectSpecHandle SpecHandle = SourceAbilitySystemComponent->MakeOutgoingSpec(ShotDamageEffectClass, 1.0f, Context);
 	if (SpecHandle.IsValid())
 	{
 		SourceAbilitySystemComponent->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetAbilitySystemComponent);

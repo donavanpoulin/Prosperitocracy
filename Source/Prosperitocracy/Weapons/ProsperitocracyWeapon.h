@@ -108,7 +108,7 @@ public:
 
 	/** The gun's numbers — its row in the universal stat table. A gun IS its stat block. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
-	UProsperitocracyStatTable* GetStatBlock() const { return StatBlock; }
+	UProsperitocracyStatTable* GetStatBlock() const { return StatBlockAsset; }
 
 	/**
 	 * Which slot of its owner's loadout this gun came out of — told to it by the loadout, never
@@ -168,9 +168,14 @@ protected:
 	 * has an owner, and the template's child actor components keep an archetype of the gun inside the
 	 * character asset — so a defaulted value gets copied there and then goes stale. The gun asks the
 	 * loadout what it is; nowhere on the gun can a stale number live.
+	 *
+	 * Named `StatBlockAsset` rather than the obvious `StatBlock` on purpose: `BP_Pistol` and
+	 * `BP_Rifle` still had values stored under the old name from before this was Transient, and
+	 * renaming the property is what makes UE drop those stored keys on the next save. Same for
+	 * `ShotDamageEffectClass` below.
 	 */
 	UPROPERTY(Transient)
-	TObjectPtr<UProsperitocracyStatTable> StatBlock;
+	TObjectPtr<UProsperitocracyStatTable> StatBlockAsset;
 
 	/**
 	 * What a committed shot applies to whatever it hits, also from the loadout — one asset for every
@@ -178,7 +183,7 @@ protected:
 	 * damage lines and the falloff from the shot's ability source, which is this gun's stat host.
 	 */
 	UPROPERTY(Transient)
-	TSubclassOf<UGameplayEffect> DamageEffectClass;
+	TSubclassOf<UGameplayEffect> ShotDamageEffectClass;
 
 	/** The gun's GAS home — its stats are attributes on this actor's own ASC (the ONE evaluator). */
 	UPROPERTY(VisibleAnywhere, Category = "Prosperitocracy|Weapon")
