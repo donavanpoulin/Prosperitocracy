@@ -34,7 +34,7 @@ public:
 	UE_API UProsperitocracyStatSet();
 
 	ATTRIBUTE_ACCESSORS(UProsperitocracyStatSet, MoveSpeed);
-	ATTRIBUTE_ACCESSORS(UProsperitocracyStatSet, JumpHeight);
+	ATTRIBUTE_ACCESSORS(UProsperitocracyStatSet, JumpVelocity);
 	ATTRIBUTE_ACCESSORS(UProsperitocracyStatSet, DiveDistance);
 	ATTRIBUTE_ACCESSORS(UProsperitocracyStatSet, PackCapacity);
 	ATTRIBUTE_ACCESSORS(UProsperitocracyStatSet, WeightCapacity);
@@ -46,7 +46,7 @@ protected:
 	UE_API void OnRep_MoveSpeed(const FGameplayAttributeData& OldValue);
 
 	UFUNCTION()
-	UE_API void OnRep_JumpHeight(const FGameplayAttributeData& OldValue);
+	UE_API void OnRep_JumpVelocity(const FGameplayAttributeData& OldValue);
 
 	UFUNCTION()
 	UE_API void OnRep_DiveDistance(const FGameplayAttributeData& OldValue);
@@ -64,13 +64,14 @@ protected:
 	UE_API void OnRep_PiercingResist(const FGameplayAttributeData& OldValue);
 
 private:
-	// Move speed of the owner (receiver of perks/attachments). [TUNE]
+	// Move speed of the owner — the RUN speed; walking is half of it, one universal constant.
+	// (Receiver of perks/attachments.) [TUNE]
 	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_MoveSpeed, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
 	FGameplayAttributeData MoveSpeed;
 
-	// Jump height of the owner. [TUNE]
-	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_JumpHeight, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
-	FGameplayAttributeData JumpHeight;
+	// cm/s — the upward velocity a jump launches with. [TUNE]
+	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_JumpVelocity, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
+	FGameplayAttributeData JumpVelocity;
 
 	// Dive distance of the owner. [TUNE]
 	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_DiveDistance, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))

@@ -63,8 +63,16 @@ enum class EProsperitocracyStat : uint8
 
 	// universal — players, enemies, and vehicles all have it
 	Health				UMETA(DisplayName = "Health"),
+	// cm/s — the RUN speed. Walking is half of it, derived by one universal constant
+	// (UProsperitocracyPlayerStatsComponent::WalkSpeedMultiplier) rather than carried as
+	// a second stat: there is one speed number, and the walk is a fraction of it.
 	MoveSpeed			UMETA(DisplayName = "Move Speed"),
-	JumpHeight			UMETA(DisplayName = "Jump Height"),
+	// cm/s — the upward velocity a jump launches with; the movement component's JumpZVelocity.
+	// A velocity, NOT a height: the same jump is a different height number on a different
+	// character, and the body is driven by the velocity, so the velocity is the stat.
+	JumpVelocity		UMETA(DisplayName = "Jump Velocity"),
+	// cm — how far a dive/dodge travels. Currently unread: dodge and slide travel is baked into
+	// their animations' root motion (read off their montages, not from a number).
 	DiveDistance		UMETA(DisplayName = "Dive Distance"),
 	// max blood
 	PackCapacity		UMETA(DisplayName = "Pack Capacity"),

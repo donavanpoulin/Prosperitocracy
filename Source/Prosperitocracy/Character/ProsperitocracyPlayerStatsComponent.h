@@ -26,10 +26,15 @@ class UProsperitocracyStatTable;
  * stat asks GAS for its FINAL value, through the same door as everything else
  * (`UProsperitocracyStatSystemStatics::GetStatFinal`).
  *
- * The template's movement is untouched: its walk and sprint states still decide WHEN each speed
+ * The template's movement is untouched: its walk and run states still decide WHEN each speed
  * applies, and its graph asks this component for the number instead of holding one of its own. That
  * is deliberate — the number has one owner, and a stat that is not set never zeroes the body out
  * (movement keeps whatever it had).
+ *
+ * There is ONE speed stat (Move Speed = the run speed). Walking is not a second stat: it is that
+ * same number times one universal constant, so a walk is always half a run and tuning one number
+ * tunes both. Jump is one stat too, and it is a VELOCITY (Jump Velocity, cm/s) because that is what
+ * the body is driven by — a height would be the same jump described in a unit the movement cannot use.
  */
 UCLASS(ClassGroup = (Prosperitocracy), meta = (BlueprintSpawnableComponent))
 class UProsperitocracyPlayerStatsComponent : public UActorComponent
@@ -47,26 +52,31 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
 	float GetStat(EProsperitocracyStat Stat) const;
 
-	/** Walking: Move Speed as it stands. The template's walk state reads this. */
+	/** The run speed: Move Speed as it stands. Running is the number; walking is a fraction of it. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
-	float GetWalkSpeed() const { return GetStat(EProsperitocracyStat::MoveSpeed); }
+	float GetRunSpeed() const { return GetStat(EProsperitocracyStat::MoveSpeed); }
 
-	/** Sprinting: the same Move Speed through the one sprint multiplier. */
+	/** Walking: the same Move Speed through the one walk multiplier. The template's walk state reads this. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
-	float GetSprintSpeed() const;
+	float GetWalkSpeed() const;
+
+	/** The jump's launch velocity: Jump Velocity as it stands, straight onto the movement component. */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
+	float GetJumpVelocity() const { return GetStat(EProsperitocracyStat::JumpVelocity); }
 
 	/**
-	 * Push the movement numbers onto the character movement component: walk speed from Move Speed,
-	 * jump velocity from Jump Height. Safe to call again after the numbers change.
+	 * Push the movement numbers onto the character movement component: walk and run speed from Move
+	 * Speed, jump velocity from Jump Velocity. Safe to call again after the numbers change.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Stats")
 	void ApplyToMovement();
 
 	/**
-	 * The one sprint multiplier, universal — every character sprints at the same multiple of its Move
-	 * Speed, so a slower character is slower sprinting too. It is not a stat and not a perk target.
+	 * The one walk multiplier, universal — every character walks at the same fraction of its run
+	 * speed, so a slower character is slower walking too. It is not a stat and not a perk target:
+	 * the stat is the run speed, and this is the fraction that turns it into a walk.
 	 */
-	static constexpr float SprintSpeedMultiplier = 2.0f;
+	static constexpr float WalkSpeedMultiplier = 0.5f;
 
 protected:
 	virtual void BeginPlay() override;

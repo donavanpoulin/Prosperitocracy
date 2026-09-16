@@ -35,7 +35,7 @@ void UProsperitocracyStatTable::BuildCanonicalStats(TArray<FProsperitocracyStatT
 	// --- Character stats ---
 	Add(EProsperitocracyStat::Health, 0.0f);
 	Add(EProsperitocracyStat::MoveSpeed, 0.0f);
-	Add(EProsperitocracyStat::JumpHeight, 0.0f);
+	Add(EProsperitocracyStat::JumpVelocity, 0.0f);
 	Add(EProsperitocracyStat::DiveDistance, 0.0f);
 	Add(EProsperitocracyStat::PackCapacity, 0.0f);
 	Add(EProsperitocracyStat::WeightCapacity, 0.0f);

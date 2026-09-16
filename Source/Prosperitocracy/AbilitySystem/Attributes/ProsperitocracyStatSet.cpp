@@ -10,7 +10,7 @@ class FLifetimeProperty;
 
 UProsperitocracyStatSet::UProsperitocracyStatSet()
 	: MoveSpeed(0.0f)
-	, JumpHeight(0.0f)
+	, JumpVelocity(0.0f)
 	, DiveDistance(0.0f)
 	, PackCapacity(0.0f)
 	, WeightCapacity(0.0f)
@@ -24,7 +24,7 @@ void UProsperitocracyStatSet::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyStatSet, MoveSpeed, COND_OwnerOnly, REPNOTIFY_Always);
-	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyStatSet, JumpHeight, COND_OwnerOnly, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyStatSet, JumpVelocity, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyStatSet, DiveDistance, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyStatSet, PackCapacity, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyStatSet, WeightCapacity, COND_OwnerOnly, REPNOTIFY_Always);
@@ -37,9 +37,9 @@ void UProsperitocracyStatSet::OnRep_MoveSpeed(const FGameplayAttributeData& OldV
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UProsperitocracyStatSet, MoveSpeed, OldValue);
 }
 
-void UProsperitocracyStatSet::OnRep_JumpHeight(const FGameplayAttributeData& OldValue)
+void UProsperitocracyStatSet::OnRep_JumpVelocity(const FGameplayAttributeData& OldValue)
 {
-	GAMEPLAYATTRIBUTE_REPNOTIFY(UProsperitocracyStatSet, JumpHeight, OldValue);
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UProsperitocracyStatSet, JumpVelocity, OldValue);
 }
 
 void UProsperitocracyStatSet::OnRep_DiveDistance(const FGameplayAttributeData& OldValue)

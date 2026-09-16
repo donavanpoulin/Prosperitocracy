@@ -102,9 +102,9 @@ float UProsperitocracyPlayerStatsComponent::GetStat(EProsperitocracyStat Stat) c
 	return UProsperitocracyStatSystemStatics::GetStatFinal(AbilitySystemComponent, Stat);
 }
 
-float UProsperitocracyPlayerStatsComponent::GetSprintSpeed() const
+float UProsperitocracyPlayerStatsComponent::GetWalkSpeed() const
 {
-	return GetWalkSpeed() * SprintSpeedMultiplier;
+	return GetRunSpeed() * WalkSpeedMultiplier;
 }
 
 void UProsperitocracyPlayerStatsComponent::ApplyToMovement()
@@ -124,12 +124,12 @@ void UProsperitocracyPlayerStatsComponent::ApplyToMovement()
 		Movement->MaxWalkSpeed = WalkSpeed;
 	}
 
-	const float JumpHeight = GetStat(EProsperitocracyStat::JumpHeight);
-	if (JumpHeight > 0.0f)
+	const float JumpVelocity = GetJumpVelocity();
+	if (JumpVelocity > 0.0f)
 	{
-		Movement->JumpZVelocity = JumpHeight;
+		Movement->JumpZVelocity = JumpVelocity;
 	}
 
-	UE_LOG(LogProsperitocracy, Log, TEXT("%s on %s: movement from stats — walk %.0f | sprint %.0f | jump %.0f"),
-		*GetName(), *GetNameSafe(Owner), Movement->MaxWalkSpeed, GetSprintSpeed(), Movement->JumpZVelocity);
+	UE_LOG(LogProsperitocracy, Log, TEXT("%s on %s: movement from stats — walk %.0f | run %.0f | jump %.0f"),
+		*GetName(), *GetNameSafe(Owner), Movement->MaxWalkSpeed, GetRunSpeed(), Movement->JumpZVelocity);
 }

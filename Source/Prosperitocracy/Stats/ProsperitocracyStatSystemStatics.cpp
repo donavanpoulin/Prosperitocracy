@@ -20,7 +20,7 @@ FGameplayAttribute UProsperitocracyStatSystemStatics::GetAttributeForStat(EProsp
 		// --- Character stats (actor ASC) ---
 		{ EProsperitocracyStat::Health, UProsperitocracyHealthSet::GetHealthAttribute() },
 		{ EProsperitocracyStat::MoveSpeed, UProsperitocracyStatSet::GetMoveSpeedAttribute() },
-		{ EProsperitocracyStat::JumpHeight, UProsperitocracyStatSet::GetJumpHeightAttribute() },
+		{ EProsperitocracyStat::JumpVelocity, UProsperitocracyStatSet::GetJumpVelocityAttribute() },
 		{ EProsperitocracyStat::DiveDistance, UProsperitocracyStatSet::GetDiveDistanceAttribute() },
 		{ EProsperitocracyStat::PackCapacity, UProsperitocracyStatSet::GetPackCapacityAttribute() },
 		{ EProsperitocracyStat::WeightCapacity, UProsperitocracyStatSet::GetWeightCapacityAttribute() },
