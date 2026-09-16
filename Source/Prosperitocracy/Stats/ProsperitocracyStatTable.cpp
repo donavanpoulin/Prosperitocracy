@@ -2,14 +2,7 @@
 
 #include "Stats/ProsperitocracyStatTable.h"
 
-#include "Weapons/ProsperitocracyWeaponBodyData.h"
-
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyStatTable)
-
-UProsperitocracyWeaponBodyData* UProsperitocracyStatTable::GetWeaponBody() const
-{
-	return WeaponBody.LoadSynchronous();
-}
 
 void UProsperitocracyStatTable::BuildCanonicalStats(TArray<FProsperitocracyStatTableEntry>& OutEntries)
 {
