@@ -7,53 +7,81 @@
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyGameplayEffectContext.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
-#include "Animation/AnimInstance.h"
-#include "Animation/AnimMontage.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
-#include "GameFramework/Character.h"
 #include "GameFramework/Pawn.h"
-#include "GameFramework/PlayerController.h"
 #include "GameplayEffect.h"
-#include "Kismet/GameplayStatics.h"
-#include "NiagaraComponent.h"
-#include "NiagaraFunctionLibrary.h"
-#include "NiagaraSystem.h"
 #include "ProsperitocracyGameplayTags.h"
 #include "ProsperitocracyLogChannels.h"
-#include "Sound/SoundAttenuation.h"
-#include "Sound/SoundConcurrency.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
 #include "Stats/ProsperitocracyStatTable.h"
-#include "UObject/ConstructorHelpers.h"
-#include "Weapons/ProsperitocracyWeaponBodyData.h"
+#include "Weapons/ProsperitocracyLoadout.h"
+#include "Weapons/ProsperitocracyLoadoutComponent.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyWeapon)
-
-const FName AProsperitocracyWeapon::MuzzleSocketName(TEXT("Muzzle"));
 
 AProsperitocracyWeapon::AProsperitocracyWeapon()
 {
 	PrimaryActorTick.bCanEverTick = false;
+}
 
-	WeaponMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMesh"));
-	SetRootComponent(WeaponMesh);
-	// A gun must never be shootable, never block the shot it fires, and never be culled out from
-	// under the camera while it is the thing the player is looking along.
-	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	WeaponMesh->SetGenerateOverlapEvents(false);
-	WeaponMesh->bOwnerNoSee = false;
-	WeaponMesh->CastShadow = true;
+void AProsperitocracyWeapon::BeginPlay()
+{
+	Super::BeginPlay();
 
-	// The impact particle — the template's own, and the same system for every gun: their own
-	// Impact_VFX function picked NS_Imacts on both branches of its select. Set here so the gun works
-	// with no editor step, the same way the old project's feedback component hard-pointed its assets.
-	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> ImpactVFXFinder(TEXT("/Game/Weapons/Effects/Particles/Impacts/NS_Imacts.NS_Imacts"));
-	if (ImpactVFXFinder.Succeeded())
+	// Best effort: a gun already in the rig gets its numbers now — the ones that exist when the level
+	// starts do. A gun the rig re-creates later (a slot switch) is not attached yet and gets them on
+	// first use instead. See EnsureInitialized.
+	EnsureInitialized();
+}
+
+bool AProsperitocracyWeapon::EnsureInitialized()
+{
+	if (bInitialized)
 	{
-		ImpactVFX = ImpactVFXFinder.Object;
+		return true;
 	}
+
+	// The rig is the child actor component's owner, and it becomes reachable once the gun is attached.
+	// Until then there is nobody to ask — and asking with a guess is how a gun ends up with no numbers.
+	AActor* RigOwner = GetAttachParentActor();
+	if (!RigOwner)
+	{
+		RigOwner = GetOwner();
+	}
+	if (!RigOwner)
+	{
+		return false;
+	}
+
+	if (!OwningPawn)
+	{
+		OwningPawn = Cast<APawn>(RigOwner);
+	}
+
+	// What am I? Ask the loadout that owns this rig's guns, and be told. The gun holds no copy of the
+	// answer, so it cannot hold a stale one: the numbers come from the one asset that owns them.
+	const UProsperitocracyLoadoutComponent* LoadoutComponent = RigOwner->FindComponentByClass<UProsperitocracyLoadoutComponent>();
+	const FProsperitocracyWeaponSlot* Entry = LoadoutComponent
+		? LoadoutComponent->FindSlotForBodyClass(GetClass())
+		: nullptr;
+
+	if (!Entry)
+	{
+		if (!bNoLoadoutEntryWarned)
+		{
+			bNoLoadoutEntryWarned = true;
+			UE_LOG(LogProsperitocracy, Warning,
+				TEXT("[Weapon] %s: the loadout on %s carries no entry for this gun blueprint — it has no numbers and cannot fire."),
+				*GetName(), *GetNameSafe(RigOwner));
+		}
+		return false;
+	}
+
+	InitializeFromStatBlock(Entry->StatBlock.LoadSynchronous(),
+		LoadoutComponent->GetGunDamageEffectClass(), OwningPawn);
+
+	return bInitialized;
 }
 
 void AProsperitocracyWeapon::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -68,14 +96,27 @@ void AProsperitocracyWeapon::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
-void AProsperitocracyWeapon::InitializeFromStatBlock(UProsperitocracyStatTable* InStatBlock, APawn* InOwningPawn)
+void AProsperitocracyWeapon::InitializeFromStatBlock(UProsperitocracyStatTable* InStatBlock, TSubclassOf<UGameplayEffect> InDamageEffectClass, APawn* InOwningPawn)
 {
-	StatBlock = InStatBlock;
-	OwningPawn = InOwningPawn ? InOwningPawn : Cast<APawn>(GetOwner());
+	// The numbers and what a shot applies are one decision, so they are handed over together.
+	DamageEffectClass = InDamageEffectClass;
+
+	if (InStatBlock)
+	{
+		StatBlock = InStatBlock;
+	}
+	if (InOwningPawn)
+	{
+		OwningPawn = InOwningPawn;
+	}
+	if (!OwningPawn)
+	{
+		OwningPawn = Cast<APawn>(GetAttachParentActor());
+	}
 
 	if (!StatBlock)
 	{
-		UE_LOG(LogProsperitocracy, Warning, TEXT("[Weapon] %s was initialized with no stat block — it has no numbers, no body and cannot fire."), *GetName());
+		UE_LOG(LogProsperitocracy, Warning, TEXT("[Weapon] %s was initialized with no stat block — it has no numbers and cannot fire."), *GetName());
 		return;
 	}
 
@@ -94,59 +135,83 @@ void AProsperitocracyWeapon::InitializeFromStatBlock(UProsperitocracyStatTable* 
 		StatHost->InitializeFromStatBlock(StatBlock);
 	}
 
-	// The visuals + audio: the body this gun rides on.
-	ApplyBody(StatBlock->GetWeaponBody());
-
 	// Ammo. The loaded magazine is ONE OF the Capacity magazines, so the spare pool is
 	// (Capacity x MagSize) minus the one in the gun. More magazines never makes a magazine bigger.
-	const int32 MagSize = FMath::Max(0, FMath::RoundToInt(GetWeaponStat(EProsperitocracyStat::MagSize)));
+	const int32 MagSize = MagazineSize();
 	const int32 Capacity = FMath::Max(0, FMath::RoundToInt(GetWeaponStat(EProsperitocracyStat::Capacity)));
 	MagazineAmmo = MagSize;
 	SpareAmmo = FMath::Max(0, Capacity * MagSize - MagSize);
 	LastShotTime = -BIG_NUMBER;
+	bInitialized = true;
 
-	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s ready — body %s | mag %d spare %d | rate %.2f/s | %s"),
-		*GetName(), *GetNameSafe(StatBlock->GetWeaponBody()), MagazineAmmo, SpareAmmo,
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s ready — block %s | mag %d spare %d | rate %.2f/s | %s"),
+		*GetName(), *GetNameSafe(StatBlock), MagazineAmmo, SpareAmmo,
 		GetSecondsBetweenShots() > 0.0f ? (1.0f / GetSecondsBetweenShots()) : 0.0f,
 		IsFullAuto() ? TEXT("FullAuto") : TEXT("SemiAuto"));
 }
 
-void AProsperitocracyWeapon::ApplyBody(const UProsperitocracyWeaponBodyData* InBody)
+bool AProsperitocracyWeapon::TryConsumeRound()
 {
-	if (!InBody)
+	// A gun that has not met its loadout yet has no magazine; the answer is no.
+	if (!EnsureInitialized())
 	{
-		UE_LOG(LogProsperitocracy, Warning,
-			TEXT("[Weapon] %s: stat block %s has no WeaponBody — the gun will fire with no mesh, no anim, no sound and no FX."),
-			*GetName(), *GetNameSafe(StatBlock));
-		return;
+		return false;
 	}
 
-	if (USkeletalMesh* Mesh = InBody->Mesh.LoadSynchronous())
+	const UWorld* World = GetWorld();
+	if (!World)
 	{
-		WeaponMesh->SetSkeletalMeshAsset(Mesh);
-		// The template's gun blueprints drive the gun mesh with single-node anims (their
-		// PlayAnimation calls), not with an anim blueprint — same thing here.
-		WeaponMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
-	}
-	else
-	{
-		UE_LOG(LogProsperitocracy, Warning, TEXT("[Weapon] %s: body %s has no mesh — the gun will fire invisibly."),
-			*GetName(), *GetNameSafe(InBody));
+		return false;
 	}
 
-	GunFireAnim = InBody->GunFireAnim.LoadSynchronous();
-	GunReloadAnim = InBody->GunReloadAnim.LoadSynchronous();
-	CharacterFireMontage = InBody->CharacterFireMontage.LoadSynchronous();
-	CharacterReloadMontage = InBody->CharacterReloadMontage.LoadSynchronous();
-	CharacterDryFireMontage = InBody->CharacterDryFireMontage.LoadSynchronous();
-	FireSound = InBody->FireSound.LoadSynchronous();
-	DryFireSound = InBody->DryFireSound.LoadSynchronous();
-	FireAttenuation = InBody->FireAttenuation.LoadSynchronous();
-	FireConcurrency = InBody->FireConcurrency.LoadSynchronous();
-	MuzzleVFX = InBody->MuzzleVFX.LoadSynchronous();
-	TracerActorClass = InBody->TracerActorClass.LoadSynchronous();
-	ImpactDecalClass = InBody->ImpactDecalClass.LoadSynchronous();
-	ImpactDecalScale = InBody->ImpactDecalScale;
+	// Too soon for the next round: not a dry fire, just the Rate cadence refusing the shot. The gun's
+	// graph must not run its dry-fire branch on this — that is what IsMagazineEmpty is for.
+	if (!CanFireNow())
+	{
+		return false;
+	}
+
+	if (MagazineAmmo <= 0)
+	{
+		// Empty. The gun's own graph plays its dry-fire sound and montage.
+		LastShotTime = World->GetTimeSeconds();
+		return false;
+	}
+
+	--MagazineAmmo;
+	LastShotTime = World->GetTimeSeconds();
+	return true;
+}
+
+bool AProsperitocracyWeapon::ReloadFromStats()
+{
+	if (!EnsureInitialized())
+	{
+		return false;
+	}
+
+	const int32 MagSize = MagazineSize();
+	if (SpareAmmo <= 0 || MagSize <= 0)
+	{
+		return false;
+	}
+
+	// A mag swap, not a top-up: the rounds left in this magazine are thrown away. They are NOT
+	// returned to the pool (Design/combat.md), and a partial magazine is loaded when the pool has
+	// less than a full one left.
+	const int32 Loaded = FMath::Min(MagSize, SpareAmmo);
+	MagazineAmmo = Loaded;
+	SpareAmmo -= Loaded;
+
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s reloaded — mag %d spare %d"), *GetName(), MagazineAmmo, SpareAmmo);
+	return true;
+}
+
+USkeletalMeshComponent* AProsperitocracyWeapon::GetWeaponMesh() const
+{
+	// The gun blueprint's OWN mesh component: the one its fire and reload anims play on and the one
+	// that carries the Muzzle socket. This class deliberately does not create a second one.
+	return FindComponentByClass<USkeletalMeshComponent>();
 }
 
 float AProsperitocracyWeapon::GetWeaponStat(EProsperitocracyStat Stat) const
@@ -169,6 +234,11 @@ float AProsperitocracyWeapon::GetSecondsBetweenShots() const
 	return (Rate > 0.0f) ? (1.0f / Rate) : 0.0f;
 }
 
+int32 AProsperitocracyWeapon::MagazineSize() const
+{
+	return FMath::Max(0, FMath::RoundToInt(GetWeaponStat(EProsperitocracyStat::MagSize)));
+}
+
 bool AProsperitocracyWeapon::CanFireNow() const
 {
 	const float Interval = GetSecondsBetweenShots();
@@ -180,218 +250,7 @@ bool AProsperitocracyWeapon::CanFireNow() const
 	return World && ((World->GetTimeSeconds() - LastShotTime) >= Interval);
 }
 
-bool AProsperitocracyWeapon::Fire()
-{
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return false;
-	}
-
-	// Too soon for the next round: not a dry fire, just the Rate cadence refusing the shot.
-	if (!CanFireNow())
-	{
-		return false;
-	}
-
-	if (MagazineAmmo <= 0)
-	{
-		// The dry fire is also cadence-gated, so holding the trigger on an empty gun clicks at the
-		// gun's rate instead of every frame.
-		LastShotTime = World->GetTimeSeconds();
-		PlayDryFire();
-		return false;
-	}
-
-	--MagazineAmmo;
-	LastShotTime = World->GetTimeSeconds();
-
-	FVector MuzzleLocation = WeaponMesh->GetSocketLocation(MuzzleSocketName);
-	FVector TraceEnd = MuzzleLocation;
-	const FHitResult Hit = TraceShot(MuzzleLocation, TraceEnd);
-
-	PlayShotFeedback(Hit, MuzzleLocation, TraceEnd);
-	ApplyDamage(Hit);
-	return true;
-}
-
-bool AProsperitocracyWeapon::Reload()
-{
-	if (SpareAmmo <= 0)
-	{
-		return false;
-	}
-
-	const int32 MagSize = FMath::Max(0, FMath::RoundToInt(GetWeaponStat(EProsperitocracyStat::MagSize)));
-
-	// A mag swap, not a top-up: the rounds left in this magazine are thrown away. They are NOT
-	// returned to the pool (Design/combat.md), and a partial magazine is loaded when the pool has
-	// less than a full one left.
-	MagazineAmmo = 0;
-	const int32 Loaded = FMath::Min(MagSize, SpareAmmo);
-	MagazineAmmo = Loaded;
-	SpareAmmo -= Loaded;
-
-	PlayCharacterMontage(CharacterReloadMontage);
-	if (GunReloadAnim)
-	{
-		WeaponMesh->PlayAnimation(GunReloadAnim, false);
-	}
-
-	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s reloaded — mag %d spare %d"), *GetName(), MagazineAmmo, SpareAmmo);
-	return true;
-}
-
-FHitResult AProsperitocracyWeapon::TraceShot(FVector& OutMuzzleLocation, FVector& OutTraceEnd) const
-{
-	FHitResult Result;
-
-	UWorld* World = GetWorld();
-	OutMuzzleLocation = WeaponMesh->GetSocketLocation(MuzzleSocketName);
-	OutTraceEnd = OutMuzzleLocation + GetActorForwardVector() * MaxShotRangeCm;
-	if (!World)
-	{
-		return Result;
-	}
-
-	// 1. Where the player is aiming, with this gun's drift added. The reticle circle draws the SAME
-	//    drift, so the shot lands where the circle points. (Drift is zero until the aim-feel pass;
-	//    the trace already reads it so the two never drift apart later.)
-	FVector ViewLocation = OutMuzzleLocation;
-	FRotator ViewRotation = GetActorRotation();
-	if (const APlayerController* PlayerController = OwningPawn ? Cast<APlayerController>(OwningPawn->GetController()) : nullptr)
-	{
-		PlayerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
-	}
-	ViewRotation.Pitch += AimDriftDegrees.Y;
-	ViewRotation.Yaw += AimDriftDegrees.X;
-
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(ProsperitocracyWeaponShot), /*bTraceComplex=*/false, OwningPawn ? static_cast<const AActor*>(OwningPawn) : this);
-	Params.bReturnPhysicalMaterial = true;
-
-	const FVector AimPoint = ViewLocation + ViewRotation.Vector() * MaxShotRangeCm;
-	FHitResult CameraHit;
-	const bool bHitAimLine = World->LineTraceSingleByChannel(CameraHit, ViewLocation, AimPoint, ECC_Visibility, Params);
-
-	// 2. The bullet itself: from the muzzle to that aim point. This is the line that decides what is
-	//    hit — it starts at the barrel, not at the eye, so the gun cannot shoot through a wall it is
-	//    pressed against.
-	OutTraceEnd = bHitAimLine ? CameraHit.ImpactPoint : AimPoint;
-	World->LineTraceSingleByChannel(Result, OutMuzzleLocation, OutTraceEnd, ECC_Visibility, Params);
-	if (!Result.bBlockingHit)
-	{
-		Result.TraceStart = OutMuzzleLocation;
-		Result.TraceEnd = OutTraceEnd;
-		Result.Location = OutTraceEnd;
-		Result.ImpactPoint = OutTraceEnd;
-	}
-	return Result;
-}
-
-void AProsperitocracyWeapon::PlayShotFeedback(const FHitResult& Hit, const FVector& MuzzleLocation, const FVector& TraceEnd)
-{
-	// The character's half of the action — the template's montage, on the character mesh.
-	PlayCharacterMontage(CharacterFireMontage);
-
-	// The gun's half — the template's own anim on the gun mesh's single node.
-	if (GunFireAnim)
-	{
-		WeaponMesh->PlayAnimation(GunFireAnim, false);
-	}
-
-	// The muzzle flash, at the Muzzle socket. These systems are hand-triggered: they emit nothing
-	// until User.Trigger is true, and setting it after activation is overwritten on the init frame —
-	// so spawn inactive, arm the trigger, then activate.
-	if (MuzzleVFX)
-	{
-		if (UNiagaraComponent* MuzzleComponent = UNiagaraFunctionLibrary::SpawnSystemAttached(
-			MuzzleVFX, WeaponMesh, MuzzleSocketName,
-			FVector::ZeroVector, FRotator::ZeroRotator,
-			EAttachLocation::SnapToTarget, /*bAutoDestroy=*/ true,
-			/*bAutoActivate=*/ false, ENCPoolMethod::None,
-			/*bPreCullCheck=*/ false))
-		{
-			MuzzleComponent->SetNiagaraVariableBool(TEXT("User.Trigger"), true);
-			MuzzleComponent->Activate(/*bReset=*/ true);
-		}
-	}
-
-	// The shot sound: one path for every gun, the body's own sound with its attenuation and its
-	// concurrency limit, played at the muzzle.
-	if (FireSound)
-	{
-		UGameplayStatics::SpawnSoundAttached(
-			FireSound, WeaponMesh, MuzzleSocketName,
-			FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::SnapToTarget,
-			/*bStopWhenAttachedToDestroyed=*/ true,
-			/*VolumeMultiplier=*/ 1.0f, /*PitchMultiplier=*/ 1.0f, /*StartTime=*/ 0.0f,
-			FireAttenuation, FireConcurrency, /*bAutoDestroy=*/ true);
-	}
-
-	// The tracer: the template's own tracer actor, spawned muzzle-to-landing-point exactly where its
-	// blueprint spawned it.
-	if (TracerActorClass)
-	{
-		const FRotator TracerRotation = (TraceEnd - MuzzleLocation).Rotation();
-		GetWorld()->SpawnActor<AActor>(TracerActorClass, MuzzleLocation, TracerRotation);
-	}
-
-	// The impact decal at the landing point, on the surface normal. A miss has no normal to stick to.
-	if (ImpactDecalClass && Hit.bBlockingHit && !Hit.ImpactNormal.IsNearlyZero())
-	{
-		const FTransform DecalTransform(Hit.ImpactNormal.Rotation(), Hit.ImpactPoint, ImpactDecalScale);
-		GetWorld()->SpawnActor<AActor>(ImpactDecalClass, DecalTransform);
-	}
-
-	// The impact particle, at the landing point on the normal — and only when the surface has a
-	// physical material, which is the condition the template's own function used.
-	if (Hit.bBlockingHit && Hit.PhysMaterial.IsValid())
-	{
-		if (UNiagaraSystem* ImpactSystem = ImpactVFX.Get())
-		{
-			UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-				GetWorld(), ImpactSystem, Hit.ImpactPoint, Hit.ImpactNormal.Rotation());
-		}
-	}
-}
-
-void AProsperitocracyWeapon::PlayDryFire()
-{
-	PlayCharacterMontage(CharacterDryFireMontage);
-
-	if (DryFireSound)
-	{
-		UGameplayStatics::SpawnSoundAttached(
-			DryFireSound, WeaponMesh, MuzzleSocketName,
-			FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::SnapToTarget,
-			/*bStopWhenAttachedToDestroyed=*/ true,
-			/*VolumeMultiplier=*/ 1.0f, /*PitchMultiplier=*/ 1.0f, /*StartTime=*/ 0.0f,
-			FireAttenuation, FireConcurrency, /*bAutoDestroy=*/ true);
-	}
-}
-
-void AProsperitocracyWeapon::PlayCharacterMontage(UAnimMontage* Montage) const
-{
-	if (!Montage)
-	{
-		return;
-	}
-
-	const ACharacter* Character = Cast<ACharacter>(OwningPawn);
-	if (!Character)
-	{
-		return;
-	}
-
-	USkeletalMeshComponent* CharacterMesh = Character->GetMesh();
-	UAnimInstance* AnimInstance = CharacterMesh ? CharacterMesh->GetAnimInstance() : nullptr;
-	if (AnimInstance)
-	{
-		AnimInstance->Montage_Play(Montage);
-	}
-}
-
-void AProsperitocracyWeapon::ApplyDamage(const FHitResult& Hit)
+void AProsperitocracyWeapon::ApplyShotDamage(const FHitResult& Hit)
 {
 	AActor* HitActor = Hit.GetActor();
 	if (!HitActor)
@@ -399,7 +258,8 @@ void AProsperitocracyWeapon::ApplyDamage(const FHitResult& Hit)
 		return;
 	}
 
-	// A wall has no ability system: nothing to damage, and the decal has already been placed.
+	// A wall has no ability system: nothing to damage, and its impact FX has already been played by
+	// the gun's own graph.
 	UAbilitySystemComponent* TargetAbilitySystemComponent = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(HitActor);
 	if (!TargetAbilitySystemComponent)
 	{

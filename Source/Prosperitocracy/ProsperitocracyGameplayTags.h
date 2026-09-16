@@ -60,6 +60,13 @@ namespace ProsperitocracyGameplayTags
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Weapon_FireMode_FullAuto);
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Weapon_FireMode_SemiAuto);
 
+	// Slots — the tag IS the slot (Design/weapons.md): a weapon carries exactly one, and it goes in
+	// that slot, period. Not a stat: no number, and the evaluator never touches it.
+	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Weapon_Slot_Primary);
+	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Weapon_Slot_Secondary);
+	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Weapon_Slot_Special);
+	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Weapon_Slot_Grenade);
+
 	// The steady-aim (ADS) camera mode tag — the blend weight of this camera IS how far into
 	// ADS the player is (weapon feel: posture multipliers + reticle circle opacity read it).
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Weapon_SteadyAimingCamera);

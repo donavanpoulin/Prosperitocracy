@@ -55,6 +55,11 @@ namespace ProsperitocracyGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Weapon_FireMode_FullAuto, "Prosperitocracy.Weapon.FireMode.FullAuto", "Ranged weapon fire mode: fires continuously while the trigger is held (a tag on the weapon, not a stat).");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Weapon_FireMode_SemiAuto, "Prosperitocracy.Weapon.FireMode.SemiAuto", "Ranged weapon fire mode: one shot per trigger press (a tag on the weapon, not a stat).");
 
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Weapon_Slot_Primary, "Prosperitocracy.Weapon.Slot.Primary", "Primary weapon slot: the two rifles (Design/weapons.md). The tag IS the slot.");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Weapon_Slot_Secondary, "Prosperitocracy.Weapon.Slot.Secondary", "Secondary weapon slot: pistol and SMG (Design/weapons.md). The tag IS the slot.");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Weapon_Slot_Special, "Prosperitocracy.Weapon.Slot.Special", "Special weapon slot (Design/weapons.md). The tag IS the slot.");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Weapon_Slot_Grenade, "Prosperitocracy.Weapon.Slot.Grenade", "Grenade slot: one grenade at a time (Design/weapons.md). The tag IS the slot.");
+
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Weapon_SteadyAimingCamera, "Prosperitocracy.Weapon.SteadyAimingCamera", "The steady-aim (ADS) camera mode: its blend weight is how far into ADS the player is.");
 
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Enemy_Tier_T1, "Enemy.Tier.T1", "Enemy tier 1 (e.g. Zombies).");

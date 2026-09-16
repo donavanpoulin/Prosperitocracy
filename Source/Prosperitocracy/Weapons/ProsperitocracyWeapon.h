@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/HitResult.h"
 #include "GameFramework/Actor.h"
 #include "Stats/ProsperitocracyStat.h"
 
@@ -10,33 +11,33 @@
 
 class AProsperitocracyStatHostActor;
 class APawn;
-class UAnimMontage;
-class UAnimationAsset;
 class UGameplayEffect;
-class UNiagaraSystem;
 class USkeletalMeshComponent;
-class USoundAttenuation;
-class USoundBase;
-class USoundConcurrency;
 class UProsperitocracyStatTable;
-class UProsperitocracyWeaponBodyData;
 
 /**
  * AProsperitocracyWeapon
  *
- * One gun. Ours — it owns the shot: the trace, the ammo, the cadence, the fire mode, and the
- * damage it deals. The template's gun blueprints (BP_MasterWeapon / BP_Pistol / BP_Rifle) owned all
- * of that in Blueprint graphs; this class takes the logic and leaves them their assets, which it
- * plays through the body asset on the gun's stat block (UProsperitocracyWeaponBodyData).
+ * The NUMBERS and the DAMAGE of one gun. Nothing visual.
  *
- * So the meshes, the anims, the montages, the sounds, the attenuations, the muzzle flash, the
- * tracer actor and the impact decal are all the template's own — the same assets its blueprints
- * pointed at, read off them rather than re-authored.
+ * The template's own gun blueprints are the gun: BP_MasterWeapon, and BP_Pistol / BP_Rifle under it,
+ * already carry the mesh, the Muzzle socket, the fire and reload anims, the character montages, the
+ * sounds with their attenuation and concurrency, the muzzle flash, the tracer, the decal and the
+ * impact particle — and their EventFire/EventReload already trace and play all of it. This class is
+ * what those blueprints inherit, so that the SAME shot:
  *
- * The gun's numbers are NOT here. They are its stat block (UProsperitocracyStatTable), resolved by
- * the ONE evaluator through this gun's own GAS home (AProsperitocracyStatHostActor): MagSize,
- * Capacity, Rate, PiercingDamage, Penetration, Range, Falloff, Accuracy, Recoil, Weight. A new gun
- * is a new stat block on an existing body.
+ *   (a) spends a round out of OUR magazine instead of their Weapon_Details ammo struct, and
+ *   (b) deals OUR damage on the hit they already trace.
+ *
+ * (b) is the whole missing half: their EventFire traced, drew FX and stopped — there is no
+ * ApplyDamage anywhere in it. That is why their guns deal nothing today.
+ *
+ * The gun's numbers are not here either. They are its stat block (UProsperitocracyStatTable),
+ * resolved through this gun's own GAS home (AProsperitocracyStatHostActor) by the ONE evaluator:
+ * MagSize, Capacity, Rate, PiercingDamage, Penetration, Range, Falloff, Accuracy, Recoil, Weight.
+ *
+ * There is deliberately NO body asset: the gun blueprint IS the body, so a second asset pointing at
+ * the same mesh, anims and sounds would be a competing source for one thing.
  */
 UCLASS(BlueprintType)
 class AProsperitocracyWeapon : public AActor
@@ -47,31 +48,66 @@ public:
 	AProsperitocracyWeapon();
 
 	/**
-	 * Build the gun from its stat block: load the body it rides on, spawn its GAS home and push the
-	 * block's bases into it, then fill the first magazine.
+	 * Point the gun at its numbers: spawn its GAS home, push the block's bases into it, and fill the
+	 * first magazine. The gun's own BeginPlay calls this with what its owner's LOADOUT says this body
+	 * is made of — the numbers and the effect its shot applies arrive together, because they are one
+	 * decision. Callable again whenever the loadout changes what this body carries.
 	 */
-	void InitializeFromStatBlock(UProsperitocracyStatTable* InStatBlock, APawn* InOwningPawn = nullptr);
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	void InitializeFromStatBlock(UProsperitocracyStatTable* InStatBlock, TSubclassOf<UGameplayEffect> InDamageEffectClass, APawn* InOwningPawn = nullptr);
 
 	/**
-	 * One committed shot. False when the Rate cadence has not elapsed (silent — too soon, not empty)
-	 * or when the magazine is empty (dry fire plays, and the shot is refused).
+	 * Make sure this gun has its numbers, and return whether it does.
+	 *
+	 * Called on BeginPlay AND on first use, because a gun spawned by a child actor component is NOT in
+	 * the rig yet when BeginPlay runs — a child actor is attached after it spawns, so at that moment
+	 * there is no attach parent and no owner to ask about the loadout. By the time the gun is fired or
+	 * reloaded it is in the rig, so the same call succeeds. That is why this is a door and not a
+	 * one-shot BeginPlay step, and why the gun never initializes from a guess.
 	 */
-	bool Fire();
+	bool EnsureInitialized();
+
+	//~ The two things their gun graph asks us, plus the damage it hands us -------------------------
+
+	/**
+	 * One committed shot's worth of ammo. True when a round actually left the magazine, so the gun's
+	 * own graph runs its shot; false when the magazine is empty (the graph's dry-fire branch) or the
+	 * Rate cadence has not elapsed (a silent refusal — not a dry fire).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	bool TryConsumeRound();
+
+	/** True when the magazine is empty — what decides their dry-fire branch, not a refused cadence. */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	bool IsMagazineEmpty() const { return MagazineAmmo <= 0; }
 
 	/**
 	 * Reload = a MAG SWAP, not a top-up: whatever is left in the magazine is wasted, never returned
 	 * to the pool, and a fresh magazine comes out of the pool — partial if that is all there is.
+	 * False when there is no spare magazine to load.
 	 */
-	bool Reload();
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	bool ReloadFromStats();
+
+	/**
+	 * OUR damage, on the hit the gun's own trace produced. The effect context carries that hit (the
+	 * impact point for falloff, the part hit for its armor and resists) and points at this gun's stat
+	 * host as the ABILITY SOURCE, which is where UProsperitocracyDamageExecution reads the damage
+	 * lines and the falloff from.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	void ApplyShotDamage(const FHitResult& Hit);
 
 	//~ Reads -------------------------------------------------------------------------------------
 
-	/** The gun's numbers — its row(s) in the universal stat table. A gun IS its stat block. */
+	/** The gun's numbers — its row in the universal stat table. A gun IS its stat block. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
 	UProsperitocracyStatTable* GetStatBlock() const { return StatBlock; }
 
 	AProsperitocracyStatHostActor* GetStatHost() const { return StatHost; }
-	USkeletalMeshComponent* GetWeaponMesh() const { return WeaponMesh; }
+
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	USkeletalMeshComponent* GetWeaponMesh() const;
 
 	/** FINAL value of one of this gun's stats, through the ONE evaluator (its own GAS home). */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
@@ -95,77 +131,49 @@ public:
 	FVector2D GetAimDriftDegrees() const { return AimDriftDegrees; }
 
 protected:
+	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-private:
-	void ApplyBody(const UProsperitocracyWeaponBodyData* InBody);
+	/**
+	 * The numbers, handed over by the loadout when this gun came up.
+	 *
+	 * Deliberately NOT a default on the gun blueprint. A default is a second copy of an answer that
+	 * has an owner, and the template's child actor components keep an archetype of the gun inside the
+	 * character asset — so a defaulted value gets copied there and then goes stale. The gun asks the
+	 * loadout what it is; nowhere on the gun can a stale number live.
+	 */
+	UPROPERTY(Transient)
+	TObjectPtr<UProsperitocracyStatTable> StatBlock;
 
-	bool CanFireNow() const;
-
-	/** The whole shot line: camera (with drift) to find the aim point, then muzzle to that point. */
-	FHitResult TraceShot(FVector& OutMuzzleLocation, FVector& OutTraceEnd) const;
-
-	void PlayShotFeedback(const FHitResult& Hit, const FVector& MuzzleLocation, const FVector& TraceEnd);
-	void PlayDryFire();
-	void PlayCharacterMontage(UAnimMontage* Montage) const;
-
-	/** Applies this gun's damage to whatever the shot hit, through the gun's own stat host. */
-	void ApplyDamage(const FHitResult& Hit);
-
-	/** The gun's own mesh — the template's SK_Pistol / SK_Rifle, whose 'Muzzle' socket everything uses. */
-	UPROPERTY(VisibleAnywhere, Category = "Prosperitocracy|Weapon")
-	TObjectPtr<USkeletalMeshComponent> WeaponMesh;
+	/**
+	 * What a committed shot applies to whatever it hits, also from the loadout — one asset for every
+	 * gun, for the same reason. Its execution must be UProsperitocracyDamageExecution: that reads the
+	 * damage lines and the falloff from the shot's ability source, which is this gun's stat host.
+	 */
+	UPROPERTY(Transient)
+	TSubclassOf<UGameplayEffect> DamageEffectClass;
 
 	/** The gun's GAS home — its stats are attributes on this actor's own ASC (the ONE evaluator). */
 	UPROPERTY(VisibleAnywhere, Category = "Prosperitocracy|Weapon")
 	TObjectPtr<AProsperitocracyStatHostActor> StatHost;
 
-	UPROPERTY(Transient)
-	TObjectPtr<UProsperitocracyStatTable> StatBlock;
-
-	/**
-	 * What a committed shot applies to whatever it hits. Its execution must be
-	 * UProsperitocracyDamageExecution: that reads the damage lines and the falloff from the shot's
-	 * ability source, which is this gun's stat host.
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Prosperitocracy|Weapon")
-	TSubclassOf<UGameplayEffect> DamageEffectClass;
-
-	/**
-	 * The impact particle, spawned at the landing point on the surface normal. This one is NOT on the
-	 * body asset, because the template's own Impact_VFX used the same system for every gun
-	 * (NS_Imacts both branches) — reading it off their WeaponSystem graph, not assumed. Their function
-	 * also gated it on the hit having a physical material; so does this.
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Prosperitocracy|Weapon")
-	TSoftObjectPtr<UNiagaraSystem> ImpactVFX;
-
-	//~ Resolved body assets: loaded once, in ApplyBody, and kept alive here.
-	UPROPERTY(Transient) TObjectPtr<UAnimationAsset> GunFireAnim;
-	UPROPERTY(Transient) TObjectPtr<UAnimationAsset> GunReloadAnim;
-	UPROPERTY(Transient) TObjectPtr<UAnimMontage> CharacterFireMontage;
-	UPROPERTY(Transient) TObjectPtr<UAnimMontage> CharacterReloadMontage;
-	UPROPERTY(Transient) TObjectPtr<UAnimMontage> CharacterDryFireMontage;
-	UPROPERTY(Transient) TObjectPtr<USoundBase> FireSound;
-	UPROPERTY(Transient) TObjectPtr<USoundBase> DryFireSound;
-	UPROPERTY(Transient) TObjectPtr<USoundAttenuation> FireAttenuation;
-	UPROPERTY(Transient) TObjectPtr<USoundConcurrency> FireConcurrency;
-	UPROPERTY(Transient) TObjectPtr<UNiagaraSystem> MuzzleVFX;
-	UPROPERTY(Transient) TSubclassOf<AActor> TracerActorClass;
-	UPROPERTY(Transient) TSubclassOf<AActor> ImpactDecalClass;
-	UPROPERTY(Transient) FVector ImpactDecalScale = FVector(0.01f, 0.02f, 0.02f);
-
 	//~ Runtime state.
 	UPROPERTY(Transient) TObjectPtr<APawn> OwningPawn;
+
+	/** Whether the numbers are in hand. False until the loadout has answered. */
+	bool bInitialized = false;
+
+	/** One warning per gun, not one per shot, when the loadout carries no entry for this body. */
+	bool bNoLoadoutEntryWarned = false;
 
 	int32 MagazineAmmo = 0;
 	int32 SpareAmmo = 0;
 	float LastShotTime = -BIG_NUMBER;
 	FVector2D AimDriftDegrees = FVector2D::ZeroVector;
 
-	/** How far a shot reaches before it gives up (cm). The template's own traces used 20000. */
-	static constexpr float MaxShotRangeCm = 20000.0f;
+private:
+	bool CanFireNow() const;
 
-	/** The socket the template's shot, sound and muzzle FX all start from. */
-	static const FName MuzzleSocketName;
+	/** One magazine's worth of rounds, from this gun's own MagSize stat. */
+	int32 MagazineSize() const;
 };

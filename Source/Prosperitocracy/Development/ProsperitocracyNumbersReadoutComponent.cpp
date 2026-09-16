@@ -4,9 +4,12 @@
 
 #include "AbilitySystem/Attributes/ProsperitocracyHealthSet.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
+#include "Components/ChildActorComponent.h"
 #include "Engine/Engine.h"
 #include "GameFramework/Actor.h"
 #include "ProsperitocracyLogChannels.h"
+#include "Stats/ProsperitocracyStatTable.h"
+#include "Weapons/ProsperitocracyWeapon.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyNumbersReadoutComponent)
 
@@ -70,7 +73,29 @@ void UProsperitocracyNumbersReadoutComponent::TickComponent(float DeltaTime, ELe
 		return;
 	}
 
+	// The guns' numbers, read from the guns themselves. This is OUR readout: the template's ammo
+	// widget reads the template's own ammo struct, which nothing writes any more, so it is not a
+	// readout of anything.
+	FString GunLine;
+	if (AActor* Owner = GetOwner())
+	{
+		TArray<UChildActorComponent*> ChildComponents;
+		Owner->GetComponents<UChildActorComponent>(ChildComponents);
+		for (UChildActorComponent* ChildComponent : ChildComponents)
+		{
+			AProsperitocracyWeapon* Weapon = ChildComponent ? Cast<AProsperitocracyWeapon>(ChildComponent->GetChildActor()) : nullptr;
+			if (!Weapon)
+			{
+				continue;
+			}
+			// Ask the gun to make sure it has its numbers before reading them.
+			Weapon->EnsureInitialized();
+			GunLine += FString::Printf(TEXT("   %s  %d / %d"),
+				*GetNameSafe(Weapon->GetStatBlock()), Weapon->GetMagazineAmmo(), Weapon->GetSpareAmmo());
+		}
+	}
+
 	// TimeToDisplay 0.0 with a fixed key refreshes the one line every frame.
 	GEngine->AddOnScreenDebugMessage(ReadoutMessageKey, 0.0f, FColor::White,
-		FString::Printf(TEXT("Health  %.1f / %.1f"), HealthSet->GetHealth(), HealthSet->GetMaxHealth()));
+		FString::Printf(TEXT("Health  %.1f / %.1f%s"), HealthSet->GetHealth(), HealthSet->GetMaxHealth(), *GunLine));
 }
