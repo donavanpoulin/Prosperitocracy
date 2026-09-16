@@ -21,21 +21,33 @@ public class Prosperitocracy : ModuleRules
 		// GAS landed with the attribute sets: it is the ONE evaluator every stat resolves through
 		// (Design/stats.md), so nothing numeric can work without it. GameplayTasks is GAS's own
 		// dependency; GameplayTags is required by NativeGameplayTags.h.
+		// PhysicsCore landed with the ability layer: UPhysicalMaterialWithTags derives from UPhysicalMaterial,
+		// which lives there (Physics/PhysicalMaterialWithTags.h). The linker named it — unresolved
+		// UPhysicalMaterial ctor/dtor/vtable in PhysicalMaterialWithTags.cpp.obj — not a guess.
 		PublicDependencyModuleNames.AddRange(
 			new string[] {
 				"Core",
 				"CoreUObject",
 				"Engine",
+				"PhysicsCore",
 				"GameplayAbilities",
 				"GameplayTasks",
 				"GameplayTags"
 			}
 		);
-
 		PrivateDependencyModuleNames.AddRange(
-			new string[] {
+			new string[]
+			{
 				"InputCore"
 			}
 		);
+
+		// Iris support landed with the ability layer, and it is what the second failed link was about:
+		// ProsperitocracyGameplayEffectContext.cpp carries a net serializer, and its registry symbols
+		// (UE::Net::FNetSerializerRegistryDelegates, FNetSerializerConfig, FPropertyNetSerializerInfoRegistry)
+		// live in the IrisCore module — checked in the engine at Runtime/Net/Iris/. NetCore was my first
+		// guess and did not fix it; the old project calls this same helper. It adds IrisCore plus
+		// UE_WITH_IRIS=1, so the ported code sees Iris exactly as it did on the other side.
+		SetupIrisSupport(Target);
 	}
 }
