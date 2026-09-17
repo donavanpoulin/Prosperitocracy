@@ -7,9 +7,13 @@
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyGameplayEffectContext.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Character/ProsperitocracyCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 #include "GameplayEffect.h"
 #include "ProsperitocracyGameplayTags.h"
 #include "ProsperitocracyLogChannels.h"
@@ -22,7 +26,9 @@
 
 AProsperitocracyWeapon::AProsperitocracyWeapon()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	// The gun's aim state (the trail, the spread, the settle) is a per-frame simulation, so the actor
+	// ticks. Only a gun that has been dressed does any of it — see Tick.
+	PrimaryActorTick.bCanEverTick = true;
 }
 
 void AProsperitocracyWeapon::BeginPlay()
@@ -33,6 +39,21 @@ void AProsperitocracyWeapon::BeginPlay()
 	// starts do. A gun the rig re-creates later (a slot switch) is not attached yet and gets them on
 	// first use instead. See EnsureInitialized.
 	EnsureInitialized();
+}
+
+void AProsperitocracyWeapon::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	// An undressed gun has no numbers, so it has no feel: it neither trails nor settles. That is also
+	// what keeps a gun the rig has thrown away from simulating anything.
+	if (!bInitialized)
+	{
+		return;
+	}
+
+	UpdatePostureMultipliers(DeltaSeconds);
+	UpdateDrift(DeltaSeconds);
 }
 
 bool AProsperitocracyWeapon::EnsureInitialized()
@@ -195,7 +216,17 @@ bool AProsperitocracyWeapon::ApplyLoadoutEntry(const FGameplayTag& InSlot, UPros
 	// one in the gun — and more magazines never makes a magazine bigger.
 	OwnerLoadout->GetOrCreateAmmoForSlot(Slot, MagazineSize(), MagazineCapacity());
 
+	// A gun that has just come up starts from a clean aim: no trail or climb left over from the last
+	// time it was held, and no swing measured across the gap (a gun that was put away for a minute
+	// would otherwise read that whole minute as one enormous camera swing on its first tick back).
 	LastShotTime = -BIG_NUMBER;
+	AimDriftDegrees = FVector2D::ZeroVector;
+	CurrentAccuracyMultiplier = 1.0f;
+	StandingStillMultiplier = 1.0f;
+	JumpFallMultiplier = 1.0f;
+	CrouchingMultiplier = 1.0f;
+	LastControlRotation = FRotator::ZeroRotator;
+	bHasLastControlRotation = false;
 	bInitialized = true;
 
 	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s ready — slot %s | block %s | mag %d spare %d | rate %.2f/s | %s"),
@@ -397,4 +428,174 @@ void AProsperitocracyWeapon::ApplyShotDamage(const FHitResult& Hit)
 	{
 		SourceAbilitySystemComponent->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetAbilitySystemComponent);
 	}
+}
+
+AProsperitocracyCharacter* AProsperitocracyWeapon::GetOwnerCharacter() const
+{
+	return Cast<AProsperitocracyCharacter>(OwningPawn);
+}
+
+APlayerController* AProsperitocracyWeapon::GetOwningPlayerController() const
+{
+	return OwningPawn ? Cast<APlayerController>(OwningPawn->GetController()) : nullptr;
+}
+
+FVector AProsperitocracyWeapon::GetShotDirection() const
+{
+	// The aim the player steers, plus what this gun adds to it. This is the one direction the bullet
+	// flies along and the one the reticle circle is projected along, so the two cannot disagree. The
+	// pose adds the same drift to the same aim in AProsperitocracyCharacter::GetBaseAimRotation.
+	//
+	// Camera rotation while a camera manager exists; the pawn's own control rotation otherwise; an
+	// unheld gun falls back to its own forward, which is a state it is never fired in.
+	const APlayerController* PC = GetOwningPlayerController();
+	const FRotator AimRotation = (PC && PC->PlayerCameraManager)
+		? PC->PlayerCameraManager->GetCameraRotation()
+		: (OwningPawn ? OwningPawn->GetControlRotation() : GetActorRotation());
+
+	const FVector2D Drift = GetAimDriftDegrees();
+	FRotator ShotRotation = AimRotation;
+	ShotRotation.Pitch += Drift.Y;
+	ShotRotation.Yaw += Drift.X;
+
+	return ShotRotation.Vector();
+}
+
+void AProsperitocracyWeapon::ApplyShotFeel()
+{
+	// Recoil climbs the CIRCLE, never the screen (Design/ui.md): each shot pushes the aim up, and the
+	// Weight-driven return in UpdateDrift brings it back down once the firing stops. Recoil is its own
+	// axis — it never touches Accuracy, and Accuracy never scales it.
+	AimDriftDegrees.Y += GetRecoil();
+
+	// Then the spread: a random shove in any direction around the aim point. That displacement IS the
+	// spread — hold the trigger and the circle dances.
+	ApplySpreadShove();
+
+	ClampDrift();
+}
+
+void AProsperitocracyWeapon::ApplySpreadShove()
+{
+	// Accuracy is the only driver, and higher is tighter: the displacement shrinks as the effective
+	// Accuracy grows. The floor keeps a nonsensical value from inverting the curve.
+	const float EffectiveAccuracy = GetEffectiveAccuracy();
+	const float ShoveMagnitude = ProsperitocracyWeaponHandling::SpreadShoveBaseDegrees / FMath::Max(0.25f, EffectiveAccuracy);
+	const float Angle = FMath::FRandRange(0.0f, 2.0f * PI);
+
+	AimDriftDegrees.X += FMath::Cos(Angle) * ShoveMagnitude;
+	AimDriftDegrees.Y += FMath::Sin(Angle) * ShoveMagnitude;
+
+	ClampDrift();
+}
+
+void AProsperitocracyWeapon::UpdateDrift(float DeltaSeconds)
+{
+	if (DeltaSeconds <= 0.0f)
+	{
+		return;
+	}
+
+	APawn* Pawn = OwningPawn;
+	APlayerController* PC = GetOwningPlayerController();
+	if (!Pawn || !PC)
+	{
+		return;
+	}
+
+	// Weight is the whole feel of the sway: in this file it is the ONLY stat that scales the trail,
+	// the displacement and the settle rate. It is read through this gun's own GAS home like every
+	// other number, so a perk or attachment that moves it moves the feel.
+	const float Weight = FMath::Max(0.0f, GetWeaponStat(EProsperitocracyStat::Weight));
+
+	// --- The handling trail: the circle lags behind a camera swing, heavier lags further ---
+	const FRotator CurrentRotation = PC->GetControlRotation();
+	if (bHasLastControlRotation)
+	{
+		const FRotator Delta = (CurrentRotation - LastControlRotation).GetNormalized();
+		const float LagTime = ProsperitocracyWeaponHandling::LagTimeBase + Weight * ProsperitocracyWeaponHandling::LagTimePerWeight;
+
+		// Opposite the motion: swing right and the circle sits left of centre, swing up and it sits
+		// below. Stop moving and the settle below pulls it back.
+		AimDriftDegrees.X += -Delta.Yaw * LagTime;
+		AimDriftDegrees.Y += -Delta.Pitch * LagTime;
+	}
+	LastControlRotation = CurrentRotation;
+	bHasLastControlRotation = true;
+
+	// --- The movement trail: the aim is an inert mass, so it lags its own motion ---
+	const FVector Velocity2D(Pawn->GetVelocity().X, Pawn->GetVelocity().Y, 0.0f);
+	const FVector CameraForward = PC->GetControlRotation().Vector();
+	const FVector Forward2D = FVector(CameraForward.X, CameraForward.Y, 0.0f).GetSafeNormal();
+	const FVector Right2D(-Forward2D.Y, Forward2D.X, 0.0f);
+	const float ForwardSpeed = FVector::DotProduct(Velocity2D, Forward2D);
+	const float RightSpeed = FVector::DotProduct(Velocity2D, Right2D);
+
+	// dt-scaled, so the resting offset the trail settles at (speed x displacement / return rate) is the
+	// same at any framerate. Run right and the aim lags left; run forward and it rises — the vertical
+	// is a fraction of the sidelong shift, which is what makes the movement oval a wide one.
+	const float MoveDisplace = ProsperitocracyWeaponHandling::MoveDisplaceBase + Weight * ProsperitocracyWeaponHandling::MoveDisplacePerWeight;
+	AimDriftDegrees.X += -RightSpeed * MoveDisplace * DeltaSeconds;
+	AimDriftDegrees.Y += ForwardSpeed * MoveDisplace * ProsperitocracyWeaponHandling::MoveVerticalFraction * DeltaSeconds;
+
+	// --- Back to centre: the same Weight makes the return slower, so heavy gear stays unsettled ---
+	const float ReturnRate = FMath::Max(
+		ProsperitocracyWeaponHandling::ReturnRateMin,
+		ProsperitocracyWeaponHandling::ReturnRateBase - Weight * ProsperitocracyWeaponHandling::ReturnRatePerWeight);
+	AimDriftDegrees *= FMath::Max(0.0f, 1.0f - ReturnRate * DeltaSeconds);
+
+	ClampDrift();
+}
+
+void AProsperitocracyWeapon::UpdatePostureMultipliers(float DeltaSeconds)
+{
+	UCharacterMovementComponent* Movement = OwningPawn ? OwningPawn->FindComponentByClass<UCharacterMovementComponent>() : nullptr;
+
+	// Standing still steadies: full bonus at a standstill, gone once the character is genuinely moving.
+	const float Speed = OwningPawn ? OwningPawn->GetVelocity().Size() : 0.0f;
+	const float StandingStillTarget = FMath::GetMappedRangeValueClamped(
+		/*InputRange=*/ FVector2D(ProsperitocracyWeaponHandling::StandingStillSpeedThreshold, ProsperitocracyWeaponHandling::StandingStillSpeedThreshold + ProsperitocracyWeaponHandling::StandingStillToMovingSpeedRange),
+		/*OutputRange=*/ FVector2D(ProsperitocracyWeaponHandling::PostureMultiplier_StandingStill, 1.0f),
+		/*Alpha=*/ Speed);
+	StandingStillMultiplier = FMath::FInterpTo(StandingStillMultiplier, StandingStillTarget, DeltaSeconds, ProsperitocracyWeaponHandling::TransitionRate_Posture);
+
+	// Crouching steadies more; being in the air is sloppier. Neither has a stat: they are posture.
+	const bool bCrouching = Movement && Movement->IsCrouching();
+	CrouchingMultiplier = FMath::FInterpTo(CrouchingMultiplier, bCrouching ? ProsperitocracyWeaponHandling::PostureMultiplier_Crouching : 1.0f, DeltaSeconds, ProsperitocracyWeaponHandling::TransitionRate_Posture);
+
+	const bool bFalling = Movement && Movement->IsFalling();
+	JumpFallMultiplier = FMath::FInterpTo(JumpFallMultiplier, bFalling ? ProsperitocracyWeaponHandling::PostureMultiplier_JumpingOrFalling : 1.0f, DeltaSeconds, ProsperitocracyWeaponHandling::TransitionRate_Posture);
+
+	// Aiming steadies most of all, and it eases in with the camera: the very same ADS blend the
+	// reticle circle fades in with, so the tighter group and the visible aid arrive together.
+	const AProsperitocracyCharacter* Character = GetOwnerCharacter();
+	const float AimingAlpha = Character ? Character->GetAimingAlpha() : 0.0f;
+	const float AimingMultiplier = FMath::GetMappedRangeValueClamped(
+		/*InputRange=*/ FVector2D(0.0f, 1.0f),
+		/*OutputRange=*/ FVector2D(1.0f, ProsperitocracyWeaponHandling::PostureMultiplier_Aiming),
+		/*Alpha=*/ AimingAlpha);
+
+	// One multiplier on Accuracy. Posture never touches the recoil climb and never touches the trail.
+	CurrentAccuracyMultiplier = AimingMultiplier * StandingStillMultiplier * CrouchingMultiplier * JumpFallMultiplier;
+}
+
+void AProsperitocracyWeapon::ClampDrift()
+{
+	constexpr float MaxDrift = ProsperitocracyWeaponHandling::MaxDriftDegrees;
+	AimDriftDegrees.X = FMath::Clamp(AimDriftDegrees.X, -MaxDrift, MaxDrift);
+	AimDriftDegrees.Y = FMath::Clamp(AimDriftDegrees.Y, -MaxDrift, MaxDrift);
+}
+
+float AProsperitocracyWeapon::GetAccuracy() const
+{
+	// Presence-is-scope: an absent Accuracy evaluates to 0 through GAS, and here that means "not
+	// specified" rather than "hopelessly inaccurate", so it falls back to the baseline 1.0.
+	const float Accuracy = GetWeaponStat(EProsperitocracyStat::Accuracy);
+	return (Accuracy > 0.0f) ? Accuracy : 1.0f;
+}
+
+float AProsperitocracyWeapon::GetRecoil() const
+{
+	// Presence-is-scope: no Recoil stat means no climb at all.
+	return GetWeaponStat(EProsperitocracyStat::Recoil);
 }

@@ -10,6 +10,7 @@
 
 #include "ProsperitocracyWeapon.generated.h"
 
+class AProsperitocracyCharacter;
 class AProsperitocracyStatHostActor;
 class APawn;
 class UGameplayEffect;
@@ -17,6 +18,53 @@ class USkeletalMeshComponent;
 class UProsperitocracyLoadoutComponent;
 class UProsperitocracyStatTable;
 struct FProsperitocracyWeaponAmmo;
+
+/**
+ * The weapon-feel numbers: every constant the aim circle is built from.
+ *
+ * These are HARD RULES of the design (Design/ui.md, Design/combat.md) and they are universal — the
+ * same value for every weapon, always. Nothing here is per-gun config: a gun's feel is exactly three
+ * of its own STATS (Accuracy = the per-shot spread, Weight = the sway, Recoil = the up-climb) and
+ * these constants are only the shape those stats are poured into. Changing one changes every weapon
+ * at once, which is the point. All values [TUNE].
+ */
+namespace ProsperitocracyWeaponHandling
+{
+	// Hard cap, so the circle (trail + spread + climb) can never fly off the screen.
+	constexpr float MaxDriftDegrees = 10.0f;
+
+	// --- Posture multipliers: fixed for everybody, and they scale Accuracy only. ---
+	constexpr float PostureMultiplier_Aiming = 1.4f;            // aiming down sights steadies
+	constexpr float PostureMultiplier_StandingStill = 1.2f;     // standing still steadies
+	constexpr float PostureMultiplier_Crouching = 1.35f;        // crouching steadies more
+	constexpr float PostureMultiplier_JumpingOrFalling = 0.65f; // airborne is sloppier
+
+	// How fast a posture change takes hold (per second), so none of them snaps.
+	constexpr float TransitionRate_Posture = 5.0f;
+
+	// At or below this speed (cm/s) the character counts as standing still; the bonus fades over range.
+	constexpr float StandingStillSpeedThreshold = 80.0f;
+	constexpr float StandingStillToMovingSpeedRange = 20.0f;
+
+	// --- Handling trail (Weight-driven): the circle trails a camera swing. ---
+	// Degrees of trail per degree of swing, and the return-to-centre rate per second.
+	constexpr float LagTimeBase = 0.012f;       // light weapon: a short trail
+	constexpr float LagTimePerWeight = 0.003f;  // heavier: a longer one
+	constexpr float ReturnRateBase = 8.0f;      // light weapon: settles fast
+	constexpr float ReturnRatePerWeight = 0.5f; // heavier: settles slower
+	constexpr float ReturnRateMin = 2.0f;
+
+	// --- Per-shot spread (Accuracy-driven). ---
+	// Degrees of random displacement per shot at EffectiveAccuracy == 1.0.
+	constexpr float SpreadShoveBaseDegrees = 1.2f;
+
+	// --- Movement trail (Weight-driven): the aim is an inert mass and lags its own motion. ---
+	// Degrees per second of displacement per (cm/s) of motion, and how much of a forward/back shift
+	// shows vertically — a fraction of the sidestep, which is what makes the oval horizontal.
+	constexpr float MoveDisplaceBase = 0.008f;
+	constexpr float MoveDisplacePerWeight = 0.0019f;
+	constexpr float MoveVerticalFraction = 0.35f;
+}
 
 /**
  * AProsperitocracyWeapon
@@ -146,11 +194,48 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
 	int32 GetSpareAmmo() const;
 
-	/** The aim circle's current drift, in degrees. The bullet and the reticle add the SAME value. */
-	FVector2D GetAimDriftDegrees() const { return AimDriftDegrees; }
+	/**
+	 * The aim circle's current offset from the dot, in degrees: X = yaw (+ = right), Y = pitch (+ = up).
+	 *
+	 * This one value has three readers — the reticle circle, the bullet, and the character's aim pose —
+	 * which is what makes them one aim instead of three (Design/combat.md). Clamped on the way out, so
+	 * no reader can ever be handed a circle that has left the screen.
+	 */
+	FVector2D GetAimDriftDegrees() const
+	{
+		constexpr float MaxDrift = ProsperitocracyWeaponHandling::MaxDriftDegrees;
+		return FVector2D(
+			FMath::Clamp(AimDriftDegrees.X, -MaxDrift, MaxDrift),
+			FMath::Clamp(AimDriftDegrees.Y, -MaxDrift, MaxDrift));
+	}
+
+	/**
+	 * The direction the next bullet flies along: the camera's aim plus this gun's drift.
+	 *
+	 * The shot reads this instead of the raw camera forward, which is what makes the bullet land where
+	 * the reticle circle sits — and the circle is projected along this very vector, so the two cannot
+	 * drift apart.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	FVector GetShotDirection() const;
+
+	/**
+	 * One committed shot's worth of feel: the recoil climb, then the per-shot spread shove.
+	 *
+	 * Called once per shot that actually leaves the gun, AFTER that shot has been traced — so a shot is
+	 * never deflected by its own kick. The bullet goes where the circle was when the trigger broke, and
+	 * the climb and shove move the circle for the next one (Design/ui.md: every bullet lands exactly
+	 * where the circle points at that instant).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	void ApplyShotFeel();
+
+	/** (base Accuracy stat) x (the combined posture multiplier) — the driver of the per-shot shove. */
+	float GetEffectiveAccuracy() const { return GetAccuracy() * CurrentAccuracyMultiplier; }
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaSeconds) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	/**
@@ -211,10 +296,56 @@ protected:
 	bool bDressFailureLogged = false;
 
 	float LastShotTime = -BIG_NUMBER;
+
+	/**
+	 * The circle's offset from the dot, in degrees (X = yaw, Y = pitch) — the gun's whole aim state.
+	 *
+	 * Four drivers feed it and one decay pulls it back: the handling trail from Weight, the movement
+	 * trail from Weight, the per-shot shove from Accuracy, and the climb from Recoil. Everything that
+	 * wants to know where this gun is actually pointing — the bullet, the reticle, the pose — reads
+	 * this one value (see GetAimDriftDegrees).
+	 */
 	FVector2D AimDriftDegrees = FVector2D::ZeroVector;
+
+	// The current *combined* posture multiplier: ADS x standing still x crouching x airborne, all
+	// folded into the one number that scales Accuracy. Each part is a universal constant above and
+	// each eases in over TransitionRate_Posture rather than snapping.
+	float CurrentAccuracyMultiplier = 1.0f;
+	float StandingStillMultiplier = 1.0f;
+	float JumpFallMultiplier = 1.0f;
+	float CrouchingMultiplier = 1.0f;
+
+	// The camera rotation last tick, so a swing can be measured against it. The flag is what keeps the
+	// first tick after a gun comes up from reading as an enormous swing.
+	FRotator LastControlRotation = FRotator::ZeroRotator;
+	bool bHasLastControlRotation = false;
 
 private:
 	bool CanFireNow() const;
+
+	/** The character holding this gun, or null when it is held by no one (or not a character yet). */
+	AProsperitocracyCharacter* GetOwnerCharacter() const;
+
+	/** The player steering this gun, or null when nobody is (an unattended gun, a dummy). */
+	class APlayerController* GetOwningPlayerController() const;
+
+	/** The Accuracy stat. Presence-is-scope: an absent stat is the baseline 1.0, not a zero. */
+	float GetAccuracy() const;
+
+	/** The Recoil stat, in degrees of up-climb per shot. Presence-is-scope: absent = 0, no climb. */
+	float GetRecoil() const;
+
+	/** One random per-shot shove of the circle, sized by Accuracy. This IS the spread. */
+	void ApplySpreadShove();
+
+	/** The per-tick drift: the handling trail, the movement trail, and the return to centre. */
+	void UpdateDrift(float DeltaSeconds);
+
+	/** The per-tick posture multipliers: ADS, standing still, crouching, airborne. */
+	void UpdatePostureMultipliers(float DeltaSeconds);
+
+	/** Hold the circle on the screen after anything that moved it. */
+	void ClampDrift();
 
 	/** One magazine's worth of rounds, from this gun's own MagSize stat. */
 	int32 MagazineSize() const;

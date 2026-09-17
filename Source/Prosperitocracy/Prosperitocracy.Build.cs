@@ -27,6 +27,9 @@ public class Prosperitocracy : ModuleRules
 		// Niagara landed with the weapon: AProsperitocracyWeapon spawns the template's own muzzle-flash
 		// system per shot (UNiagaraFunctionLibrary / UNiagaraComponent / UNiagaraSystem live there).
 		// The plugin itself is enabled by default in 5.8 and the project already ships Niagara assets.
+		// UMG landed with the reticle: UProsperitocracyReticleWidgetBase is a UUserWidget that finds and
+		// moves two UImages (UMG), and FGeometry in its tick comes from SlateCore. Slate is here because
+		// UserWidget's own headers reach into it — measured by the linker, not guessed.
 		PublicDependencyModuleNames.AddRange(
 			new string[] {
 				"Core",
@@ -36,7 +39,10 @@ public class Prosperitocracy : ModuleRules
 				"GameplayAbilities",
 				"GameplayTasks",
 				"GameplayTags",
-				"Niagara"
+				"Niagara",
+				"UMG",
+				"Slate",
+				"SlateCore"
 			}
 		);
 		PrivateDependencyModuleNames.AddRange(
