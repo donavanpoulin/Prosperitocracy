@@ -74,3 +74,26 @@ const FProsperitocracyWeaponSlot* UProsperitocracyLoadout::FindEntryForBodyClass
 	// cannot say which gun it is, and the caller needs to hear about it rather than be handed one.
 	return (OutMatchCount == 1) ? Match : nullptr;
 }
+
+void UProsperitocracyLoadout::CollectCarriedBlocks(TArray<TPair<FGameplayTag, UProsperitocracyStatTable*>>& Out) const
+{
+	Out.Reset();
+
+	TArray<TPair<FGameplayTag, const FProsperitocracyWeaponSlot*>> Entries;
+	CollectEntries(Entries);
+
+	for (const TPair<FGameplayTag, const FProsperitocracyWeaponSlot*>& Entry : Entries)
+	{
+		// A slot that names no body carries nothing — an empty slot, not a broken one. It is skipped
+		// rather than counted as zero, so the list is the things carried and nothing else.
+		if (!Entry.Value || Entry.Value->BodyClass.IsNull())
+		{
+			continue;
+		}
+
+		if (UProsperitocracyStatTable* Block = Entry.Value->StatBlock.LoadSynchronous())
+		{
+			Out.Emplace(Entry.Key, Block);
+		}
+	}
+}

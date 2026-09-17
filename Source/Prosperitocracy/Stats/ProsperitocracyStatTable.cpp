@@ -42,3 +42,18 @@ void UProsperitocracyStatTable::BuildCanonicalStats(TArray<FProsperitocracyStatT
 	Add(EProsperitocracyStat::ImpactResist, 0.0f);
 	Add(EProsperitocracyStat::PiercingResist, 0.0f);
 }
+
+float UProsperitocracyStatTable::GetBaseValue(EProsperitocracyStat Stat) const
+{
+	for (const FProsperitocracyStatTableEntry& Entry : StatEntries)
+	{
+		if (Entry.Stat == Stat)
+		{
+			return Entry.BaseValue;
+		}
+	}
+
+	// Presence is scope: a stat the block does not carry is not zero-valued here, it is absent — and
+	// every caller of this door is asking about a stat it believes the block carries.
+	return 0.0f;
+}

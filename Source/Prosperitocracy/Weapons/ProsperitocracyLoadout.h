@@ -135,6 +135,16 @@ public:
 	 */
 	const FProsperitocracyWeaponSlot* FindEntryForBodyClass(const UClass* InBodyClass, FGameplayTag& OutSlot, int32& OutMatchCount) const;
 
+	/**
+	 * Every stat block this loadout actually carries, with the slot tag it sits in.
+	 *
+	 * Empty slots are skipped, and so is an entry with no stat block: neither of those is a thing the
+	 * character carries, so neither of them weighs anything. This is the carried SET — what the
+	 * character is holding, whether or not the rig has spawned an actor for it yet — which is what
+	 * anything that has to answer for the whole kit (its weight, its ammo, its slots) iterates.
+	 */
+	void CollectCarriedBlocks(TArray<TPair<FGameplayTag, UProsperitocracyStatTable*>>& Out) const;
+
 private:
 	/** The four slots as (tag, entry) pairs, in slot order: Primary, Secondary, Special, Grenade. */
 	void CollectEntries(TArray<TPair<FGameplayTag, const FProsperitocracyWeaponSlot*>>& Out) const;

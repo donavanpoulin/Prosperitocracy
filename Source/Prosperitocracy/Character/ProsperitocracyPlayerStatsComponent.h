@@ -35,6 +35,12 @@ class UProsperitocracyStatTable;
  * same number times one universal constant, so a walk is always half a run and tuning one number
  * tunes both. Jump is one stat too, and it is a VELOCITY (Jump Velocity, cm/s) because that is what
  * the body is driven by — a height would be the same jump described in a unit the movement cannot use.
+ *
+ * What the character CARRIES then moves both: every pound of gear costs the same slice of run speed
+ * and jump velocity, read from the loadout's carried total. Walking is never scaled directly — it is
+ * half of the already-scaled run speed, so it follows. That ordering is the whole design of it: one
+ * stat (weight) feeds one formula (percent per pound) which scales two numbers (run, jump), and the
+ * third (walk) is derived from one of them.
  */
 UCLASS(ClassGroup = (Prosperitocracy), meta = (BlueprintSpawnableComponent))
 class UProsperitocracyPlayerStatsComponent : public UActorComponent
@@ -52,17 +58,34 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
 	float GetStat(EProsperitocracyStat Stat) const;
 
-	/** The run speed: Move Speed as it stands. Running is the number; walking is a fraction of it. */
+	/** The run speed: Move Speed, through the weight penalty. Running is the number; walk is a fraction. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
-	float GetRunSpeed() const { return GetStat(EProsperitocracyStat::MoveSpeed); }
+	float GetRunSpeed() const { return GetStat(EProsperitocracyStat::MoveSpeed) * GetWeightSpeedMultiplier(); }
 
-	/** Walking: the same Move Speed through the one walk multiplier. The template's walk state reads this. */
+	/** Walking: the same Move Speed through the one walk multiplier, weight penalty included with it. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
 	float GetWalkSpeed() const;
 
-	/** The jump's launch velocity: Jump Velocity as it stands, straight onto the movement component. */
+	/** The jump's launch velocity: Jump Velocity through the weight penalty, onto the movement component. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
-	float GetJumpVelocity() const { return GetStat(EProsperitocracyStat::JumpVelocity); }
+	float GetJumpVelocity() const { return GetStat(EProsperitocracyStat::JumpVelocity) * GetWeightSpeedMultiplier(); }
+
+	/** Everything this character carries, in lbs, from its loadout. 0 when it carries nothing. */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
+	float GetCarriedWeightLbs() const;
+
+	/**
+	 * The weight penalty: what the carried weight does to run speed and jump velocity.
+	 *
+	 * It is a multiplier, not a delta, because it has to compose with everything else that already
+	 * moved those numbers (a perk, an attachment) without knowing any of them: the stat's FINAL value
+	 * is what gets scaled. Walking is not scaled again — it is half of the already-scaled run speed.
+	 *
+	 * This is the one formula, with one constant, for every character and every item: heavier is
+	 * slower, and there is nowhere else that decides how much.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
+	float GetWeightSpeedMultiplier() const;
 
 	/**
 	 * Push the movement numbers onto the character movement component: walk and run speed from Move
@@ -72,11 +95,28 @@ public:
 	void ApplyToMovement();
 
 	/**
+	 * The jump number on its own. Safe at any moment, because no movement state writes JumpZVelocity —
+	 * so this is what a change in what the character carries re-applies, while the walk and run speeds
+	 * wait for the movement state that owns them to read the stat again.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Stats")
+	void ApplyJumpVelocity();
+
+	/**
 	 * The one walk multiplier, universal — every character walks at the same fraction of its run
 	 * speed, so a slower character is slower walking too. It is not a stat and not a perk target:
 	 * the stat is the run speed, and this is the fraction that turns it into a walk.
 	 */
 	static constexpr float WalkSpeedMultiplier = 0.5f;
+
+	/**
+	 * The one weight constant: percent of run speed and jump velocity that one pound costs.
+	 *
+	 * One number for every weapon, every armor, every character — Design/loadout.md: "Total weight
+	 * reduces everything: jump height, walk/run speed, etc.", and Design/stats.md: a derived value is
+	 * computed by ONE fixed formula with universal constants. This is that constant. [TUNE]
+	 */
+	static constexpr float WeightPenaltyPercentPerLb = 0.5f;
 
 protected:
 	virtual void BeginPlay() override;

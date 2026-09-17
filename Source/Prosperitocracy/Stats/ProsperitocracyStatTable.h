@@ -83,4 +83,14 @@ public:
 	 * a design default).
 	 */
 	static void BuildCanonicalStats(TArray<FProsperitocracyStatTableEntry>& OutEntries);
+
+	/**
+	 * This block's AUTHORED base for one stat, or 0 when the block does not carry it.
+	 *
+	 * Careful — this is the block's number, not an evaluated one. A thing that is in the world has a
+	 * GAS home and its FINAL value must be read there (`AProsperitocracyWeapon::GetWeaponStat`); a
+	 * block read is for the one question only a block can answer: what does a thing I carry weigh
+	 * before anything has been dressed, i.e. before there is a host to ask.
+	 */
+	float GetBaseValue(EProsperitocracyStat Stat) const;
 };

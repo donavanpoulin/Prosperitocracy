@@ -9,6 +9,7 @@
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
 #include "Stats/ProsperitocracyStatTable.h"
+#include "Weapons/ProsperitocracyLoadoutComponent.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyPlayerStatsComponent)
 
@@ -107,6 +108,25 @@ float UProsperitocracyPlayerStatsComponent::GetWalkSpeed() const
 	return GetRunSpeed() * WalkSpeedMultiplier;
 }
 
+float UProsperitocracyPlayerStatsComponent::GetCarriedWeightLbs() const
+{
+	const AActor* Owner = GetOwner();
+	const UProsperitocracyLoadoutComponent* Loadout = Owner ? Owner->FindComponentByClass<UProsperitocracyLoadoutComponent>() : nullptr;
+	return Loadout ? Loadout->GetCarriedWeightLbs() : 0.0f;
+}
+
+float UProsperitocracyPlayerStatsComponent::GetWeightSpeedMultiplier() const
+{
+	const float Lbs = GetCarriedWeightLbs();
+	const float Multiplier = 1.0f - (Lbs * WeightPenaltyPercentPerLb * 0.01f);
+
+	// A multiplier below zero would run and jump the body BACKWARDS, which is never wanted — so the
+	// penalty bottoms out at a standstill. Where that floor should really sit (a weight past which
+	// nothing moves, or one that merely crawls) is a tuning question for heavy builds, and one worth
+	// asking rather than inventing: this clamps the arithmetic, nothing more.
+	return FMath::Clamp(Multiplier, 0.0f, 1.0f);
+}
+
 void UProsperitocracyPlayerStatsComponent::ApplyToMovement()
 {
 	AActor* Owner = GetOwner();
@@ -124,12 +144,26 @@ void UProsperitocracyPlayerStatsComponent::ApplyToMovement()
 		Movement->MaxWalkSpeed = WalkSpeed;
 	}
 
+	ApplyJumpVelocity();
+
+	UE_LOG(LogProsperitocracy, Log,
+		TEXT("%s on %s: movement from stats — walk %.0f | run %.0f | jump %.0f | carried %.1f lbs (weight x%.2f)"),
+		*GetName(), *GetNameSafe(Owner), Movement->MaxWalkSpeed, GetRunSpeed(), Movement->JumpZVelocity,
+		GetCarriedWeightLbs(), GetWeightSpeedMultiplier());
+}
+
+void UProsperitocracyPlayerStatsComponent::ApplyJumpVelocity()
+{
+	AActor* Owner = GetOwner();
+	UCharacterMovementComponent* Movement = Owner ? Owner->FindComponentByClass<UCharacterMovementComponent>() : nullptr;
+	if (!Movement)
+	{
+		return;
+	}
+
 	const float JumpVelocity = GetJumpVelocity();
 	if (JumpVelocity > 0.0f)
 	{
 		Movement->JumpZVelocity = JumpVelocity;
 	}
-
-	UE_LOG(LogProsperitocracy, Log, TEXT("%s on %s: movement from stats — walk %.0f | run %.0f | jump %.0f"),
-		*GetName(), *GetNameSafe(Owner), Movement->MaxWalkSpeed, GetRunSpeed(), Movement->JumpZVelocity);
 }

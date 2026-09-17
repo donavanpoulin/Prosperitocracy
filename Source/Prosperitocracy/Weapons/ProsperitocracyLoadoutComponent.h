@@ -82,6 +82,23 @@ public:
 	 */
 	EProsperitocracyWeaponDressResult DressGun(AProsperitocracyWeapon* Gun);
 
+	/**
+	 * Everything this character carries, in lbs — the sum of each carried thing's Weight.
+	 *
+	 * The loadout is the only thing that knows the whole kit, which is why the total is answered here
+	 * and not by any one item. A carried thing that the rig has already dressed is asked through its
+	 * own GAS home, so anything that modified THAT item's weight (a weight-reduction perk on a gun)
+	 * is counted; a thing that is carried but not yet in the world is read from its stat block, which
+	 * is exactly the number its host would be given (a block is the thing's own data, and a thing
+	 * that does not exist yet has nothing else). Design/loadout.md: "Every weapon has a weight. Every
+	 * backpack has a weight." — this is that total, and nothing is on it that is not carried.
+	 *
+	 * The unit is pounds, and it is not decoration: it is what the UI shows and what the movement
+	 * penalty is computed from.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Loadout")
+	float GetCarriedWeightLbs() const;
+
 	//~ Ammo — one store per slot, owned here rather than on the gun that fires it.
 
 	/**
@@ -100,4 +117,14 @@ private:
 	/** One entry per slot this carrier has fired or reloaded, keyed by the slot's tag. */
 	UPROPERTY(Transient)
 	TMap<FGameplayTag, FProsperitocracyWeaponAmmo> AmmoBySlot;
+
+	/**
+	 * The gun actors this carrier has dressed, by slot.
+	 *
+	 * Kept so the carried weight can be read from a live gun's own GAS home rather than from the block
+	 * it was built from — the two agree until something modifies an item's weight, and when they stop
+	 * agreeing the live one is the truth. Weak, because the rig destroys and re-creates gun actors
+	 * (a slot switch, a level change) and a dead gun must not be read from or held alive here.
+	 */
+	TMap<FGameplayTag, TWeakObjectPtr<AProsperitocracyWeapon>> DressedGunsBySlot;
 };

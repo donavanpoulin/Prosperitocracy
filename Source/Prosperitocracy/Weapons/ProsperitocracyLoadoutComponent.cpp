@@ -2,6 +2,7 @@
 
 #include "ProsperitocracyLoadoutComponent.h"
 
+#include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "GameFramework/Pawn.h"
 #include "Stats/ProsperitocracyStatTable.h"
 #include "Weapons/ProsperitocracyWeapon.h"
@@ -60,9 +61,59 @@ EProsperitocracyWeaponDressResult UProsperitocracyLoadoutComponent::DressGun(APr
 	}
 
 	// This component goes with the numbers, because it is where the ammo for that slot lives.
-	return Gun->ApplyLoadoutEntry(Slot, StatBlock, Loadout->GunDamageEffectClass, this, Cast<APawn>(GetOwner()))
-		? EProsperitocracyWeaponDressResult::Dressed
-		: EProsperitocracyWeaponDressResult::Undressed;
+	const bool bDressed = Gun->ApplyLoadoutEntry(Slot, StatBlock, Loadout->GunDamageEffectClass, this, Cast<APawn>(GetOwner()));
+	if (!bDressed)
+	{
+		return EProsperitocracyWeaponDressResult::Undressed;
+	}
+
+	// Remember the live gun for this slot: its weight is read from its own GAS home from now on, so a
+	// gun whose weight was modified by something is counted for what it now is.
+	DressedGunsBySlot.Add(Slot, Gun);
+
+	// What this character carries just changed, so the weight-derived numbers are re-applied — the
+	// JUMP only. The walk and run speeds are written by the movement state that owns them (the
+	// template's sprint start/stop), and writing them from here would stomp the speed the player is
+	// currently in; those re-read the stat the next time they run, which is where they belong.
+	if (AActor* Owner = GetOwner())
+	{
+		if (UProsperitocracyPlayerStatsComponent* Stats = Owner->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
+		{
+			Stats->ApplyJumpVelocity();
+		}
+	}
+
+	return EProsperitocracyWeaponDressResult::Dressed;
+}
+
+float UProsperitocracyLoadoutComponent::GetCarriedWeightLbs() const
+{
+	if (!Loadout)
+	{
+		return 0.0f;
+	}
+
+	TArray<TPair<FGameplayTag, UProsperitocracyStatTable*>> Carried;
+	Loadout->CollectCarriedBlocks(Carried);
+
+	float TotalLbs = 0.0f;
+	for (const TPair<FGameplayTag, UProsperitocracyStatTable*>& Entry : Carried)
+	{
+		// A live gun first: its own GAS home is the truth about its weight once it exists.
+		if (const TWeakObjectPtr<AProsperitocracyWeapon>* LiveGun = DressedGunsBySlot.Find(Entry.Key))
+		{
+			if (const AProsperitocracyWeapon* Gun = LiveGun->Get())
+			{
+				TotalLbs += Gun->GetWeaponStat(EProsperitocracyStat::Weight);
+				continue;
+			}
+		}
+
+		// Otherwise the block it will be built from — the same number the host would be handed.
+		TotalLbs += Entry.Value->GetBaseValue(EProsperitocracyStat::Weight);
+	}
+
+	return TotalLbs;
 }
 
 FProsperitocracyWeaponAmmo& UProsperitocracyLoadoutComponent::GetOrCreateAmmoForSlot(const FGameplayTag& Slot, int32 MagazineSize, int32 MagazineCapacity)
