@@ -4,6 +4,7 @@
 
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "GameFramework/Pawn.h"
+#include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStatTable.h"
 #include "Weapons/ProsperitocracyWeapon.h"
 
@@ -47,6 +48,15 @@ EProsperitocracyWeaponDressResult UProsperitocracyLoadoutComponent::DressGun(APr
 	}
 
 	UProsperitocracyStatTable* StatBlock = Entry->StatBlock.LoadSynchronous();
+
+	// A slot can be overridden to a different block at runtime by the dev gun sandbox, and when it is,
+	// that IS what this slot carries. The check below still runs on it, so an override cannot file a
+	// block under a slot it does not belong to.
+	if (const TObjectPtr<UProsperitocracyStatTable>* Override = DevStatBlockBySlot.Find(Slot))
+	{
+		StatBlock = *Override;
+	}
+
 	if (!StatBlock)
 	{
 		return EProsperitocracyWeaponDressResult::NoStatBlock;
@@ -139,3 +149,56 @@ const FProsperitocracyWeaponAmmo* UProsperitocracyLoadoutComponent::FindAmmoForS
 {
 	return AmmoBySlot.Find(Slot);
 }
+
+bool UProsperitocracyLoadoutComponent::DevEquipStatBlock(UProsperitocracyStatTable* StatBlock, FString& OutMessage)
+{
+	if (!StatBlock)
+	{
+		OutMessage = TEXT("no stat block given");
+		return false;
+	}
+
+	// The block says which slot it belongs in — the same rule the real dress path enforces, checked
+	// here too so the sandbox cannot put a Secondary gun in Primary.
+	const FGameplayTag Slot = StatBlock->GetSlot();
+	if (!Slot.IsValid())
+	{
+		OutMessage = FString::Printf(TEXT("%s carries no slot tag, so there is nowhere to carry it"), *StatBlock->GetName());
+		return false;
+	}
+
+	if (!Loadout)
+	{
+		OutMessage = TEXT("this character has no loadout asset, so nothing can be carried");
+		return false;
+	}
+
+	DevStatBlockBySlot.Add(Slot, StatBlock);
+
+	// A fresh gun's ammo, as asked: drop this slot's store and let the next ask rebuild it. That ask
+	// is the same first-ask that fills a gun at spawn — magazine at MagSize, spare pool at
+	// Capacity x MagSize and NOT one more (the loaded magazine is one of the Capacity magazines).
+	// A gun asking for a store that is not there yet creates it full, so the gun in hand can never
+	// be left holding a missing magazine.
+	AmmoBySlot.Remove(Slot);
+
+	// If this slot's gun is live, re-dress it now so the numbers change in hand. A gun the rig has
+	// not created yet — or has thrown away on a slot switch — is built from this block the next time
+	// it asks, because the override is what its slot resolves to from now on.
+	FString GunNote = TEXT("no gun in that slot yet; it will be built from this block");
+	if (const TWeakObjectPtr<AProsperitocracyWeapon>* LiveGun = DressedGunsBySlot.Find(Slot))
+	{
+		if (AProsperitocracyWeapon* Gun = LiveGun->Get())
+		{
+			const EProsperitocracyWeaponDressResult Result = DressGun(Gun);
+			GunNote = (Result == EProsperitocracyWeaponDressResult::Dressed)
+				? FString::Printf(TEXT("%s re-dressed and loaded"), *Gun->GetName())
+				: FString::Printf(TEXT("%s was NOT re-dressed (dress result %d)"), *Gun->GetName(), static_cast<int32>(Result));
+		}
+	}
+
+	OutMessage = FString::Printf(TEXT("%s into %s: %s"), *StatBlock->GetName(), *Slot.ToString(), *GunNote);
+
+	return true;
+}
+

@@ -113,7 +113,42 @@ public:
 	/** The ammo this slot holds as it stands, or null when it holds none yet. Creates nothing. */
 	const FProsperitocracyWeaponAmmo* FindAmmoForSlot(const FGameplayTag& Slot) const;
 
+	//~ DEV — the in-game gun sandbox (Development/ProsperitocracyDevCommands.cpp) ---------------
+
+	/**
+	 * DEV ONLY: put a different stat block into a slot right now, and give that slot a fresh gun's
+	 * ammo — a full magazine and a full spare pool.
+	 *
+	 * Why this is the whole sandbox and not a new system: four guns are two bodies x four blocks, and
+	 * a body carries NO numbers, so a "different gun" differs in exactly one thing — its block. This
+	 * is therefore the same act DressGun already performs at spawn (hand the body a block), asked for
+	 * again at runtime. It works only because ApplyLoadoutEntry is re-callable by design: "a body can
+	 * be two guns: the pistol's body is also the SMG's".
+	 *
+	 * The override lives HERE, on the component, and not on the gun: the rig destroys and re-creates
+	 * gun actors (a slot switch, a level change), so anything kept on a gun dies with it. Kept on the
+	 * carrier, the block survives the gun actor being thrown away and rebuilt.
+	 *
+	 * It is not a second path: the block is still resolved through the ONE evaluator, and the block's
+	 * own slot tag is still checked against the slot it is installed in, so a dev command cannot file
+	 * a Secondary block under Primary.
+	 *
+	 * Transient by construction — a level change, a respawn or a PIE restart drops every override,
+	 * because it is runtime state, never authored data.
+	 *
+	 * Returns false and fills OutMessage with the reason when the block cannot be installed.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Loadout|Dev")
+	bool DevEquipStatBlock(UProsperitocracyStatTable* StatBlock, FString& OutMessage);
+
 private:
+	/**
+	 * DEV ONLY: what a slot's block is overridden to, instead of the loadout asset's entry for it.
+	 * Empty in every real (non-sandbox) session — nothing but the dev gun command writes it.
+	 */
+	UPROPERTY(Transient)
+	TMap<FGameplayTag, TObjectPtr<UProsperitocracyStatTable>> DevStatBlockBySlot;
+
 	/** One entry per slot this carrier has fired or reloaded, keyed by the slot's tag. */
 	UPROPERTY(Transient)
 	TMap<FGameplayTag, FProsperitocracyWeaponAmmo> AmmoBySlot;
