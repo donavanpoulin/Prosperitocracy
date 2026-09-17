@@ -25,6 +25,14 @@ AProsperitocracyWeapon* AProsperitocracyCharacter::GetGunWeaponInHand() const
 	return Cast<AProsperitocracyWeapon>(GetGunInHand());
 }
 
+bool AProsperitocracyCharacter::MeleeWithGunInHand()
+{
+	// The rig holds the gun, the gun does the swing: which gun it is, how far it reaches and what it
+	// is worth are all the gun's business. Nothing in hand means nothing swings.
+	AProsperitocracyWeapon* Gun = GetGunWeaponInHand();
+	return Gun && Gun->MeleeAttack();
+}
+
 float AProsperitocracyCharacter::GetAimingAlpha_Implementation() const
 {
 	// Same story: the template's Aim_Smooth timeline owns the ADS blend, so the blueprint reports it.

@@ -17,6 +17,7 @@ class UGameplayEffect;
 class USkeletalMeshComponent;
 class UProsperitocracyLoadoutComponent;
 class UProsperitocracyStatTable;
+struct FProsperitocracyDamageLine;
 struct FProsperitocracyWeaponAmmo;
 
 /**
@@ -64,6 +65,22 @@ namespace ProsperitocracyWeaponHandling
 	constexpr float MoveDisplaceBase = 0.008f;
 	constexpr float MoveDisplacePerWeight = 0.0019f;
 	constexpr float MoveVerticalFraction = 0.35f;
+
+	// --- Melee (Weight-driven): the bash every gun has, as a standard rather than a per-gun number. ---
+	// Impact damage per pound of the gun's FINAL Weight — a 4 lb pistol bashes for 80, a 10 lb rifle
+	// for 200. Weight is the only thing a gun contributes, and it comes through the ONE evaluator, so
+	// a perk on Weight moves the bash with it.
+	constexpr float MeleeDamagePerPound = 20.0f;
+
+	// The pen tier of the melee line. Always the lightest: a heavy gun bashes harder but never buys
+	// its way past armor (Design/stats.md), so a bash stays fair against a plated target.
+	constexpr uint8 MeleePenTier = 1;
+
+	// The swing itself: how far past the player's eye it reaches, and the radius of the sphere swept
+	// along that reach, in cm. (The camera sits a boom length behind the player, so the swing starts
+	// at the eye — a camera-origin trace would never leave the character's own back.)
+	constexpr float MeleeReach = 200.0f;
+	constexpr float MeleeRadius = 45.0f;
 }
 
 /**
@@ -230,6 +247,31 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
 	void ApplyShotFeel();
 
+	//~ The melee -----------------------------------------------------------------------------------
+
+	/**
+	 * One swing of this gun's melee. True when something was in the way and that hit went to
+	 * ApplyMeleeDamage; false for a whiff, which is an ordinary swing and not a failure.
+	 *
+	 * The swing reaches from the player's eye along the SAME direction the bullet flies
+	 * (GetShotDirection, drift included), so a bash lands where the reticle points, and it uses the
+	 * same channel and the same ignores as the shot: never the shooter, never the gun in its hands.
+	 * It costs nothing — no ammo, no fire-rate cadence, and it never touches the aim.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	bool MeleeAttack();
+
+	/**
+	 * OUR melee damage, on the hit the swing produced.
+	 *
+	 * The standard, universal, per-gun only in its Weight: Impact damage = 20 x this gun's FINAL
+	 * Weight (read through its own GAS home, the ONE evaluator), at the lightest pen tier. It then
+	 * travels the SAME damage effect and the same pen-gate → resist pipeline as a shot, which is the
+	 * point — there is one damage pipeline, not one per way of hitting something.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	void ApplyMeleeDamage(const FHitResult& Hit);
+
 	/** (base Accuracy stat) x (the combined posture multiplier) — the driver of the per-shot shove. */
 	float GetEffectiveAccuracy() const { return GetAccuracy() * CurrentAccuracyMultiplier; }
 
@@ -263,9 +305,10 @@ protected:
 	TObjectPtr<UProsperitocracyStatTable> StatBlockAsset;
 
 	/**
-	 * What a committed shot applies to whatever it hits, also from the loadout — one asset for every
-	 * gun, for the same reason. Its execution must be UProsperitocracyDamageExecution: that reads the
-	 * damage lines and the falloff from the shot's ability source, which is this gun's stat host.
+	 * What a committed hit — a shot or a melee — applies to whatever it hits, also from the loadout
+	 * — one asset for every gun, for the same reason. Its execution must be
+	 * UProsperitocracyDamageExecution: that reads the damage lines and the falloff from the shot's
+	 * ability source, which is this gun's stat host.
 	 */
 	UPROPERTY(Transient)
 	TSubclassOf<UGameplayEffect> ShotDamageEffectClass;
@@ -337,6 +380,16 @@ private:
 
 	/** One random per-shot shove of the circle, sized by Accuracy. This IS the spread. */
 	void ApplySpreadShove();
+
+	/**
+	 * The ONE path a hit of this gun's damage travels: stamp `Lines` on the effect context (none =
+	 * this gun's own Impact/Piercing lines answer, which is the ranged shot), point the context at
+	 * this gun's stat host as the ABILITY SOURCE, and run the gun's damage effect on that hit.
+	 *
+	 * The shot and the melee both come through here. A second copy of this plumbing would be a second
+	 * damage path, which is exactly what this class exists not to have.
+	 */
+	void ApplyDamageToHit(const FHitResult& Hit, const TArray<FProsperitocracyDamageLine>* Lines);
 
 	/** The per-tick drift: the handling trail, the movement trail, and the return to centre. */
 	void UpdateDrift(float DeltaSeconds);

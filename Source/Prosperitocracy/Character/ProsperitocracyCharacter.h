@@ -53,6 +53,17 @@ public:
 
 	/** The gun in hand, resolved to our weapon type, or null when there is none. */
 	AProsperitocracyWeapon* GetGunWeaponInHand() const;
+
+	/**
+	 * The player's melee: the gun in hand swings. False when there is nothing in hand, or when the
+	 * swing found nothing to hit.
+	 *
+	 * The one door the rig's melee action needs. Which gun is in hand stays the rig's answer and the
+	 * swing stays the gun's (its Weight is the damage), so the body needs to know neither — it makes
+	 * one call per swing, whatever is held, and there is no cast to a gun type anywhere in the graph.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	bool MeleeWithGunInHand();
 	/**
 	 * How far into aiming down sights we are: 0 = hipfire, 1 = fully aiming.
 	 *
