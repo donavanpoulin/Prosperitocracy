@@ -50,6 +50,23 @@ void UProsperitocracyPlayerStatsComponent::BeginPlay()
 
 	ApplyBaselineStats();
 	ApplyToMovement();
+
+	// What the character OWNS as abilities comes up with it, once, through the same component that
+	// brings up its numbers.
+	GrantAbilities();
+}
+
+void UProsperitocracyPlayerStatsComponent::GrantAbilities()
+{
+	if (!AbilitySystemComponent || !AbilitySet)
+	{
+		return;
+	}
+
+	// The project's own ability set does the granting: each ability arrives with its input tag (which
+	// is how a door addresses it — see AProsperitocracyCharacter::MeleeWithGunInHand) and the set
+	// records the handles, so what this character owns can be handed back as one thing.
+	AbilitySet->GiveToAbilitySystem(AbilitySystemComponent, &GrantedAbilityHandles, this);
 }
 
 void UProsperitocracyPlayerStatsComponent::ApplyBaselineStats()

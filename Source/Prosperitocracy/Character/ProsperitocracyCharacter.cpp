@@ -2,6 +2,10 @@
 
 #include "ProsperitocracyCharacter.h"
 
+#include "AbilitySystemBlueprintLibrary.h"
+#include "AbilitySystemComponent.h"
+#include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
+#include "ProsperitocracyGameplayTags.h"
 #include "Weapons/ProsperitocracyWeapon.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyCharacter)
@@ -27,10 +31,21 @@ AProsperitocracyWeapon* AProsperitocracyCharacter::GetGunWeaponInHand() const
 
 bool AProsperitocracyCharacter::MeleeWithGunInHand()
 {
-	// The rig holds the gun, the gun does the swing: which gun it is, how far it reaches and what it
-	// is worth are all the gun's business. Nothing in hand means nothing swings.
-	AProsperitocracyWeapon* Gun = GetGunWeaponInHand();
-	return Gun && Gun->MeleeAttack();
+	// The bash is an ABILITY (UProsperitocracyGameplayAbility_Bash): this body does not swing anything
+	// itself, it asks the character's ability system to run the bash — and the bash owns the swing, its
+	// reach (its Range stat) and its damage. Nothing in hand is the ability's own business: it refuses
+	// there, so "no gun" is answered in one place.
+	//
+	// The ability is addressed by its tag, not by a handle: the grant carries the tag (see
+	// UProsperitocracyAbilitySet), so the body needs to know neither what the ability is nor where it
+	// was granted — it asks the ability system for "the bash".
+	UProsperitocracyAbilitySystemComponent* AbilitySystemComponent = Cast<UProsperitocracyAbilitySystemComponent>(UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(this));
+	if (!AbilitySystemComponent)
+	{
+		return false;
+	}
+
+	return AbilitySystemComponent->TryActivateAbilityByInputTag(ProsperitocracyGameplayTags::InputTag_Bash);
 }
 
 float AProsperitocracyCharacter::GetAimingAlpha_Implementation() const

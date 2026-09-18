@@ -5,6 +5,7 @@
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
+#include "AbilitySystem/ProsperitocracyDamageStatics.h"
 #include "AbilitySystem/ProsperitocracyGameplayEffectContext.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
 #include "Camera/PlayerCameraManager.h"
@@ -383,10 +384,10 @@ void AProsperitocracyWeapon::ApplyShotDamage(const FHitResult& Hit)
 {
 	// A ranged shot carries no lines of its own: this gun's stat host answers with its Impact and/or
 	// Piercing lines and its Penetration (see AProsperitocracyStatHostActor::GetDamageLines).
-	ApplyDamageToHit(Hit, /*Lines=*/ nullptr);
+	ApplyDamageToHit(Hit);
 }
 
-void AProsperitocracyWeapon::ApplyDamageToHit(const FHitResult& Hit, const TArray<FProsperitocracyDamageLine>* Lines)
+void AProsperitocracyWeapon::ApplyDamageToHit(const FHitResult& Hit)
 {
 	AActor* HitActor = Hit.GetActor();
 	if (!HitActor)
@@ -426,83 +427,15 @@ void AProsperitocracyWeapon::ApplyDamageToHit(const FHitResult& Hit, const TArra
 	if (FProsperitocracyGameplayEffectContext* TypedContext = FProsperitocracyGameplayEffectContext::ExtractEffectContext(Context))
 	{
 		TypedContext->SetAbilitySource(StatHost, 1.0f);
-
-		// Lines the caller brought travel ON the context, which the execution reads first. The ranged
-		// shot brings none and lets the ability source answer; the melee brings its one Impact line.
-		if (Lines)
-		{
-			for (const FProsperitocracyDamageLine& Line : *Lines)
-			{
-				TypedContext->AddDamageLine(Line.Type, Line.PenTier, Line.Amount);
-			}
-		}
 	}
 	else
 	{
 		UE_LOG(LogProsperitocracy, Warning, TEXT("[Damage] %s: the effect context is not ours — no lines or falloff will resolve. Check AbilitySystemGlobalsClassName in DefaultGame.ini."), *GetName());
 	}
 
-	const FGameplayEffectSpecHandle SpecHandle = SourceAbilitySystemComponent->MakeOutgoingSpec(ShotDamageEffectClass, 1.0f, Context);
-	if (SpecHandle.IsValid())
-	{
-		SourceAbilitySystemComponent->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetAbilitySystemComponent);
-	}
-}
-
-bool AProsperitocracyWeapon::MeleeAttack()
-{
-	// A gun that has not met its loadout yet has no numbers, so it has no bash either.
-	if (!EnsureInitialized() || !OwningPawn)
-	{
-		return false;
-	}
-
-	UWorld* World = GetWorld();
-	APlayerController* PC = GetOwningPlayerController();
-	if (!World || !PC)
-	{
-		return false;
-	}
-
-	// The swing reaches from the player's EYE along the same direction the bullet flies — the drift
-	// included — so a bash lands where the reticle circle sits. The camera sits a boom length behind
-	// the player, so the eye is the origin: a camera-origin trace would never leave the player's back.
-	const FVector SwingStart = OwningPawn->GetPawnViewLocation();
-	const FVector SwingEnd = SwingStart + GetShotDirection() * ProsperitocracyWeaponHandling::MeleeReach;
-
-	// The same channel and the same ignores as the shot: never the shooter, never the gun it holds.
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(WeaponMelee), /*bTraceComplex=*/ true, OwningPawn);
-	TArray<AActor*> AttachedActors;
-	OwningPawn->GetAttachedActors(AttachedActors);
-	Params.AddIgnoredActors(AttachedActors);
-
-	FHitResult Hit;
-	const FCollisionShape Swing = FCollisionShape::MakeSphere(ProsperitocracyWeaponHandling::MeleeRadius);
-	if (World->SweepSingleByChannel(Hit, SwingStart, SwingEnd, FQuat::Identity, ECC_Visibility, Swing, Params) && Hit.bBlockingHit)
-	{
-		ApplyMeleeDamage(Hit);
-		return true;
-	}
-
-	// A whiff is an ordinary swing: nothing was there to hit.
-	return false;
-}
-
-void AProsperitocracyWeapon::ApplyMeleeDamage(const FHitResult& Hit)
-{
-	// The melee standard: 20 Impact per pound of the gun's FINAL Weight. Its own number, read through
-	// the ONE evaluator, so a perk that moves Weight moves the bash with it — and none of it is a
-	// second per-gun value to keep in step with the weight.
-	const float Weight = FMath::Max(0.0f, GetWeaponStat(EProsperitocracyStat::Weight));
-
-	FProsperitocracyDamageLine MeleeLine;
-	MeleeLine.Type = ProsperitocracyGameplayTags::Damage_Type_Impact;
-	MeleeLine.PenTier = ProsperitocracyWeaponHandling::MeleePenTier;
-	MeleeLine.Amount = Weight * ProsperitocracyWeaponHandling::MeleeDamagePerPound;
-
-	// ...and then the SAME effect and the same pen-gate → resist pipeline a shot travels.
-	const TArray<FProsperitocracyDamageLine> Lines = { MeleeLine };
-	ApplyDamageToHit(Hit, &Lines);
+	// The one place a built context becomes damage: the same applier the bash reaches the execution
+	// through, so a shot and a bash cannot drift apart in how the shared pen-gate → resist path runs.
+	UProsperitocracyDamageStatics::ApplyDamageEffectToHit(Context, HitActor, SourceAbilitySystemComponent, ShotDamageEffectClass);
 }
 
 AProsperitocracyCharacter* AProsperitocracyWeapon::GetOwnerCharacter() const

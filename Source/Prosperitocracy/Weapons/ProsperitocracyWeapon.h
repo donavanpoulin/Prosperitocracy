@@ -66,21 +66,10 @@ namespace ProsperitocracyWeaponHandling
 	constexpr float MoveDisplacePerWeight = 0.0015f;
 	constexpr float MoveVerticalFraction = 0.35f;
 
-	// --- Melee (Weight-driven): the bash every gun has, as a standard rather than a per-gun number. ---
-	// Impact damage per pound of the gun's FINAL Weight — a 4 lb pistol bashes for 80, a 10 lb rifle
-	// for 200. Weight is the only thing a gun contributes, and it comes through the ONE evaluator, so
-	// a perk on Weight moves the bash with it.
-	constexpr float MeleeDamagePerPound = 20.0f;
-
-	// The pen tier of the melee line. Always the lightest: a heavy gun bashes harder but never buys
-	// its way past armor (Design/stats.md), so a bash stays fair against a plated target.
-	constexpr uint8 MeleePenTier = 1;
-
-	// The swing itself: how far past the player's eye it reaches, and the radius of the sphere swept
-	// along that reach, in cm. (The camera sits a boom length behind the player, so the swing starts
-	// at the eye — a camera-origin trace would never leave the character's own back.)
-	constexpr float MeleeReach = 200.0f;
-	constexpr float MeleeRadius = 45.0f;
+	// The gun's MELEE is not here any more: the bash is an ability with its own stat block
+	// (UProsperitocracyGameplayAbility_Bash), so its reach is the Range stat and its damage is that
+	// ability's own Impact Damage. A gun no longer holds a single melee number or a single melee
+	// constant — its Weight is all a gun contributes to the bash.
 }
 
 /**
@@ -195,6 +184,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
 	float GetWeaponStat(EProsperitocracyStat Stat) const;
 
+	/**
+	 * The one damage effect this gun's damage travels.
+	 *
+	 * It is owned by the loadout (one asset for every gun, never a copy per body) and handed over when
+	 * the gun is dressed. Anything else that deals THIS gun's damage asks for it here rather than
+	 * holding a second copy of the same effect — the bash does exactly that, because a bash is gun
+	 * damage and there is one damage pipeline.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	TSubclassOf<UGameplayEffect> GetDamageEffectClass() const { return ShotDamageEffectClass; }
+
 	/** True when the stat block carries the FullAuto fire-mode tag. A gun without a mode is not fired. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
 	bool IsFullAuto() const;
@@ -247,30 +247,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
 	void ApplyShotFeel();
 
-	//~ The melee -----------------------------------------------------------------------------------
-
-	/**
-	 * One swing of this gun's melee. True when something was in the way and that hit went to
-	 * ApplyMeleeDamage; false for a whiff, which is an ordinary swing and not a failure.
-	 *
-	 * The swing reaches from the player's eye along the SAME direction the bullet flies
-	 * (GetShotDirection, drift included), so a bash lands where the reticle points, and it uses the
-	 * same channel and the same ignores as the shot: never the shooter, never the gun in its hands.
-	 * It costs nothing — no ammo, no fire-rate cadence, and it never touches the aim.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
-	bool MeleeAttack();
-
-	/**
-	 * OUR melee damage, on the hit the swing produced.
-	 *
-	 * The standard, universal, per-gun only in its Weight: Impact damage = 20 x this gun's FINAL
-	 * Weight (read through its own GAS home, the ONE evaluator), at the lightest pen tier. It then
-	 * travels the SAME damage effect and the same pen-gate → resist pipeline as a shot, which is the
-	 * point — there is one damage pipeline, not one per way of hitting something.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
-	void ApplyMeleeDamage(const FHitResult& Hit);
+	//~ The gun's melee is an ability, not a gun function -------------------------------------------
+	//
+	// A gun's bash used to live here (MeleeAttack / ApplyMeleeDamage and its reach constants). It is
+	// now UProsperitocracyGameplayAbility_Bash — an ability with its own stat block, whose Range stat
+	// is how far the swing reaches and whose Impact Damage is the bash's own number. A gun contributes
+	// its Weight to that ability and nothing else, so there is one place a bash can come from.
 
 	/** (base Accuracy stat) x (the combined posture multiplier) — the driver of the per-shot shove. */
 	float GetEffectiveAccuracy() const { return GetAccuracy() * CurrentAccuracyMultiplier; }
@@ -382,14 +364,16 @@ private:
 	void ApplySpreadShove();
 
 	/**
-	 * The ONE path a hit of this gun's damage travels: stamp `Lines` on the effect context (none =
-	 * this gun's own Impact/Piercing lines answer, which is the ranged shot), point the context at
-	 * this gun's stat host as the ABILITY SOURCE, and run the gun's damage effect on that hit.
+	 * The ONE path a hit of this gun's damage travels: point the effect context at this gun's stat host
+	 * as the ABILITY SOURCE (an ordinary shot carries no lines of its own — the source answers with
+	 * this gun's damage stat and Penetration), and run the gun's damage effect on that hit through the
+	 * shared applier (UProsperitocracyDamageStatics::ApplyDamageEffectToHit) — the same one the bash
+	 * reaches the execution through.
 	 *
-	 * The shot and the melee both come through here. A second copy of this plumbing would be a second
-	 * damage path, which is exactly what this class exists not to have.
+	 * A second copy of this plumbing would be a second damage path, which is exactly what this class
+	 * exists not to have.
 	 */
-	void ApplyDamageToHit(const FHitResult& Hit, const TArray<FProsperitocracyDamageLine>* Lines);
+	void ApplyDamageToHit(const FHitResult& Hit);
 
 	/** The per-tick drift: the handling trail, the movement trail, and the return to centre. */
 	void UpdateDrift(float DeltaSeconds);

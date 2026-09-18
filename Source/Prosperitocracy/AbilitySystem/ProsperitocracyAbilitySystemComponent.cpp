@@ -215,6 +215,26 @@ void UProsperitocracyAbilitySystemComponent::AbilityInputTagReleased(const FGame
 	}
 }
 
+bool UProsperitocracyAbilitySystemComponent::TryActivateAbilityByInputTag(const FGameplayTag& InputTag)
+{
+	if (!InputTag.IsValid())
+	{
+		return false;
+	}
+
+	// The same resolution the input path above uses: the granted spec carries the tag, so a door can
+	// ask for "the bash" without knowing the ability class or holding its handle.
+	for (const FGameplayAbilitySpec& AbilitySpec : ActivatableAbilities.Items)
+	{
+		if (AbilitySpec.Ability && (AbilitySpec.GetDynamicSpecSourceTags().HasTagExact(InputTag)))
+		{
+			return TryActivateAbility(AbilitySpec.Handle);
+		}
+	}
+
+	return false;
+}
+
 void UProsperitocracyAbilitySystemComponent::ProcessAbilityInput(float DeltaTime, bool bGamePaused)
 {
 	if (HasMatchingGameplayTag(TAG_Gameplay_AbilityInputBlocked))

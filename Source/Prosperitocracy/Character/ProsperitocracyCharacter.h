@@ -55,12 +55,13 @@ public:
 	AProsperitocracyWeapon* GetGunWeaponInHand() const;
 
 	/**
-	 * The player's melee: the gun in hand swings. False when there is nothing in hand, or when the
-	 * swing found nothing to hit.
+	 * The player's melee: run the bash ability. False when there is nothing in hand, when the ability
+	 * system is missing, or when the ability would not activate (mid-swing, for instance).
 	 *
-	 * The one door the rig's melee action needs. Which gun is in hand stays the rig's answer and the
-	 * swing stays the gun's (its Weight is the damage), so the body needs to know neither — it makes
-	 * one call per swing, whatever is held, and there is no cast to a gun type anywhere in the graph.
+	 * The one door the rig's melee action needs. The bash is an ability with its own stat block
+	 * (UProsperitocracyGameplayAbility_Bash), so the body needs to know nothing about it — not which
+	 * gun is in hand, not how far the swing reaches, not what it is worth. It makes one call per swing,
+	 * whatever is held, and there is no cast to a gun type anywhere in the graph.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
 	bool MeleeWithGunInHand();

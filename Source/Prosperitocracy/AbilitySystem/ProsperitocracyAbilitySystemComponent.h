@@ -57,6 +57,18 @@ public:
 	UE_API void AbilityInputTagPressed(const FGameplayTag& InputTag);
 	UE_API void AbilityInputTagReleased(const FGameplayTag& InputTag);
 
+	/**
+	 * Activate the granted ability carrying this INPUT TAG — the tag the project grants abilities with
+	 * (`UProsperitocracyAbilitySet`), which is how a door addresses an ability without holding a spec
+	 * handle.
+	 *
+	 * The tag rides on the SPEC (added at grant time), not on the ability asset, so this resolves the
+	 * same way the tag-based input path does — one lookup, in the component that owns the specs.
+	 * False when nothing is granted with that tag, or when the ability would not activate (blocked,
+	 * on cooldown, already running).
+	 */
+	UE_API bool TryActivateAbilityByInputTag(const FGameplayTag& InputTag);
+
 	UE_API void ProcessAbilityInput(float DeltaTime, bool bGamePaused);
 	UE_API void ClearAbilityInput();
 

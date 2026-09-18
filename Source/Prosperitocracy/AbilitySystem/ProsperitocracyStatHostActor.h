@@ -50,6 +50,20 @@ public:
 	 */
 	void InitializeFromStatBlock(const UProsperitocracyStatTable* StatBlock);
 
+	/**
+	 * Write ONE stat's base on this host — the thing's own door onto the one evaluator, whose
+	 * current value is (base + Σflat) × Σpercent.
+	 *
+	 * Two callers: InitializeFromStatBlock (the thing's AUTHORED numbers) and anything whose base is
+	 * DERIVED by one fixed formula rather than authored — the bash's Impact Damage is 20 x the gun's
+	 * Weight, so its owner pushes that base before the hit resolves. Either way the number above the
+	 * base (perks, items) keeps resolving through the aggregator, untouched by who wrote the base.
+	 *
+	 * Thing stats only: a character stat (Health, Move Speed) belongs to the actor's own ASC and is
+	 * never written here.
+	 */
+	void SetStatBase(EProsperitocracyStat Stat, float BaseValue);
+
 	//~IProsperitocracyAbilitySourceInterface — the host IS an ability source: it outlives the
 	// thing that spawned it (an ability instance dies at EndAbility; the host lives until the
 	// thing is removed), so delayed damage (a grenade detonating after the ability ended) can

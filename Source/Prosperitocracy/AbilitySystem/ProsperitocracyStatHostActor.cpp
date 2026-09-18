@@ -35,24 +35,34 @@ void AProsperitocracyStatHostActor::PostInitializeComponents()
 
 void AProsperitocracyStatHostActor::InitializeFromStatBlock(const UProsperitocracyStatTable* StatBlock)
 {
-	if (!StatBlock || !AbilitySystemComponent)
+	if (!StatBlock)
 	{
 		return;
 	}
 
 	for (const FProsperitocracyStatTableEntry& Entry : StatBlock->StatEntries)
 	{
-		const FGameplayAttribute Attribute = UProsperitocracyStatSystemStatics::GetAttributeForStat(Entry.Stat);
-
-		// This host only carries thing stats (UProsperitocracyThingStatSet). Character stats
-		// (Health, MoveSpeed, ...) live on the actor's ASC — never pushed here.
-		if (!Attribute.IsValid() || Attribute.GetAttributeSetClass() != UProsperitocracyThingStatSet::StaticClass())
-		{
-			continue;
-		}
-
-		AbilitySystemComponent->SetNumericAttributeBase(Attribute, Entry.BaseValue);
+		SetStatBase(Entry.Stat, Entry.BaseValue);
 	}
+}
+
+void AProsperitocracyStatHostActor::SetStatBase(EProsperitocracyStat Stat, float BaseValue)
+{
+	if (!AbilitySystemComponent)
+	{
+		return;
+	}
+
+	const FGameplayAttribute Attribute = UProsperitocracyStatSystemStatics::GetAttributeForStat(Stat);
+
+	// This host only carries thing stats (UProsperitocracyThingStatSet). Character stats
+	// (Health, MoveSpeed, ...) live on the actor's ASC — never pushed here.
+	if (!Attribute.IsValid() || Attribute.GetAttributeSetClass() != UProsperitocracyThingStatSet::StaticClass())
+	{
+		return;
+	}
+
+	AbilitySystemComponent->SetNumericAttributeBase(Attribute, BaseValue);
 }
 
 float AProsperitocracyStatHostActor::GetStatFinal(EProsperitocracyStat Stat) const

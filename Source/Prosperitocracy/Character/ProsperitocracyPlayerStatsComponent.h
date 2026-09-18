@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "AbilitySystem/ProsperitocracyAbilitySet.h"
 #include "Stats/ProsperitocracyStat.h"
 
 #include "ProsperitocracyPlayerStatsComponent.generated.h"
@@ -20,11 +21,11 @@ class UProsperitocracyStatTable;
  * The player's own numbers, and the one place they reach the body.
  *
  * Every one of these numbers is a GAS attribute (Design/stats.md: "GAS is the evaluator" — nothing
- * reads a raw base, there is no non-GAS numeric path). This component does two things and nothing
+ * reads a raw base, there is no non-GAS numeric path). This component does three things and nothing
  * else: it puts the baseline stat block into the character's ability system when the character comes
- * up, and it pushes the movement stats onto the character movement component. Anything that wants a
- * stat asks GAS for its FINAL value, through the same door as everything else
- * (`UProsperitocracyStatSystemStatics::GetStatFinal`).
+ * up, it grants the abilities the character owns (the bash), and it pushes the movement stats onto
+ * the character movement component. Anything that wants a stat asks GAS for its FINAL value, through
+ * the same door as everything else (`UProsperitocracyStatSystemStatics::GetStatFinal`).
  *
  * The template's movement is untouched: its walk and run states still decide WHEN each speed
  * applies, and its graph asks this component for the number instead of holding one of its own. That
@@ -53,6 +54,16 @@ public:
 	/** What this character's numbers ARE: one entry per stat it has. Presence is scope. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Stats")
 	TObjectPtr<UProsperitocracyStatTable> BaselineStats;
+
+	/**
+	 * What this character OWNS as abilities — the gun bash today.
+	 *
+	 * Granted to the character's ability system when it comes up, through the project's own ability
+	 * set (the same data asset the ability's input tag travels in). One home for a granted ability:
+	 * nothing else has to remember what the character has, and nothing holds a spec handle of its own.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Abilities")
+	TObjectPtr<UProsperitocracyAbilitySet> AbilitySet;
 
 	/** FINAL value of one of this character's stats, through GAS — the ONE evaluator. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
@@ -124,6 +135,17 @@ protected:
 private:
 	/** Push the baseline block into the character's attributes, once per life. */
 	void ApplyBaselineStats();
+
+	/**
+	 * Grant what this character owns as abilities (the bash), once per life.
+	 *
+	 * Through the project's own ability set, so an ability is granted in one place, carries its input
+	 * tag with it, and can be handed back as a set if the character ever stops owning it.
+	 */
+	void GrantAbilities();
+
+	/** What was granted, so it could be taken away again. */
+	FProsperitocracyAbilitySet_GrantedHandles GrantedAbilityHandles;
 
 	/** The owning pawn's ability system — where every stat of theirs lives. */
 	UPROPERTY(Transient)

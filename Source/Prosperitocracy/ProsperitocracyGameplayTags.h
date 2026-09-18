@@ -27,6 +27,11 @@ namespace ProsperitocracyGameplayTags
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_QuickSlot_CycleForward);
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_QuickSlot_CycleBackward);
 
+	// The bash (a gun's melee). The tag is how the body's melee action addresses the bash ABILITY:
+	// abilities are granted with an input tag and activated by it (UProsperitocracyAbilitySet), so
+	// the character's melee needs no handle and no cast — it asks for the tag.
+	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Bash);
+
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InitState_Spawned);
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InitState_DataAvailable);
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InitState_DataInitialized);

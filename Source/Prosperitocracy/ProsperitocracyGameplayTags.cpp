@@ -25,6 +25,7 @@ namespace ProsperitocracyGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(InputTag_AutoRun, "InputTag.AutoRun", "Auto-run input.");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(InputTag_QuickSlot_CycleForward, "InputTag.Ability.Quickslot.CycleForward", "Quickbar cycle forward (mouse wheel up).");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(InputTag_QuickSlot_CycleBackward, "InputTag.Ability.Quickslot.CycleBackward", "Quickbar cycle backward (mouse wheel down).");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(InputTag_Bash, "InputTag.Bash", "The bash (gun melee): the tag the character's melee action activates the bash ability by.");
 
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(InitState_Spawned, "InitState.Spawned", "1: Actor/component has initially spawned and can be extended");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(InitState_DataAvailable, "InitState.DataAvailable", "2: All required data has been loaded/replicated and is ready for initialization");
