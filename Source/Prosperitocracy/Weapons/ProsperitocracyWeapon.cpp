@@ -10,6 +10,7 @@
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Character/ProsperitocracyCharacter.h"
+#include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "CollisionQueryParams.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/EngineTypes.h"
@@ -481,6 +482,19 @@ void AProsperitocracyWeapon::ApplyShotFeel()
 	ApplySpreadShove();
 
 	ClampDrift();
+
+	// And the shot's push on the BODY, off the very same Weight that sways the aim: the gun hands its
+	// Weight and the line the shot went down to the character's stats component, which is the one
+	// place a number reaches the body. Walking forward that push is speed you spend fighting it,
+	// walking back it carries you — the character's own movement direction decides, so the gun has no
+	// rule of its own about it and every gun gets the same one.
+	if (AProsperitocracyCharacter* OwnerCharacter = GetOwnerCharacter())
+	{
+		if (UProsperitocracyPlayerStatsComponent* BodyStats = OwnerCharacter->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
+		{
+			BodyStats->NotifyShotFired(GetWeaponStat(EProsperitocracyStat::Weight), GetShotDirection());
+		}
+	}
 }
 
 void AProsperitocracyWeapon::ApplySpreadShove()

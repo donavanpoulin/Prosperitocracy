@@ -32,16 +32,23 @@ class UProsperitocracyStatTable;
  * is deliberate — the number has one owner, and a stat that is not set never zeroes the body out
  * (movement keeps whatever it had).
  *
- * There is ONE speed stat (Move Speed = the run speed). Walking is not a second stat: it is that
- * same number times one universal constant, so a walk is always half a run and tuning one number
- * tunes both. Jump is one stat too, and it is a VELOCITY (Jump Velocity, cm/s) because that is what
- * the body is driven by — a height would be the same jump described in a unit the movement cannot use.
+ * There is ONE speed stat (Move Speed = the run speed) and every speed the body can move at is a
+ * fraction of it. Walking is not a second stat: it is that same number times one universal constant,
+ * so a walk is always half a run. Crouching is not a third number either — a crouch is not faster
+ * than a walk, so crouch speed IS the walk number. Jump is one stat too, and it is a VELOCITY (Jump
+ * Velocity, cm/s) because that is what the body is driven by — a height would be the same jump
+ * described in a unit the movement cannot use.
  *
  * What the character CARRIES then moves both: every pound of gear costs the same slice of run speed
  * and jump velocity, read from the loadout's carried total. Walking is never scaled directly — it is
- * half of the already-scaled run speed, so it follows. That ordering is the whole design of it: one
- * stat (weight) feeds one formula (percent per pound) which scales two numbers (run, jump), and the
- * third (walk) is derived from one of them.
+ * half of the already-scaled run speed, so it follows, and crouching follows the walk. That ordering
+ * is the whole design of it: one stat (weight) feeds one formula (percent per pound) which scales two
+ * numbers (run, jump), and the other two speeds (walk, crouch) are derived from one of them.
+ *
+ * And what the character SHOOTS moves the first of them again, from the other end: a shot pushes the
+ * body back along the line it went down (see the shot push below), so firing drags you while you walk
+ * forward and carries you while you walk back. It is a derived value off the gun's Weight — the same
+ * species as the weight penalty and as Sway — never a stat row and never a second numeric path.
  */
 UCLASS(ClassGroup = (Prosperitocracy), meta = (BlueprintSpawnableComponent))
 class UProsperitocracyPlayerStatsComponent : public UActorComponent
@@ -73,9 +80,54 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
 	float GetRunSpeed() const { return GetStat(EProsperitocracyStat::MoveSpeed) * GetWeightSpeedMultiplier(); }
 
-	/** Walking: the same Move Speed through the one walk multiplier, weight penalty included with it. */
+	/**
+	 * Walking: the same Move Speed through the one walk multiplier, weight penalty included with it.
+	 * Crouching moves at this number too — a crouch is not faster than a walk, so there is no third
+	 * speed to keep in step with the stat.
+	 */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
 	float GetWalkSpeed() const;
+
+	//~ The shot's push on the body ----------------------------------------------------------------
+
+	/**
+	 * Tell the body a shot left the gun: how heavy the gun is, and the line the shot went down.
+	 *
+	 * One call per committed shot, made by the gun from the same per-shot hook its own feel already
+	 * hangs off (AProsperitocracyWeapon::ApplyShotFeel). Every gun tells the body the same way, so no
+	 * gun carries code of its own for this and every gun gets it for free — all of them already have
+	 * a Weight.
+	 *
+	 * The push is NOT a stat row. It is the gun's Weight through ONE formula with universal
+	 * constants, the same way Sway comes off Weight (Design/stats.md: "Derived values come from ONE
+	 * fixed formula... one universal, fixed formula with universal constants"). The Weight arrives as
+	 * a FINAL value, read through GAS by the gun that owns it — nothing here reads a raw base.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Stats")
+	void NotifyShotFired(float GunWeightLbs, const FVector& ShotDirection);
+
+	/**
+	 * What the live shot is doing to this character's speed right now, signed and in cm/s — the
+	 * number the body is actually being pushed by this frame.
+	 *
+	 * Positive when the character is moving BACK along the shot's line — the push is carrying them, so
+	 * their speed goes up. Negative when they are moving forward — they are spending speed fighting
+	 * it, so their speed goes down. Zero when they are standing still or moving across the line: there
+	 * is nothing to fight and nothing to ride.
+	 *
+	 * It is a share of the speed the character is actually at, so the same push bites the same at a
+	 * walk, at a sprint and crouched. The sign, the share and the decay are one number — the two
+	 * "ways" are not two rules.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
+	float GetShotPushDrag() const;
+
+	/**
+	 * What one shot of this gun's weight is worth, as a percent of the speed the character is moving
+	 * at — the whole formula, one line.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
+	float GetShotPushPercent(float GunWeightLbs) const;
 
 	/** The jump's launch velocity: Jump Velocity through the weight penalty, onto the movement component. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
@@ -90,7 +142,8 @@ public:
 	 *
 	 * It is a multiplier, not a delta, because it has to compose with everything else that already
 	 * moved those numbers (a perk, an attachment) without knowing any of them: the stat's FINAL value
-	 * is what gets scaled. Walking is not scaled again — it is half of the already-scaled run speed.
+	 * is what gets scaled. Walking is not scaled again — it is half of the already-scaled run speed,
+	 * and crouching follows the walk.
 	 *
 	 * This is the one formula, with one constant, for every character and every item: heavier is
 	 * slower, and there is nowhere else that decides how much.
@@ -100,7 +153,8 @@ public:
 
 	/**
 	 * Push the movement numbers onto the character movement component: walk and run speed from Move
-	 * Speed, jump velocity from Jump Velocity. Safe to call again after the numbers change.
+	 * Speed, crouch speed from the walk number, jump velocity from Jump Velocity. Safe to call again
+	 * after the numbers change.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Stats")
 	void ApplyToMovement();
@@ -116,7 +170,8 @@ public:
 	/**
 	 * The one walk multiplier, universal — every character walks at the same fraction of its run
 	 * speed, so a slower character is slower walking too. It is not a stat and not a perk target:
-	 * the stat is the run speed, and this is the fraction that turns it into a walk.
+	 * the stat is the run speed, and this is the fraction that turns it into a walk. Crouch speed is
+	 * this number, not a third fraction.
 	 */
 	static constexpr float WalkSpeedMultiplier = 0.5f;
 
@@ -129,20 +184,95 @@ public:
 	 */
 	static constexpr float WeightPenaltyPercentPerLb = 0.5f;
 
+	/**
+	 * The one shot-push formula, universal: the same two constants for every gun, every character.
+	 *
+	 * A shot pushes the body back along the line it went down, worth
+	 * `ShotPushBasePercent + (gun's Weight lbs x ShotPushPercentPerWeight)` PERCENT of the speed the
+	 * character is moving at — so the same gun drags the same whether they are walking, sprinting or
+	 * crouched, because it is a share of whatever speed they are actually at. It DECAYS from that full
+	 * share down to nothing across `ShotPushSeconds`. The next shot REFRESHES that window — it never
+	 * adds a second push on top of the first — so a gun that keeps firing holds a push near the top of
+	 * its strength, and when the trigger is released the push eases away instead of snapping off.
+	 *
+	 * The only variable in it is the gun's Weight, and it is the same Weight that already sways the
+	 * gun and costs the character speed — one stat, three things it moves, and nowhere else decides
+	 * how much. All three constants are [TUNE].
+	 */
+	static constexpr float ShotPushBasePercent = 20.0f;
+	static constexpr float ShotPushPercentPerWeight = 2.0f;
+	static constexpr float ShotPushSeconds = 0.75f;
+
 protected:
 	virtual void BeginPlay() override;
+
+	/**
+	 * Runs only while a shot's push is alive (a shot switches it on, the window lapsing switches it
+	 * off), so a character that is not firing pays nothing for this.
+	 */
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
 	/** Push the baseline block into the character's attributes, once per life. */
 	void ApplyBaselineStats();
 
 	/**
-	 * Grant what this character owns as abilities (the bash), once per life.
+	 * Grant what this character OWNS as abilities (the bash), once per life.
 	 *
 	 * Through the project's own ability set, so an ability is granted in one place, carries its input
 	 * tag with it, and can be handed back as a set if the character ever stops owning it.
 	 */
 	void GrantAbilities();
+
+	/** The owner's movement component — the body every number here ends up on. */
+	UCharacterMovementComponent* GetMovementComponent() const;
+
+	/**
+	 * The body, and which of its speed numbers it is moving at right now.
+	 *
+	 * Crouching moves at its own number — slot 1 — and every other way of moving on the ground is the
+	 * standing number, slot 0. The push rides whichever one the body is actually using, which is what
+	 * makes it land crouched without a crouch rule anywhere.
+	 */
+	UCharacterMovementComponent* GetMovingBody(int32& OutSlot) const;
+
+	/**
+	 * Take both of the body's speed numbers as the movement state's own, for the push to ride.
+	 *
+	 * A number that is what THIS component last wrote is ours, not the state's, and is left out — so
+	 * adopting can never mistake the push for the state's number and compound it with itself.
+	 */
+	void AdoptBodySpeedNumbers();
+
+	/**
+	 * Every speed number the body moves at, onto it: walk/run, crouch, and the jump. The one place
+	 * MaxWalkSpeed and MaxWalkSpeedCrouched are written from stats.
+	 *
+	 * Floored at a standstill: a shot push big enough to take the last of the character's speed must
+	 * be able to stop them, never to walk them backwards (the same reasoning as the weight penalty's
+	 * floor). A stat that is not set still leaves the body alone.
+	 */
+	void PushWalkSpeed();
+
+	/**
+	 * The body's speed number with the live push folded in: what the body is actually moving at while
+	 * a shot's push is running.
+	 *
+	 * The push cannot simply overwrite MaxWalkSpeed, because the movement state owns that number and
+	 * writes it whenever the character changes between walking and running — and while a sprint is
+	 * held it writes it every frame. So the push ADOPTS whatever the body's own number is at that
+	 * moment, rides on top of it, and gives it back untouched when the window lapses: the state's
+	 * number is never lost and a sprint is never quietly turned into a walk.
+	 */
+	void ApplyShotPushToWalkSpeed();
+
+	/**
+	 * How much of the shot's push is left, 1 on the shot down to 0 when the window lapses.
+	 *
+	 * One straight ramp for every gun. A shot resets it to 1, so a burst of fire holds the push near
+	 * full and a single shot visibly eases off.
+	 */
+	float GetShotPushDecay() const;
 
 	/** What was granted, so it could be taken away again. */
 	FProsperitocracyAbilitySet_GrantedHandles GrantedAbilityHandles;
@@ -150,6 +280,27 @@ private:
 	/** The owning pawn's ability system — where every stat of theirs lives. */
 	UPROPERTY(Transient)
 	TObjectPtr<UProsperitocracyAbilitySystemComponent> AbilitySystemComponent;
+
+	//~ The live shot push. One slot per speed number, and one push: a shot refreshes it, it never
+	//~ stacks. Slot 0 = the standing number (walk/run/sprint), slot 1 = the crouch number.
+
+	/** True while a shot's push is running. The tick only runs while it is. */
+	bool bShotPushActive = false;
+
+	/** When the push lapses, in world seconds. A new shot pushes this out, it never adds to it. */
+	float ShotPushEndTime = 0.0f;
+
+	/** What the push is worth this window at full strength, as a percent, from the gun that fired it. */
+	float ShotPushPercent = 0.0f;
+
+	/** Straight BACK down the line the shot went down (horizontal), the axis the push rides. */
+	FVector ShotPushBackwardAxis = FVector::ZeroVector;
+
+	/** Each speed number as the movement state last set it — what the push rides on, per slot. */
+	float ShotPushBaseSpeed[2] = { 0.0f, 0.0f };
+
+	/** What this component last wrote into each number, so somebody else's write can be told apart. */
+	float ShotPushLastWritten[2] = { 0.0f, 0.0f };
 
 	/** One warning per component, not one per read, when there is no baseline to apply. */
 	bool bBaselineWarned = false;
