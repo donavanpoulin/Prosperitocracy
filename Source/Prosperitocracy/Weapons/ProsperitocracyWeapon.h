@@ -32,7 +32,7 @@ struct FProsperitocracyWeaponAmmo;
 namespace ProsperitocracyWeaponHandling
 {
 	// Hard cap, so the circle (trail + spread + climb) can never fly off the screen.
-	constexpr float MaxDriftDegrees = 10.0f;
+	constexpr float MaxDriftDegrees = 7.5f;
 
 	// --- Posture multipliers: fixed for everybody, and they scale Accuracy only. ---
 	constexpr float PostureMultiplier_Aiming = 1.4f;            // aiming down sights steadies
@@ -52,7 +52,7 @@ namespace ProsperitocracyWeaponHandling
 	constexpr float LagTimeBase = 0.012f;       // light weapon: a short trail
 	constexpr float LagTimePerWeight = 0.003f;  // heavier: a longer one
 	constexpr float ReturnRateBase = 8.0f;      // light weapon: settles fast
-	constexpr float ReturnRatePerWeight = 0.5f; // heavier: settles slower
+	constexpr float ReturnRatePerWeight = 0.7f; // heavier: settles slower
 	constexpr float ReturnRateMin = 2.0f;
 
 	// --- Per-shot spread (Accuracy-driven). ---
@@ -62,8 +62,8 @@ namespace ProsperitocracyWeaponHandling
 	// --- Movement trail (Weight-driven): the aim is an inert mass and lags its own motion. ---
 	// Degrees per second of displacement per (cm/s) of motion, and how much of a forward/back shift
 	// shows vertically — a fraction of the sidestep, which is what makes the oval horizontal.
-	constexpr float MoveDisplaceBase = 0.008f;
-	constexpr float MoveDisplacePerWeight = 0.0019f;
+	constexpr float MoveDisplaceBase = 0.0065f;
+	constexpr float MoveDisplacePerWeight = 0.0015f;
 	constexpr float MoveVerticalFraction = 0.35f;
 
 	// --- Melee (Weight-driven): the bash every gun has, as a standard rather than a per-gun number. ---
