@@ -5,6 +5,8 @@
 #include "AbilitySystem/Attributes/ProsperitocracyHealthSet.h"
 #include "AbilitySystem/Attributes/ProsperitocracyStatSet.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
@@ -15,14 +17,14 @@
 
 UProsperitocracyPlayerStatsComponent::UProsperitocracyPlayerStatsComponent()
 {
-	// The component ticks for one reason: a shot's push has a life of its own (it decays to nothing
-	// on its own after the last shot) and nothing else in the engine ends it. The tick starts
-	// switched OFF and only a shot turns it on, so a character that is not firing pays nothing.
+	// The component ticks every frame for two jobs: the animation rate, which has to follow the speed
+	// the body is actually moving at (the movement state writes that speed without coming through
+	// here), and the shot's push, which has a life of its own and nothing else in the engine ends.
 	//
 	// WHERE it ticks in the frame is set up in BeginPlay, and it is not decoration: the push has to
 	// land between the state writing its speed and the body moving at it, or it is never read.
 	PrimaryComponentTick.bCanEverTick = true;
-	PrimaryComponentTick.bStartWithTickEnabled = false;
+	PrimaryComponentTick.bStartWithTickEnabled = true;
 }
 
 void UProsperitocracyPlayerStatsComponent::BeginPlay()
@@ -186,10 +188,10 @@ void UProsperitocracyPlayerStatsComponent::ApplyToMovement()
 
 	const UCharacterMovementComponent* Movement = GetMovementComponent();
 	UE_LOG(LogProsperitocracy, Log,
-		TEXT("%s on %s: movement from stats — walk %.0f | run %.0f | crouch %.0f | jump %.0f | carried %.1f lbs (weight x%.2f)"),
+		TEXT("%s on %s: movement from stats — walk %.0f | run %.0f | crouch %.0f | jump %.0f | carried %.1f lbs (weight x%.2f) | anim x%.2f"),
 		*GetName(), *GetNameSafe(GetOwner()), Movement ? Movement->MaxWalkSpeed : 0.0f, GetRunSpeed(),
 		Movement ? Movement->MaxWalkSpeedCrouched : 0.0f, Movement ? Movement->JumpZVelocity : 0.0f,
-		GetCarriedWeightLbs(), GetWeightSpeedMultiplier());
+		GetCarriedWeightLbs(), GetWeightSpeedMultiplier(), GetAnimationRate());
 }
 
 void UProsperitocracyPlayerStatsComponent::ApplyJumpVelocity()
@@ -234,6 +236,68 @@ void UProsperitocracyPlayerStatsComponent::PushWalkSpeed()
 	Movement->MaxWalkSpeedCrouched = WalkSpeed;
 	ShotPushLastWritten[0] = Movement->MaxWalkSpeed;
 	ShotPushLastWritten[1] = Movement->MaxWalkSpeedCrouched;
+
+	// Both numbers are the state's own from the start: a push needs something to give BACK when its
+	// window lapses, and a number it adopted from inside itself would be a number quietly lost.
+	ShotPushBaseSpeed[0] = WalkSpeed;
+	ShotPushBaseSpeed[1] = WalkSpeed;
+}
+
+float UProsperitocracyPlayerStatsComponent::GetAnimationRate() const
+{
+	int32 Slot = 0;
+	const UCharacterMovementComponent* Movement = GetMovingBody(Slot);
+	if (!Movement || AnimationAuthoredSpeed <= 0.0f)
+	{
+		return 1.0f;
+	}
+
+	const FVector PlanarVelocity(Movement->Velocity.X, Movement->Velocity.Y, 0.0f);
+	if (PlanarVelocity.Size() <= StandingAnimationSpeedThreshold)
+	{
+		// Standing still: the idle animations were drawn for a body on the spot, so nothing slows
+		// them down. It is also what ties this to actually MOVING rather than to the speed the
+		// movement state is set to while the body stands there.
+		return 1.0f;
+	}
+
+	const float BodySpeed = (Slot == 1) ? Movement->MaxWalkSpeedCrouched : Movement->MaxWalkSpeed;
+
+	// WHICH set of clips is playing decides what that speed is measured against. Walking and
+	// crouching move at half the run speed and their clips were drawn at half the run's, so a walk
+	// measured against the run reads slow — the number has to be the number of the clips playing.
+	// The mode's own number is what says which set that is: the shot's push is taken back off first,
+	// so a drag can never be mistaken for a change of mode.
+	const float ModeSpeed = bShotPushActive ? ShotPushBaseSpeed[Slot] : BodySpeed;
+	const bool bHalfSpeedClips = (Slot == 1) || (ModeSpeed <= GetWalkSpeed() + 1.0f);
+
+	const float AuthoredSpeed = bHalfSpeedClips ? AnimationAuthoredWalkSpeed : AnimationAuthoredSpeed;
+	return FMath::Clamp(BodySpeed / AuthoredSpeed, MinAnimationRate, 2.0f);
+}
+
+void UProsperitocracyPlayerStatsComponent::PushAnimationRate(float DeltaSeconds)
+{
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : nullptr;
+	if (!Mesh)
+	{
+		return;
+	}
+
+	// The body plays its animation at the rate its speed is worth against the speed the clips were
+	// drawn for: moving at half that, the legs cycle at half speed, so the feet stay where the ground
+	// says they are. It reads the number the body is at RIGHT NOW — the shot's push included — so a
+	// dragged body's animation slows with it and eases back up as the push decays.
+	const float Target = GetAnimationRate();
+	CurrentAnimationRate = (DeltaSeconds > 0.0f)
+		? FMath::FInterpTo(CurrentAnimationRate, Target, DeltaSeconds, AnimationRateEase)
+		: Target;
+
+	// Written only when it actually moves, so an unchanged rate costs no churn on the mesh.
+	if (!FMath::IsNearlyEqual(Mesh->GlobalAnimRateScale, CurrentAnimationRate, 0.0005f))
+	{
+		Mesh->GlobalAnimRateScale = CurrentAnimationRate;
+	}
 }
 
 //~ The shot's push on the body -------------------------------------------------------------------
@@ -274,13 +338,12 @@ void UProsperitocracyPlayerStatsComponent::NotifyShotFired(float GunWeightLbs, c
 
 	// The shot is felt on the frame it happened, not on the next tick.
 	ApplyShotPushToWalkSpeed();
-	SetComponentTickEnabled(true);
 
 	if (bWasIdle)
 	{
 		UE_LOG(LogProsperitocracy, Log,
-			TEXT("%s on %s: shot push — %.0f%% of speed back along the shot's line, decaying over %.2fs (gun %.1f lbs) | walk %.0f"),
-			*GetName(), *GetNameSafe(GetOwner()), ShotPushPercent, ShotPushSeconds, GunWeightLbs, GetWalkSpeed());
+			TEXT("%s on %s: shot push — %.0f%% of speed back along the shot's line, decaying over %.2fs (gun %.1f lbs) | walk %.0f | anim x%.2f"),
+			*GetName(), *GetNameSafe(GetOwner()), ShotPushPercent, ShotPushSeconds, GunWeightLbs, GetWalkSpeed(), GetAnimationRate());
 	}
 }
 
@@ -391,6 +454,11 @@ void UProsperitocracyPlayerStatsComponent::TickComponent(float DeltaTime, ELevel
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	// The animation rate is kept honest every frame, shot or no shot: the movement state changes the
+	// body's speed without coming through this component, so a rate set only when a shot runs would
+	// lag behind the state the body is actually in.
+	PushAnimationRate(DeltaTime);
+
 	if (!bShotPushActive)
 	{
 		return;
@@ -413,7 +481,9 @@ void UProsperitocracyPlayerStatsComponent::TickComponent(float DeltaTime, ELevel
 		bShotPushActive = false;
 		ShotPushPercent = 0.0f;
 		ShotPushBackwardAxis = FVector::ZeroVector;
-		SetComponentTickEnabled(false);
+
+		// The tick stays ON: it is what keeps the animation rate honest every frame. The push's own
+		// work is gated on bShotPushActive, so a body that is not firing pays for nothing.
 
 		const UCharacterMovementComponent* Movement = GetMovementComponent();
 		UE_LOG(LogProsperitocracy, Log,

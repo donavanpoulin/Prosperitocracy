@@ -176,6 +176,46 @@ public:
 	static constexpr float WalkSpeedMultiplier = 0.5f;
 
 	/**
+	 * The speed the locomotion clips were made for, in cm/s — the ONE animation-side number.
+	 *
+	 * It is not a stat and it is not this character's speed: it is a fact about the ART — the speed
+	 * the jog clips' strides were drawn for (the template's own run speed). The body's animation
+	 * plays at its speed measured against this: at half this speed the legs cycle at half speed, so
+	 * the feet stay where the ground says they are instead of skating. Nothing else in the project
+	 * holds an animation number, and this one is universal — every character, every animation. The
+	 * walk and crouch half of it sits immediately below. [TUNE]
+	 */
+	static constexpr float AnimationAuthoredSpeed = 600.0f;
+
+	/**
+	 * The speed the walk and crouch clips were made for, in cm/s — half the run's.
+	 *
+	 * Walking and crouching move at half the run speed (the one walk multiplier), so the clips drawn
+	 * for them were drawn at half a run's stride. Measuring a walk against the run's number is what
+	 * made walking and crouching read slow: the number the body is measured against has to be the
+	 * number of the clips it is playing. Same fact about the ART, built from the same one multiplier,
+	 * so there is still only one animation number for the project to keep. [TUNE]
+	 */
+	static constexpr float AnimationAuthoredWalkSpeed = AnimationAuthoredSpeed * WalkSpeedMultiplier;
+
+	/**
+	 * The floor on the animation rate, so a body dragged to nearly a standstill crawls rather than
+	 * freezing its animations. The push can never drive the rate below it.
+	 */
+	static constexpr float MinAnimationRate = 0.25f;
+
+	/**
+	 * At or below this speed (cm/s) the body counts as standing still, and standing still is the one
+	 * time the animation rate is left alone: the idle animations were drawn for a body on the spot, so
+	 * nothing here slows them down. The aim keeps the same threshold for its own standing-still
+	 * steadiness — one idea, the same number.
+	 */
+	static constexpr float StandingAnimationSpeedThreshold = 80.0f;
+
+	/** How fast the animation rate slides to a new value, per second, so it never snaps. */
+	static constexpr float AnimationRateEase = 6.0f;
+
+	/**
 	 * The one weight constant: percent of run speed and jump velocity that one pound costs.
 	 *
 	 * One number for every weapon, every armor, every character — Design/loadout.md: "Total weight
@@ -255,6 +295,28 @@ private:
 	void PushWalkSpeed();
 
 	/**
+	 * The animation rate onto the body: how fast its animation should play for the speed it is
+	 * actually moving at, measured against the speed the clips were made for.
+	 *
+	 * It reads the body's own current speed number, so it follows the shot's push for free: a dragged
+	 * body's legs cycle slower, and they come back up as the push decays. One number, one place — the
+	 * same component that reaches the body with the movement numbers reaches it with this.
+	 *
+	 * Called EVERY frame, push or no push: the movement state writes the body's speed without coming
+	 * through this component, so a rate set only when a shot runs would lag behind the state the body
+	 * is actually in. DeltaSeconds eases the change; 0 snaps.
+	 */
+	void PushAnimationRate(float DeltaSeconds);
+
+	/**
+	 * That same rate as a number, before it is eased onto the body: the body's speed against the
+	 * speed of the clips it is playing — the run's number while running or sprinting, half of it
+	 * while walking or crouched — and 1.0 while the body is standing still, because a still body's
+	 * idle animations are not something to slow down.
+	 */
+	float GetAnimationRate() const;
+
+	/**
 	 * The body's speed number with the live push folded in: what the body is actually moving at while
 	 * a shot's push is running.
 	 *
@@ -301,6 +363,9 @@ private:
 
 	/** What this component last wrote into each number, so somebody else's write can be told apart. */
 	float ShotPushLastWritten[2] = { 0.0f, 0.0f };
+
+	/** The animation rate currently on the mesh, eased toward the target so a change is never a snap. */
+	float CurrentAnimationRate = 1.0f;
 
 	/** One warning per component, not one per read, when there is no baseline to apply. */
 	bool bBaselineWarned = false;
