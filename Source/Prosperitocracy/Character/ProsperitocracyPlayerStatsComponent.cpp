@@ -403,16 +403,22 @@ void UProsperitocracyPlayerStatsComponent::AdoptBodySpeedNumbers()
 		return;
 	}
 
-	// Both of the numbers the push can ride, taken as the movement state's own — unless a number is
-	// what this component last wrote there, in which case it is the push and not the state's.
+	// The standing number — walk, run, sprint, and whatever the movement state put on the body this
+	// frame — is the STATE's, taken as its own. A number that is what this component last wrote is
+	// ours (the push), not the state's, and is left out — so adopting can never mistake the push for
+	// the state's number and compound it with itself.
 	if (!FMath::IsNearlyEqual(Movement->MaxWalkSpeed, ShotPushLastWritten[0]))
 	{
 		ShotPushBaseSpeed[0] = Movement->MaxWalkSpeed;
 	}
-	if (!FMath::IsNearlyEqual(Movement->MaxWalkSpeedCrouched, ShotPushLastWritten[1]))
-	{
-		ShotPushBaseSpeed[1] = Movement->MaxWalkSpeedCrouched;
-	}
+
+	// The crouch number is NOT the state's and is never adopted off the body: it comes from the stat,
+	// through the one place that writes it (PushWalkSpeed), and a crouch IS the walk number — so the
+	// test above can never tell this component's own crouch write apart from a state's write sitting
+	// on the same value. Read that way the push was left holding the zero it starts life with: it
+	// rode nothing while crouched, and it handed that zero to the body when the window lapsed, which
+	// is what made crouching crawl after the first shot. Ask the same door PushWalkSpeed asks.
+	ShotPushBaseSpeed[1] = FMath::Max(0.0f, GetWalkSpeed());
 }
 
 void UProsperitocracyPlayerStatsComponent::ApplyShotPushToWalkSpeed()

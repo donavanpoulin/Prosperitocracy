@@ -244,10 +244,14 @@ private:
 	UCharacterMovementComponent* GetMovingBody(int32& OutSlot) const;
 
 	/**
-	 * Take both of the body's speed numbers as the movement state's own, for the push to ride.
+	 * Take the numbers the push rides on, each from whoever owns it: the standing number from the
+	 * movement state, the crouch number from the stat.
 	 *
-	 * A number that is what THIS component last wrote is ours, not the state's, and is left out — so
-	 * adopting can never mistake the push for the state's number and compound it with itself.
+	 * A standing number that is what THIS component last wrote is ours, not the state's, and is left
+	 * out — so adopting can never mistake the push for the state's number and compound it with
+	 * itself. The crouch number is never adopted off the body: this component is the only thing that
+	 * writes it (it is the walk number, off the stat), so whatever is read back is this component's
+	 * own write — adopting it would leave the push riding, and later handing back, nothing.
 	 */
 	void AdoptBodySpeedNumbers();
 
@@ -329,7 +333,11 @@ private:
 	/** Straight BACK down the line the shot went down (horizontal), the axis the push rides. */
 	FVector ShotPushBackwardAxis = FVector::ZeroVector;
 
-	/** Each speed number as the movement state last set it — what the push rides on, per slot. */
+	/**
+	 * What the push rides on, per slot — each from its own owner, not two owners: slot 0 is the
+	 * standing number (walk/run/sprint) as the movement state last set it, slot 1 is the crouch
+	 * number off the stat (the walk number).
+	 */
 	float ShotPushBaseSpeed[2] = { 0.0f, 0.0f };
 
 	/** What this component last wrote into each number, so somebody else's write can be told apart. */
