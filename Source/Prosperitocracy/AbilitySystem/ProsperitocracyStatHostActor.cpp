@@ -44,6 +44,28 @@ void AProsperitocracyStatHostActor::InitializeFromStatBlock(const UProsperitocra
 	{
 		SetStatBase(Entry.Stat, Entry.BaseValue);
 	}
+
+	// Then the numbers it does not author, because they ARE its authored numbers: the shot's push on
+	// the body, off its own Weight and damage.
+	ApplyDerivedStats();
+}
+
+void AProsperitocracyStatHostActor::ApplyDerivedStats()
+{
+	// Damage is the thing's own two lines added: a piercing-only gun is just its piercing, and a hybrid
+	// (a railgun) is both. Nothing per-thing lives in this — one formula, every thing.
+	const float Damage = GetStatFinal(EProsperitocracyStat::ImpactDamage)
+		+ GetStatFinal(EProsperitocracyStat::PiercingDamage);
+
+	// The push is a share of the speed the character is moving at, so it is a PERCENT and it bites the
+	// same at a walk, at a sprint and crouched. Weight and damage both buy it: heavier shoves harder,
+	// harder-hitting shoves harder, and neither alone gets to the top.
+	const float DragPercent = PushBasePercent
+		+ (FMath::Max(0.0f, GetStatFinal(EProsperitocracyStat::Weight)) * PushPercentPerWeightLb)
+		+ (Damage * PushPercentPerDamagePoint);
+
+	SetStatBase(EProsperitocracyStat::Drag, DragPercent);
+	SetStatBase(EProsperitocracyStat::Carry, DragPercent * CarryShareOfDrag);
 }
 
 void AProsperitocracyStatHostActor::SetStatBase(EProsperitocracyStat Stat, float BaseValue)

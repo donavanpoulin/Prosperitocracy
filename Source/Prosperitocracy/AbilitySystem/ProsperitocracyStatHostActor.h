@@ -64,7 +64,31 @@ public:
 	 */
 	void SetStatBase(EProsperitocracyStat Stat, float BaseValue);
 
-	//~IProsperitocracyAbilitySourceInterface — the host IS an ability source: it outlives the
+	/**
+	 * The ONE push formula, universal — the same three constants for every thing in the game.
+	 *
+	 * A thing's push is `PushBasePercent + (Weight lbs x PushPercentPerWeightLb) + (damage x
+	 * PushPercentPerDamagePoint)` PERCENT of the speed the character is moving at, where damage is the
+	 * thing's Impact and Piercing added together (a thing with one line uses that line; a hybrid sums
+	 * both). It is written onto the thing's own Drag stat when its block is installed and read from
+	 * there by everything else, so there is one number with one home and the aggregator still resolves
+	 * perks on top of it.
+	 *
+	 * Two dials because both are what actually shoves you: a heavy thing and a hard-hitting thing each
+	 * push, and neither alone gets to the top — a weight-reduction perk costs push, and damage buys it
+	 * back. All three constants are [TUNE].
+	 */
+	static constexpr float PushBasePercent = 10.0f;
+	static constexpr float PushPercentPerWeightLb = 2.0f;
+	static constexpr float PushPercentPerDamagePoint = 0.12f;
+
+	/**
+	 * Carry is always half of Drag: one push, one formula, read at half when it is helping you instead
+	 * of fighting you. Not a second calculation and not a second constant to tune. [TUNE]
+	 */
+	static constexpr float CarryShareOfDrag = 0.5f;
+
+//~IProsperitocracyAbilitySourceInterface — the host IS an ability source: it outlives the
 	// thing that spawned it (an ability instance dies at EndAbility; the host lives until the
 	// thing is removed), so delayed damage (a grenade detonating after the ability ended) can
 	// safely resolve its lines + falloff from the host's evaluated stats.
@@ -74,6 +98,13 @@ public:
 	//~End of IProsperitocracyAbilitySourceInterface
 
 protected:
+	/**
+	 * The thing's OWN numbers that it does not author because they are what its authored numbers ARE:
+	 * the push its Weight and damage are worth, as Drag and Carry on this host. Run whenever the
+	 * thing's block is installed; both are stat bases, so perks resolve on top of them like any stat.
+	 */
+	void ApplyDerivedStats();
+
 	/** FINAL value of a stat on this host's own ASC (the ONE evaluator). */
 	float GetStatFinal(EProsperitocracyStat Stat) const;
 

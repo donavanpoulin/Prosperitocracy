@@ -58,6 +58,15 @@ enum class EProsperitocracyStat : uint8
 	Weight				UMETA(DisplayName = "Weight"),
 	// tier 1–4 (light/medium/heavy/anti-tank) — a flag on EVERY Impact/Piercing damage value.
 	Penetration			UMETA(DisplayName = "Penetration"),
+	// % — the shot's shove spent as speed: how much it slows you while you are moving FORWARD, where
+	// you are spending speed fighting it. A THING stat, never a character one: it is the gun that
+	// pushes, and this is how hard. Derived by one fixed formula off the thing's own Weight and damage
+	// (AProsperitocracyStatHostActor), never authored, so a heavier or harder-hitting thing shoves
+	// harder and a perk on either moves it. Shown on the gun's sheet, base → final like any stat.
+	Drag				UMETA(DisplayName = "Drag"),
+	// % — the same shove read when it is helping you instead of fighting you: moving BACK along the
+	// shot's line it carries you. Always HALF of Drag — one push, one formula, read at half.
+	Carry				UMETA(DisplayName = "Carry"),
 
 	// --- Character stats ---
 

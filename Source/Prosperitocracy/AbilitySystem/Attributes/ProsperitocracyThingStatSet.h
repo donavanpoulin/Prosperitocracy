@@ -57,6 +57,9 @@ public:
 	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, Weight);
 	// --- Armor interaction (player attacks only) ---
 	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, Penetration);
+	// --- The shot's push on the body ---
+	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, Drag);
+	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, Carry);
 
 protected:
 	UFUNCTION()
@@ -103,6 +106,12 @@ protected:
 
 	UFUNCTION()
 	UE_API void OnRep_Penetration(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	UE_API void OnRep_Drag(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	UE_API void OnRep_Carry(const FGameplayAttributeData& OldValue);
 
 private:
 	// blunt melee, explosions, grenades, push, mech stomp, vehicle ram, thrown objects (enemies, barrels)
@@ -168,6 +177,15 @@ private:
 	// tier 1–4 (light/medium/heavy/anti-tank) — a flag on EVERY Impact/Piercing damage value.
 	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_Penetration, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
 	FGameplayAttributeData Penetration;
+
+	// % — the shot's shove spent as speed: how much it slows you moving forward. Derived from this
+	// thing's own Weight and damage by one fixed formula, never authored.
+	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_Drag, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
+	FGameplayAttributeData Drag;
+
+	// % — the same shove when it carries you backwards instead of fighting you: always half of Drag.
+	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_Carry, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
+	FGameplayAttributeData Carry;
 };
 
 #undef UE_API

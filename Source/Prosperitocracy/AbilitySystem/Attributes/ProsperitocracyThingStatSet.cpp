@@ -24,6 +24,8 @@ UProsperitocracyThingStatSet::UProsperitocracyThingStatSet()
 	, Pellets(0.0f)
 	, Weight(0.0f)
 	, Penetration(0.0f)
+	, Drag(0.0f)
+	, Carry(0.0f)
 {
 }
 
@@ -46,6 +48,8 @@ void UProsperitocracyThingStatSet::GetLifetimeReplicatedProps(TArray<FLifetimePr
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, Pellets, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, Weight, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, Penetration, COND_OwnerOnly, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, Drag, COND_OwnerOnly, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, Carry, COND_OwnerOnly, REPNOTIFY_Always);
 }
 
 void UProsperitocracyThingStatSet::OnRep_ImpactDamage(const FGameplayAttributeData& OldValue)
@@ -121,4 +125,14 @@ void UProsperitocracyThingStatSet::OnRep_Weight(const FGameplayAttributeData& Ol
 void UProsperitocracyThingStatSet::OnRep_Penetration(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UProsperitocracyThingStatSet, Penetration, OldValue);
+}
+
+void UProsperitocracyThingStatSet::OnRep_Drag(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UProsperitocracyThingStatSet, Drag, OldValue);
+}
+
+void UProsperitocracyThingStatSet::OnRep_Carry(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UProsperitocracyThingStatSet, Carry, OldValue);
 }

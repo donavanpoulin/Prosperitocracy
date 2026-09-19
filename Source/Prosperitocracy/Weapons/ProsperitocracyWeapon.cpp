@@ -483,16 +483,17 @@ void AProsperitocracyWeapon::ApplyShotFeel()
 
 	ClampDrift();
 
-	// And the shot's push on the BODY, off the very same Weight that sways the aim: the gun hands its
-	// Weight and the line the shot went down to the character's stats component, which is the one
-	// place a number reaches the body. Walking forward that push is speed you spend fighting it,
-	// walking back it carries you — the character's own movement direction decides, so the gun has no
-	// rule of its own about it and every gun gets the same one.
+	// And the shot's push on the BODY: the gun hands over its own Drag and Carry — its push, the stat
+	// derived from its Weight and damage on its stat host — and the line the shot went down, to the
+	// character's stats component, which is the one place a number reaches the body. Walking forward
+	// that push is speed you spend fighting it, walking back it carries you — the character's own
+	// movement direction decides, so the gun has no rule of its own about it and every gun gets the
+	// same one.
 	if (AProsperitocracyCharacter* OwnerCharacter = GetOwnerCharacter())
 	{
 		if (UProsperitocracyPlayerStatsComponent* BodyStats = OwnerCharacter->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
 		{
-			BodyStats->NotifyShotFired(GetWeaponStat(EProsperitocracyStat::Weight), GetShotDirection());
+			BodyStats->NotifyShotFired(GetWeaponStat(EProsperitocracyStat::Drag), GetWeaponStat(EProsperitocracyStat::Carry), GetShotDirection());
 		}
 	}
 }

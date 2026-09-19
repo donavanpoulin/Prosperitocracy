@@ -42,6 +42,8 @@ FGameplayAttribute UProsperitocracyStatSystemStatics::GetAttributeForStat(EProsp
 		{ EProsperitocracyStat::Pellets, UProsperitocracyThingStatSet::GetPelletsAttribute() },
 		{ EProsperitocracyStat::Weight, UProsperitocracyThingStatSet::GetWeightAttribute() },
 		{ EProsperitocracyStat::Penetration, UProsperitocracyThingStatSet::GetPenetrationAttribute() },
+		{ EProsperitocracyStat::Drag, UProsperitocracyThingStatSet::GetDragAttribute() },
+		{ EProsperitocracyStat::Carry, UProsperitocracyThingStatSet::GetCarryAttribute() },
 	};
 
 	if (const FGameplayAttribute* Found = Registry.Find(Stat))

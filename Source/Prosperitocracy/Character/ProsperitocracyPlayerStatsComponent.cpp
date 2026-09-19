@@ -297,19 +297,7 @@ void UProsperitocracyPlayerStatsComponent::PushAnimationRate(float DeltaSeconds)
 
 //~ The shot's push on the body -------------------------------------------------------------------
 
-float UProsperitocracyPlayerStatsComponent::GetShotPushPercent(float GunWeightLbs) const
-{
-	// The one formula. The gun's Weight is the only variable in it, and its two constants are the
-	// same for every gun and every character — a heavier gun pushes harder, and there is nowhere
-	// else that decides how much.
-	//
-	// The answer is a PERCENT of the speed the character is moving at, not a speed of its own: that
-	// is what makes the same push a fair share of a walk, of a sprint and of a crouch instead of a
-	// big bite of one and a small bite of another.
-	return ShotPushBasePercent + (GunWeightLbs * ShotPushPercentPerWeight);
-}
-
-void UProsperitocracyPlayerStatsComponent::NotifyShotFired(float GunWeightLbs, const FVector& ShotDirection)
+void UProsperitocracyPlayerStatsComponent::NotifyShotFired(float DragPercent, float CarryPercent, const FVector& ShotDirection)
 {
 	// A shot fired straight up or straight down has no line on the ground to be pushed along, and
 	// guessing one would be inventing the shot's direction. Nothing to do.
@@ -322,12 +310,13 @@ void UProsperitocracyPlayerStatsComponent::NotifyShotFired(float GunWeightLbs, c
 	const bool bWasIdle = !bShotPushActive;
 
 	// ONE slot for the push. A shot while a push is already running replaces what is in it — the
-	// newest gun's weight and the newest line — and restarts the window AND the decay. Two shots can
-	// never add up into two pushes, which is what "never stacking" means here, and it is why a gun
+	// newest gun's two numbers and the newest line — and restarts the window AND the decay. Two shots
+	// can never add up into two pushes, which is what "never stacking" means here, and it is why a gun
 	// that fires faster than the window (any gun faster than one shot a second) holds one steady push
 	// near full strength for as long as the trigger is held.
 	ShotPushBackwardAxis = -ShotForward;
-	ShotPushPercent = GetShotPushPercent(GunWeightLbs);
+	ShotPushDragPercent = DragPercent;
+	ShotPushCarryPercent = CarryPercent;
 	ShotPushEndTime = (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f) + ShotPushSeconds;
 	bShotPushActive = true;
 
@@ -337,8 +326,8 @@ void UProsperitocracyPlayerStatsComponent::NotifyShotFired(float GunWeightLbs, c
 	if (bWasIdle)
 	{
 		UE_LOG(LogProsperitocracy, Log,
-			TEXT("%s on %s: shot push — %.0f%% of speed back along the shot's line, decaying over %.2fs (gun %.1f lbs) | walk %.0f | anim x%.2f"),
-			*GetName(), *GetNameSafe(GetOwner()), ShotPushPercent, ShotPushSeconds, GunWeightLbs, GetWalkSpeed(), GetAnimationRate());
+			TEXT("%s on %s: shot push — %.0f%% drag / %.0f%% carry of speed back along the shot's line, decaying over %.2fs | walk %.0f | anim x%.2f"),
+			*GetName(), *GetNameSafe(GetOwner()), ShotPushDragPercent, ShotPushCarryPercent, ShotPushSeconds, GetWalkSpeed(), GetAnimationRate());
 	}
 }
 
@@ -364,7 +353,7 @@ float UProsperitocracyPlayerStatsComponent::GetShotPushDecay() const
 
 float UProsperitocracyPlayerStatsComponent::GetShotPushDrag() const
 {
-	if (!bShotPushActive || ShotPushPercent <= 0.0f)
+	if (!bShotPushActive || (ShotPushDragPercent <= 0.0f && ShotPushCarryPercent <= 0.0f))
 	{
 		return 0.0f;
 	}
@@ -394,10 +383,15 @@ float UProsperitocracyPlayerStatsComponent::GetShotPushDrag() const
 	// movement direction picks between the two, which is why it is the same one push either way.
 	const float Along = FMath::Clamp(FVector::DotProduct(MoveDirection, ShotPushBackwardAxis), -1.0f, 1.0f);
 
-	// The push is that percent OF THE SPEED THE BODY IS AT — the number the movement state put on it
-	// for this frame, standing or crouched, walking, running or sprinting — so the same gun drags the
-	// same at any of them. Then the decay: full on the shot, nothing by the end of the window.
-	const float PushSpeed = ShotPushBaseSpeed[Slot] * (ShotPushPercent * 0.01f);
+	// Which of the gun's two numbers this is worth is decided by which way the character is spending
+	// it: moving forward it is Drag (you are fighting it), moving back it is Carry (you are riding it,
+	// and Carry is Drag at half). No branch on "walking backwards", no second mechanic.
+	const float PushPercent = (Along >= 0.0f) ? ShotPushCarryPercent : ShotPushDragPercent;
+
+	// And it is that percent OF THE SPEED THE BODY IS AT — the number the movement state put on it for
+	// this frame, standing or crouched, walking, running or sprinting — so the same gun drags the same
+	// at any of them. Then the decay: full on the shot, nothing by the end of the window.
+	const float PushSpeed = ShotPushBaseSpeed[Slot] * (PushPercent * 0.01f);
 	return PushSpeed * Along * GetShotPushDecay();
 }
 
@@ -473,7 +467,8 @@ void UProsperitocracyPlayerStatsComponent::TickComponent(float DeltaTime, ELevel
 		}
 
 		bShotPushActive = false;
-		ShotPushPercent = 0.0f;
+		ShotPushDragPercent = 0.0f;
+		ShotPushCarryPercent = 0.0f;
 		ShotPushBackwardAxis = FVector::ZeroVector;
 
 		// The tick stays ON: it is what eases the animation back to normal after the push lapses. The

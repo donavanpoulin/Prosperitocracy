@@ -47,8 +47,10 @@ class UProsperitocracyStatTable;
  *
  * And what the character SHOOTS moves the first of them again, from the other end: a shot pushes the
  * body back along the line it went down (see the shot push below), so firing drags you while you walk
- * forward and carries you while you walk back. It is a derived value off the gun's Weight — the same
- * species as the weight penalty and as Sway — never a stat row and never a second numeric path.
+ * forward and carries you while you walk back. How hard it does that is the GUN's own stat — Drag, and
+ * Carry at half of it — derived by one fixed formula off the gun's Weight and damage (see
+ * AProsperitocracyStatHostActor), so the thing that shoves you hardest is the thing that is heavy or
+ * hits hard. Nothing here decides the size of the push: this component applies the gun's number.
  *
  * And a shot moves one more thing on that body: the animation. While a push is live the body plays its
  * animation at the same share the push is moving it by — slower while the shot drags them, faster while
@@ -99,20 +101,19 @@ public:
 	//~ The shot's push on the body ----------------------------------------------------------------
 
 	/**
-	 * Tell the body a shot left the gun: how heavy the gun is, and the line the shot went down.
+	 * Tell the body a shot left the gun: what the gun's push is worth, both ways, and the line the
+	 * shot went down.
 	 *
 	 * One call per committed shot, made by the gun from the same per-shot hook its own feel already
 	 * hangs off (AProsperitocracyWeapon::ApplyShotFeel). Every gun tells the body the same way, so no
-	 * gun carries code of its own for this and every gun gets it for free — all of them already have
-	 * a Weight.
+	 * gun carries code of its own for this and every gun gets it for free.
 	 *
-	 * The push is NOT a stat row. It is the gun's Weight through ONE formula with universal
-	 * constants, the same way Sway comes off Weight (Design/stats.md: "Derived values come from ONE
-	 * fixed formula... one universal, fixed formula with universal constants"). The Weight arrives as
-	 * a FINAL value, read through GAS by the gun that owns it — nothing here reads a raw base.
+	 * Both numbers are the gun's OWN stats — Drag and Carry — arriving as FINAL values through GAS,
+	 * the one evaluator: never a raw base, and never a formula re-run down here. The body applies the
+	 * gun's push; it does not decide what the push is worth.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Stats")
-	void NotifyShotFired(float GunWeightLbs, const FVector& ShotDirection);
+	void NotifyShotFired(float DragPercent, float CarryPercent, const FVector& ShotDirection);
 
 	/**
 	 * What the live shot is doing to this character's speed right now, signed and in cm/s — the
@@ -126,16 +127,13 @@ public:
 	 * It is a share of the speed the character is actually at, so the same push bites the same at a
 	 * walk, at a sprint and crouched. The sign, the share and the decay are one number — the two
 	 * "ways" are not two rules.
+	 *
+	 * Forward the share is the gun's own Drag; backwards it is its Carry, which is Drag at half — so
+	 * the ride back is always the weaker half of one push. Both are the gun's stats, read off the one
+	 * evaluator by the gun that owns them.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
 	float GetShotPushDrag() const;
-
-	/**
-	 * What one shot of this gun's weight is worth, as a percent of the speed the character is moving
-	 * at — the whole formula, one line.
-	 */
-	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
-	float GetShotPushPercent(float GunWeightLbs) const;
 
 	/** The jump's launch velocity: Jump Velocity through the weight penalty, onto the movement component. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
@@ -202,22 +200,13 @@ public:
 	static constexpr float WeightPenaltyPercentPerLb = 0.5f;
 
 	/**
-	 * The one shot-push formula, universal: the same two constants for every gun, every character.
+	 * How long a shot's push lasts, in seconds — one window, REFRESHED by every shot and never added
+	 * to. The push DECAYS from the full share down to nothing across this, so a gun that keeps firing
+	 * holds a push near the top of its strength and a single shot visibly eases away instead of
+	 * snapping off.
 	 *
-	 * A shot pushes the body back along the line it went down, worth
-	 * `ShotPushBasePercent + (gun's Weight lbs x ShotPushPercentPerWeight)` PERCENT of the speed the
-	 * character is moving at — so the same gun drags the same whether they are walking, sprinting or
-	 * crouched, because it is a share of whatever speed they are actually at. It DECAYS from that full
-	 * share down to nothing across `ShotPushSeconds`. The next shot REFRESHES that window — it never
-	 * adds a second push on top of the first — so a gun that keeps firing holds a push near the top of
-	 * its strength, and when the trigger is released the push eases away instead of snapping off.
-	 *
-	 * The only variable in it is the gun's Weight, and it is the same Weight that already sways the
-	 * gun and costs the character speed — one stat, three things it moves, and nowhere else decides
-	 * how much. All three constants are [TUNE].
+	 * It is not where the push's STRENGTH lives: that is the gun's own Drag and Carry stat. [TUNE]
 	 */
-	static constexpr float ShotPushBasePercent = 20.0f;
-	static constexpr float ShotPushPercentPerWeight = 2.0f;
 	static constexpr float ShotPushSeconds = 0.5f;
 
 protected:
@@ -329,8 +318,13 @@ private:
 	/** When the push lapses, in world seconds. A new shot pushes this out, it never adds to it. */
 	float ShotPushEndTime = 0.0f;
 
-	/** What the push is worth this window at full strength, as a percent, from the gun that fired it. */
-	float ShotPushPercent = 0.0f;
+	/**
+	 * What the push is worth this window at full strength, as a percent, from the gun that fired it:
+	 * moving FORWARD it is that gun's Drag, moving BACK it is its Carry. Two numbers, one push — which
+	 * one applies is decided by the character's own movement direction, not by a branch in here.
+	 */
+	float ShotPushDragPercent = 0.0f;
+	float ShotPushCarryPercent = 0.0f;
 
 	/** Straight BACK down the line the shot went down (horizontal), the axis the push rides. */
 	FVector ShotPushBackwardAxis = FVector::ZeroVector;
