@@ -97,14 +97,19 @@ public:
 	virtual void GetDamageLines(TArray<FProsperitocracyDamageLine>& OutLines) const override;
 	//~End of IProsperitocracyAbilitySourceInterface
 
-protected:
 	/**
-	 * The thing's OWN numbers that it does not author because they are what its authored numbers ARE:
-	 * the push its Weight and damage are worth, as Drag and Carry on this host. Run whenever the
-	 * thing's block is installed; both are stat bases, so perks resolve on top of them like any stat.
+	 * Work out the numbers this thing does NOT author, because they ARE what its authored numbers are:
+	 * the push its Weight and damage are worth, as Drag and Carry on this host.
+	 *
+	 * Run when the thing's block is installed AND every time the push is handed over (a shot) — because
+	 * its inputs can move mid-fight. A push worked out once and left sitting would still be priced at
+	 * the weight the thing had the moment it came up, so a perk that lightened the thing would move the
+	 * sway (read live) and not the push (not read live). Both are stat bases, so perks resolve on top
+	 * of them like any stat.
 	 */
 	void ApplyDerivedStats();
 
+protected:
 	/** FINAL value of a stat on this host's own ASC (the ONE evaluator). */
 	float GetStatFinal(EProsperitocracyStat Stat) const;
 

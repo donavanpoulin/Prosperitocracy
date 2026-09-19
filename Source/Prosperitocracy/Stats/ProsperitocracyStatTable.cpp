@@ -39,6 +39,7 @@ void UProsperitocracyStatTable::BuildCanonicalStats(TArray<FProsperitocracyStatT
 	Add(EProsperitocracyStat::DiveDistance, 0.0f);
 	Add(EProsperitocracyStat::PackCapacity, 0.0f);
 	Add(EProsperitocracyStat::WeightCapacity, 0.0f);
+	Add(EProsperitocracyStat::CarriedWeight, 0.0f);
 	Add(EProsperitocracyStat::ImpactResist, 0.0f);
 	Add(EProsperitocracyStat::PiercingResist, 0.0f);
 }

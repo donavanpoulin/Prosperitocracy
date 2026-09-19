@@ -5,7 +5,9 @@
 #include "AbilitySystem/Attributes/ProsperitocracyHealthSet.h"
 #include "AbilitySystem/Attributes/ProsperitocracyStatSet.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
+#include "AbilitySystem/ProsperitocracyStatHostActor.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "ProsperitocracyLogChannels.h"
@@ -75,9 +77,130 @@ void UProsperitocracyPlayerStatsComponent::BeginPlay()
 		Movement->AddTickPrerequisiteComponent(this);
 	}
 
+	// The body now LISTENS to the numbers its movement is built from, and it does so before anything
+	// writes one: the first write below is already a change the body should hear, and so is every write
+	// after it — a weave, a gun, a perk, a re-tune. That is what makes the movement follow its own
+	// inputs instead of being set once and forgotten.
+	BindMovementStatListeners();
+
+	// What the character is carrying, as its own number, written before anything reads a weight. The
+	// loadout writes this row too, every time it dresses a gun; this is the answer for a body nothing
+	// has been dressed onto yet, so there is never a frame where the row is missing and the weight
+	// reads as nothing.
+	SyncCarriedWeight();
+
 	// What the character OWNS as abilities comes up with it, once, through the same component that
 	// brings up its numbers.
 	GrantAbilities();
+
+	// And what it is WEARING comes up with it too. One call, the same one a swap makes: this is the
+	// only way a body ever gets an armor, so there is no second path for it to arrive by — and its
+	// weight reaches the legs through the row it writes, not through a movement rule of its own.
+	WearWeave(ArmorWeave);
+}
+
+void UProsperitocracyPlayerStatsComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// The notifications go with the body: a listener outliving the thing it was bound to is a dangling
+	// pointer waiting for a perk to fire.
+	UnbindMovementStatListeners();
+
+	// The armor's GAS home only exists for as long as the body does, exactly as a gun's does.
+	if (ArmorHost)
+	{
+		ArmorHost->Destroy();
+		ArmorHost = nullptr;
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void UProsperitocracyPlayerStatsComponent::BindMovementStatListeners()
+{
+	if (!AbilitySystemComponent)
+	{
+		return;
+	}
+
+	// The three rows the movement is built FROM. A change to any of them re-prices every speed the body
+	// moves at — whoever caused it and through whatever door: a weave, a perk proc, an attachment, a
+	// re-tune. Nothing here needs to know who did it, which is the whole point of doing it this way.
+	const EProsperitocracyStat MovementInputs[] =
+	{
+		EProsperitocracyStat::MoveSpeed,
+		EProsperitocracyStat::JumpVelocity,
+		EProsperitocracyStat::CarriedWeight,
+	};
+
+	for (const EProsperitocracyStat Input : MovementInputs)
+	{
+		const FGameplayAttribute Attribute = UProsperitocracyStatSystemStatics::GetAttributeForStat(Input);
+		if (!Attribute.IsValid())
+		{
+			continue;
+		}
+
+		// A lambda through the one evaluator's own notification: the body is told by the NUMBER, not by
+		// whoever moved it. The handle is kept so the binding can be let go with the body.
+		MovementStatChangeHandles.Add(
+			AbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(Attribute)
+				.AddLambda([this](const FOnAttributeChangeData&) { ApplyToMovement(); }));
+	}
+}
+
+void UProsperitocracyPlayerStatsComponent::UnbindMovementStatListeners()
+{
+	if (!AbilitySystemComponent)
+	{
+		MovementStatChangeHandles.Reset();
+		return;
+	}
+
+	const EProsperitocracyStat MovementInputs[] =
+	{
+		EProsperitocracyStat::MoveSpeed,
+		EProsperitocracyStat::JumpVelocity,
+		EProsperitocracyStat::CarriedWeight,
+	};
+
+	// Removed by the handle it was added with — the bindings are lambdas, so the delegate cannot find
+	// them by object.
+	int32 HandleIndex = 0;
+	for (const EProsperitocracyStat Input : MovementInputs)
+	{
+		const FGameplayAttribute Attribute = UProsperitocracyStatSystemStatics::GetAttributeForStat(Input);
+		if (!Attribute.IsValid())
+		{
+			continue;
+		}
+
+		if (MovementStatChangeHandles.IsValidIndex(HandleIndex))
+		{
+			AbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(Attribute)
+				.Remove(MovementStatChangeHandles[HandleIndex]);
+		}
+		++HandleIndex;
+	}
+
+	MovementStatChangeHandles.Reset();
+}
+
+void UProsperitocracyPlayerStatsComponent::SyncCarriedWeight()
+{
+	if (!AbilitySystemComponent)
+	{
+		return;
+	}
+
+	// What the body carries, as ONE number: the loadout's sum, written onto the row everything else
+	// reads. This is the only writer of that base anywhere in the game, so a perk that moves it (flat
+	// or percent) resolves on top of it through the aggregator, and nothing holds a second copy of the
+	// total. Writing it here is what makes the movement follow — the component is already listening.
+	const FGameplayAttribute Attribute = UProsperitocracyStatSystemStatics::GetAttributeForStat(EProsperitocracyStat::CarriedWeight);
+	if (Attribute.IsValid())
+	{
+		AbilitySystemComponent->SetNumericAttributeBase(Attribute, GetCarriedWeightLbs());
+	}
 }
 
 void UProsperitocracyPlayerStatsComponent::GrantAbilities()
@@ -113,26 +236,107 @@ void UProsperitocracyPlayerStatsComponent::ApplyBaselineStats()
 		return;
 	}
 
-	for (const FProsperitocracyStatTableEntry& Entry : BaselineStats->StatEntries)
+	// The block's BODY rows and nothing else — the same act, through the same guard, that a weave goes
+	// in through when it is worn.
+	ApplyBlockBodyRows(BaselineStats, /*bBare=*/ false);
+}
+
+void UProsperitocracyPlayerStatsComponent::ApplyBlockBodyRows(const UProsperitocracyStatTable* Block, bool bBare)
+{
+	if (!AbilitySystemComponent || !Block)
 	{
-		const FGameplayAttribute Attribute = UProsperitocracyStatSystemStatics::GetAttributeForStat(Entry.Stat);
-		if (!Attribute.IsValid())
-		{
-			continue;
-		}
-
-		// This component carries the CHARACTER's numbers. A thing stat (a gun's damage, a turret's
-		// rate) belongs to that thing's own stat host, never here — pushing it would put a weapon
-		// number on the player.
-		const UClass* AttributeSetClass = Attribute.GetAttributeSetClass();
-		if (AttributeSetClass != UProsperitocracyStatSet::StaticClass()
-			&& AttributeSetClass != UProsperitocracyHealthSet::StaticClass())
-		{
-			continue;
-		}
-
-		AbilitySystemComponent->SetNumericAttributeBase(Attribute, Entry.BaseValue);
+		return;
 	}
+
+	for (const FProsperitocracyStatTableEntry& Entry : Block->StatEntries)
+	{
+		// This component carries the BODY's numbers. A thing stat (a gun's damage, a gun's or an
+		// armor's Weight) belongs to that thing's own stat host, never here — pushing it would put a
+		// thing's number on the player. Presence-is-scope, in both directions, asked in one place.
+		if (!UProsperitocracyStatSystemStatics::IsCharacterStat(Entry.Stat))
+		{
+			continue;
+		}
+
+		// Bare = the block's rows come back off the body. Not a subtraction and not a second rule:
+		// the body's number is the block's number, so no block means the number it left is gone.
+		const FGameplayAttribute Attribute = UProsperitocracyStatSystemStatics::GetAttributeForStat(Entry.Stat);
+		AbilitySystemComponent->SetNumericAttributeBase(Attribute, bBare ? 0.0f : Entry.BaseValue);
+	}
+}
+
+void UProsperitocracyPlayerStatsComponent::WearWeave(UProsperitocracyStatTable* Weave)
+{
+	if (!AbilitySystemComponent)
+	{
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("%s on %s: no ability system component, so there are no numbers for a weave to be worn on."),
+			*GetName(), *GetNameSafe(GetOwner()));
+		return;
+	}
+
+	// 1. What the LAST weave gave the body comes back off first. A weave's rows are this body's while
+	// it is worn, so a row the new block does not carry must read as bare — never as the old weave's
+	// number sitting there dressed as the new one's.
+	if (ArmorWeave)
+	{
+		ApplyBlockBodyRows(ArmorWeave, /*bBare=*/ true);
+	}
+
+	ArmorWeave = Weave;
+
+	if (Weave)
+	{
+		// 2. The armor's OWN home for its numbers — the same home a gun's numbers get, because an
+		// armor is a thing the same way a gun is. Its Weight is a real attribute there, resolved by the
+		// one evaluator, so anything that modifies an armor's weight is counted. That host's own guard
+		// keeps the body rows off it, so each number of this block lives in exactly one place.
+		if (!ArmorHost)
+		{
+			FActorSpawnParameters SpawnParams;
+			SpawnParams.Owner = GetOwner();
+			SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+			const AActor* Owner = GetOwner();
+			ArmorHost = GetWorld()
+				? GetWorld()->SpawnActor<AProsperitocracyStatHostActor>(
+					AProsperitocracyStatHostActor::StaticClass(),
+					Owner ? Owner->GetActorTransform() : FTransform::Identity, SpawnParams)
+				: nullptr;
+		}
+		if (ArmorHost)
+		{
+			ArmorHost->InitializeFromStatBlock(Weave);
+		}
+
+		// 3. And the weave's BODY rows — its two resists — onto this character, through the same door
+		// the baseline block comes in through. That is what makes them the player's own numbers: the
+		// one evaluator resolves them, and a resist perk lands on top of them like any other stat.
+		ApplyBlockBodyRows(Weave, /*bBare=*/ false);
+	}
+	else if (ArmorHost)
+	{
+		// Bare: the armor's own numbers go away with it.
+		ArmorHost->Destroy();
+		ArmorHost = nullptr;
+	}
+
+	// 4. What the body CARRIES just changed, so its Carried Weight row is written again — and that is
+	// ALL this step has to do. The movement numbers follow that row by themselves (this component is
+	// listening to it), so an armor needs no movement rule of its own and nothing has to remember which
+	// numbers a weight change touched. One number, one writer — and every speed the body moves at is
+	// re-priced, walk, run, crouch and jump, keeping the speed the body is already in.
+	SyncCarriedWeight();
+
+	// One line with the whole story — which weave, its three numbers as the ONE evaluator resolves
+	// them, what the body now carries, and the speeds it moves at with it on.
+	const UAbilitySystemComponent* ArmorASC = ArmorHost ? ArmorHost->GetProsperitocracyAbilitySystemComponent() : nullptr;
+	UE_LOG(LogProsperitocracy, Log,
+		TEXT("%s on %s: worn %s — impact resist %.1f%% | piercing resist %.1f%% | armor weight %.1f lbs | carried %.1f lbs (weight x%.2f) | run %.0f | walk %.0f | jump %.0f"),
+		*GetName(), *GetNameSafe(GetOwner()), Weave ? *GetNameSafe(Weave) : TEXT("nothing"),
+		GetStat(EProsperitocracyStat::ImpactResist), GetStat(EProsperitocracyStat::PiercingResist),
+		UProsperitocracyStatSystemStatics::GetStatFinal(ArmorASC, EProsperitocracyStat::Weight),
+		GetCarriedWeightLbs(), GetWeightSpeedMultiplier(), GetRunSpeed(), GetWalkSpeed(), GetJumpVelocity());
 }
 
 float UProsperitocracyPlayerStatsComponent::GetStat(EProsperitocracyStat Stat) const
@@ -158,7 +362,10 @@ float UProsperitocracyPlayerStatsComponent::GetCarriedWeightLbs() const
 
 float UProsperitocracyPlayerStatsComponent::GetWeightSpeedMultiplier() const
 {
-	const float Lbs = GetCarriedWeightLbs();
+	// What the body carries is read from its own ROW, through the one evaluator — the same value the
+	// readout shows and the same one a weight perk moves. Nothing here adds the kit up itself: the sum
+	// has one home (the row), and this is a read of a stat like any other.
+	const float Lbs = GetStat(EProsperitocracyStat::CarriedWeight);
 	const float Multiplier = 1.0f - (Lbs * WeightPenaltyPercentPerLb * 0.01f);
 
 	// A multiplier below zero would run and jump the body BACKWARDS, which is never wanted — so the
@@ -232,8 +439,38 @@ void UProsperitocracyPlayerStatsComponent::PushWalkSpeed()
 	// Floored at a standstill: a shot's push can take the last of the character's speed away, but it
 	// can never walk them backwards — the same floor the weight penalty keeps, for the same reason.
 	const float WalkSpeed = FMath::Max(0.0f, GetWalkSpeed());
-	Movement->MaxWalkSpeed = WalkSpeed;
+	const float RunSpeed = FMath::Max(0.0f, GetRunSpeed());
+
+	// WHICH of the two the body is moving at is the BODY's business: the walk/run choice belongs to the
+	// movement state and its sprint key, not to this component. So the number already on the body
+	// decides — a change re-prices the speed the body is IN (walk stays walk, run stays run) and never
+	// picks one for it. It is told apart by which of the two numbers this component last published it
+	// matched; there are only these two, so there is no third number being guessed at.
+	const bool bMovingAtRunSpeed =
+		FMath::Abs(Movement->MaxWalkSpeed - LastPublishedRunSpeed) < FMath::Abs(Movement->MaxWalkSpeed - LastPublishedWalkSpeed);
+
+	Movement->MaxWalkSpeed = bMovingAtRunSpeed ? RunSpeed : WalkSpeed;
+
+	// Crouch is not a third speed: a crouch is not faster than a walk, so it IS the walk number.
 	Movement->MaxWalkSpeedCrouched = WalkSpeed;
+
+	LastPublishedWalkSpeed = WalkSpeed;
+	LastPublishedRunSpeed = RunSpeed;
+
+	// If a shot's push is riding the body right now, the speed it rides ON changed too. The push
+	// re-applies its base every frame and hands that base back when its window lapses, so leaving the
+	// old base sitting in there would undo this re-price — and leave the body at the old weight's speed
+	// for good. The base written is the pure state number, never the pushed one: a push must never be
+	// compounded with itself.
+	if (bShotPushActive)
+	{
+		int32 Slot = 0;
+		if (GetMovingBody(Slot))
+		{
+			ShotPushBaseSpeed[Slot] = (Slot == 1) ? WalkSpeed : (bMovingAtRunSpeed ? RunSpeed : WalkSpeed);
+		}
+	}
+
 	ShotPushLastWritten[0] = Movement->MaxWalkSpeed;
 	ShotPushLastWritten[1] = Movement->MaxWalkSpeedCrouched;
 }

@@ -14,6 +14,7 @@ UProsperitocracyStatSet::UProsperitocracyStatSet()
 	, DiveDistance(0.0f)
 	, PackCapacity(0.0f)
 	, WeightCapacity(0.0f)
+	, CarriedWeight(0.0f)
 	, ImpactResist(0.0f)
 	, PiercingResist(0.0f)
 {
@@ -28,6 +29,7 @@ void UProsperitocracyStatSet::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyStatSet, DiveDistance, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyStatSet, PackCapacity, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyStatSet, WeightCapacity, COND_OwnerOnly, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyStatSet, CarriedWeight, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyStatSet, ImpactResist, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyStatSet, PiercingResist, COND_OwnerOnly, REPNOTIFY_Always);
 }
@@ -55,6 +57,11 @@ void UProsperitocracyStatSet::OnRep_PackCapacity(const FGameplayAttributeData& O
 void UProsperitocracyStatSet::OnRep_WeightCapacity(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UProsperitocracyStatSet, WeightCapacity, OldValue);
+}
+
+void UProsperitocracyStatSet::OnRep_CarriedWeight(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UProsperitocracyStatSet, CarriedWeight, OldValue);
 }
 
 void UProsperitocracyStatSet::OnRep_ImpactResist(const FGameplayAttributeData& OldValue)

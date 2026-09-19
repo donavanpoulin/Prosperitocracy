@@ -38,6 +38,7 @@ public:
 	ATTRIBUTE_ACCESSORS(UProsperitocracyStatSet, DiveDistance);
 	ATTRIBUTE_ACCESSORS(UProsperitocracyStatSet, PackCapacity);
 	ATTRIBUTE_ACCESSORS(UProsperitocracyStatSet, WeightCapacity);
+	ATTRIBUTE_ACCESSORS(UProsperitocracyStatSet, CarriedWeight);
 	ATTRIBUTE_ACCESSORS(UProsperitocracyStatSet, ImpactResist);
 	ATTRIBUTE_ACCESSORS(UProsperitocracyStatSet, PiercingResist);
 
@@ -56,6 +57,9 @@ protected:
 
 	UFUNCTION()
 	UE_API void OnRep_WeightCapacity(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	UE_API void OnRep_CarriedWeight(const FGameplayAttributeData& OldValue);
 
 	UFUNCTION()
 	UE_API void OnRep_ImpactResist(const FGameplayAttributeData& OldValue);
@@ -84,6 +88,12 @@ private:
 	// Max weight the owner can carry. [TUNE]
 	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_WeightCapacity, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
 	FGameplayAttributeData WeightCapacity;
+
+	// lbs — everything this body is carrying: the sum of its things' Weight. Its base is written where
+	// the sum happens (the loadout knows the kit), and anything that wants to move what the body
+	// carries — a perk, a proc, an attachment — lands on this row like on any other stat.
+	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_CarriedWeight, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
+	FGameplayAttributeData CarriedWeight;
 
 	// % less Impact damage taken. Negative = weakness. Receiver-side, per type.
 	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_ImpactResist, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))

@@ -9,6 +9,25 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyStatSystemStatics)
 
+namespace
+{
+	/**
+	 * Whether an attribute's GAS home is one of the BODY's sets — the character side of the table.
+	 * The one test behind IsCharacterStat, kept where the registry that answers it lives.
+	 */
+	bool IsCharacterStatAttribute(const FGameplayAttribute& Attribute)
+	{
+		if (!Attribute.IsValid())
+		{
+			return false;
+		}
+
+		const UClass* SetClass = Attribute.GetAttributeSetClass();
+		return SetClass == UProsperitocracyStatSet::StaticClass()
+			|| SetClass == UProsperitocracyHealthSet::StaticClass();
+	}
+}
+
 FGameplayAttribute UProsperitocracyStatSystemStatics::GetAttributeForStat(EProsperitocracyStat Stat)
 {
 	// stat-ID -> GAS attribute home. Presence-is-scope: if a stat is not mapped here it has no
@@ -24,6 +43,7 @@ FGameplayAttribute UProsperitocracyStatSystemStatics::GetAttributeForStat(EProsp
 		{ EProsperitocracyStat::DiveDistance, UProsperitocracyStatSet::GetDiveDistanceAttribute() },
 		{ EProsperitocracyStat::PackCapacity, UProsperitocracyStatSet::GetPackCapacityAttribute() },
 		{ EProsperitocracyStat::WeightCapacity, UProsperitocracyStatSet::GetWeightCapacityAttribute() },
+		{ EProsperitocracyStat::CarriedWeight, UProsperitocracyStatSet::GetCarriedWeightAttribute() },
 		{ EProsperitocracyStat::ImpactResist, UProsperitocracyStatSet::GetImpactResistAttribute() },
 		{ EProsperitocracyStat::PiercingResist, UProsperitocracyStatSet::GetPiercingResistAttribute() },
 		// --- Thing stats (each thing's own GAS home) ---
@@ -85,6 +105,11 @@ float UProsperitocracyStatSystemStatics::GetStatFinal(const UAbilitySystemCompon
 
 	// The aggregator-evaluated current value is exactly (base + Σflat) × Σpercent.
 	return ASC->GetNumericAttribute(Attribute);
+}
+
+bool UProsperitocracyStatSystemStatics::IsCharacterStat(EProsperitocracyStat Stat)
+{
+	return IsCharacterStatAttribute(GetAttributeForStat(Stat));
 }
 
 float UProsperitocracyStatSystemStatics::ComputeDistanceAttenuation(float Distance, float RangeMeters, float FalloffMeters)

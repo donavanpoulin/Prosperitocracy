@@ -50,6 +50,16 @@ public:
 	static float GetStatFinal(const UAbilitySystemComponent* ASC, EProsperitocracyStat Stat);
 
 	/**
+	 * Whether this stat's GAS home is one of the BODY's own sets — a character stat (Health, Move
+	 * Speed, the two resists) rather than a thing's (a gun's damage, an armor's weight).
+	 *
+	 * It is the one answer to "whose number is this", and it is asked in BOTH directions when a block
+	 * is pushed: a thing stat in a block handed to a body is not a body number, and a body stat in a
+	 * thing's block is not a thing number. Presence-is-scope, asked once, from one place.
+	 */
+	static bool IsCharacterStat(EProsperitocracyStat Stat);
+
+	/**
 	 * The ONE universal falloff (Design/damage.md): full damage from 0 to Falloff, then a LINEAR
 	 * ramp down to 0 at Range. Distance is UE cm (traces), Range/Falloff are the stats in meters.
 	 * Absent stats (<= 0) = no falloff (presence-is-scope). Every source resolves its damage

@@ -86,6 +86,12 @@ enum class EProsperitocracyStat : uint8
 	// max blood
 	PackCapacity		UMETA(DisplayName = "Pack Capacity"),
 	WeightCapacity		UMETA(DisplayName = "Weight Capacity"),
+	// lbs — what this body CARRIES: the sum of everything on it (guns, armor, anything with a Weight).
+	// A ROW, not a hidden total, because it is the number a weight perk has to be able to MOVE — and a
+	// number nothing can address is a number no perk can touch (Design/stats.md: if something must be
+	// modifiable and isn't in the table, the table grows). Its base is the sum, written where the sum
+	// already happens; perks resolve on top of it through the one aggregator like every other stat.
+	CarriedWeight		UMETA(DisplayName = "Carried Weight"),
 	// % — receiver-side, per type; weakness = negative
 	ImpactResist		UMETA(DisplayName = "Impact Resist"),
 	// % — receiver-side, per type; weakness = negative

@@ -493,6 +493,17 @@ void AProsperitocracyWeapon::ApplyShotFeel()
 	{
 		if (UProsperitocracyPlayerStatsComponent* BodyStats = OwnerCharacter->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
 		{
+			// The push is worked out HERE, as it is handed over — not once when the gun came up. Its
+			// inputs are this gun's Weight and damage, and either can move mid-fight (a perk, a proc,
+			// an attachment), so a push derived back at equip time would hand the body a number priced
+			// at the weight the gun had then. The sway never had this hole because it reads Weight
+			// every frame; this is the push reading its own inputs at the moment it is used. The two
+			// stay stat bases, so perks still resolve on top of them through the aggregator.
+			if (StatHost)
+			{
+				StatHost->ApplyDerivedStats();
+			}
+
 			BodyStats->NotifyShotFired(GetWeaponStat(EProsperitocracyStat::Drag), GetWeaponStat(EProsperitocracyStat::Carry), GetShotDirection());
 		}
 	}

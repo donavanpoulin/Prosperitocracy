@@ -9,6 +9,7 @@
 
 #include "ProsperitocracyPlayerStatsComponent.generated.h"
 
+class AProsperitocracyStatHostActor;
 class UCharacterMovementComponent;
 class UProsperitocracyAbilitySystemComponent;
 class UProsperitocracyHealthSet;
@@ -82,6 +83,20 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Abilities")
 	TObjectPtr<UProsperitocracyAbilitySet> AbilitySet;
 
+	/**
+	 * The weave this body is wearing — one armor, one block.
+	 *
+	 * An armor is a thing the way a gun is: what it is worth is a stat block, and its rows are the
+	 * weave's (Design/armor.md — Impact Resist, Piercing Resist, Weight). Nothing about it is a
+	 * second system: its resists are the body's own resist rows and its weight is a thing stat on its
+	 * own GAS home, so a perk reaches a weave's resists and its weight exactly like anything else.
+	 *
+	 * Null = a bare body: no armor, so no armor numbers. What a body spawns wearing is authored here;
+	 * wearing a different one is the same call made again (`WearWeave`), never a second path.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Armor")
+	TObjectPtr<UProsperitocracyStatTable> ArmorWeave;
+
 	/** FINAL value of one of this character's stats, through GAS — the ONE evaluator. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
 	float GetStat(EProsperitocracyStat Stat) const;
@@ -97,6 +112,50 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
 	float GetWalkSpeed() const;
+
+	//~ The armor ----------------------------------------------------------------------------------
+
+	/**
+	 * Wear a weave — the ONE door a body's armor comes through: what it spawns wearing, and what a
+	 * swap wears.
+	 *
+	 * One call does the whole thing, because it is one decision:
+	 *   1. what the LAST weave gave the body is taken back first, so a row a weave does not carry
+	 *      reads as bare rather than as the previous weave's number,
+	 *   2. the armor gets its own GAS home holding this block — a thing's stats are evaluated on the
+	 *      thing, so a weight perk reaches the armor's weight exactly like a gun's,
+	 *   3. the block's BODY rows (its two resists) go onto this character's own stats, through the
+	 *      same act and the same guard the baseline block comes in through,
+	 *   4. what the body carries just changed, so the numbers the body moves by are re-read: the JUMP
+	 *      is written here (nothing else owns it), and the walk/run numbers are re-read by the
+	 *      movement state that owns them — the same split a change in what a gun weighs already makes.
+	 *
+	 * Passing null takes the armor off. Nothing here decides a number: every one of them is the
+	 * block's, resolved by the one evaluator.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Armor")
+	void WearWeave(UProsperitocracyStatTable* Weave);
+
+	/** The weave on this body right now. Null = bare. */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Armor")
+	UProsperitocracyStatTable* GetWornWeave() const { return ArmorWeave; }
+
+	/**
+	 * The worn armor's own GAS home — where its Weight is evaluated, the same home a gun's numbers
+	 * get. Null while the body is bare. Read by whoever counts what the body carries.
+	 */
+	AProsperitocracyStatHostActor* GetArmorHost() const { return ArmorHost; }
+
+	/**
+	 * Write what this body is CARRYING onto its own Carried Weight row — the sum of its things, which
+	 * the loadout is the one thing that knows.
+	 *
+	 * Called whenever the kit changes (a gun dressed, a weave worn). This is the only writer of that
+	 * row's base, so what you carry has exactly one home — and it is a row, so a weight perk can move
+	 * it and this body's movement (which listens to that row) follows the change by itself.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Stats")
+	void SyncCarriedWeight();
 
 	//~ The shot's push on the body ----------------------------------------------------------------
 
@@ -196,6 +255,11 @@ public:
 	 * One number for every weapon, every armor, every character — Design/loadout.md: "Total weight
 	 * reduces everything: jump height, walk/run speed, etc.", and Design/stats.md: a derived value is
 	 * computed by ONE fixed formula with universal constants. This is that constant. [TUNE]
+	 *
+	 * It is deliberately soft, and the WEIGHT of things is where the bite comes from: a suit's weight
+	 * spans a wide range on purpose, so the lightest build barely notices its gear and the heaviest
+	 * build (heavy weave, heavy guns) walks rather than runs. Sugar-coating this constant instead would
+	 * change every weapon's feel at once, which is not what a suit should get to do.
 	 */
 	static constexpr float WeightPenaltyPercentPerLb = 0.5f;
 
@@ -212,6 +276,9 @@ public:
 protected:
 	virtual void BeginPlay() override;
 
+	/** The armor's GAS home only exists for as long as the body does — the lifetime a gun gives its host. */
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
 	/**
 	 * Runs every frame, for two jobs: the shot's push, which has a life of its own and nothing else in
 	 * the engine ends, and the animation rate, which follows that push down and back up — the ease back
@@ -220,6 +287,32 @@ protected:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
+	/**
+	 * A block's BODY rows onto this character — the one act a block becomes this body's numbers.
+	 *
+	 * Values: the block's own numbers (the baseline block at spawn, a weave being worn). Bare: zero,
+	 * which is what takes a block's rows back OFF the body (a weave coming off, so the next one is
+	 * never wearing the last one's numbers where it carries nothing).
+	 *
+	 * One loop and one guard, `IsCharacterStat`: a thing stat in the block (an armor's Weight) is the
+	 * THING's number, evaluated on the thing's own GAS home, and is skipped here.
+	 */
+	void ApplyBlockBodyRows(const UProsperitocracyStatTable* Block, bool bBare);
+
+	/**
+	 * Listen to the numbers the movement is built from — Move Speed, Jump Velocity, and what the body
+	 * carries — so that a change to any of them re-prices the legs on the spot.
+	 *
+	 * This is the whole answer to "a change made later never reaches the body": with the numbers
+	 * themselves doing the notifying, nothing has to remember to re-apply anything. A weave going on, a
+	 * perk proccing, a value re-tuned — they all arrive here, because all of them are just a change to
+	 * a number, and every one of them resolves through the one evaluator.
+	 */
+	void BindMovementStatListeners();
+
+	/** Let those notifications go with the body. */
+	void UnbindMovementStatListeners();
+
 	/** Push the baseline block into the character's attributes, once per life. */
 	void ApplyBaselineStats();
 
@@ -312,6 +405,30 @@ private:
 	/** The owning pawn's ability system — where every stat of theirs lives. */
 	UPROPERTY(Transient)
 	TObjectPtr<UProsperitocracyAbilitySystemComponent> AbilitySystemComponent;
+
+	/**
+	 * The worn armor's own GAS home, spawned when a weave is worn and destroyed with the body.
+	 *
+	 * Its Weight is a real attribute here, resolved by the one evaluator — which is what lets what the
+	 * body carries count an armor that something has modified, the same way a gun's weight is counted.
+	 */
+	UPROPERTY(Transient)
+	TObjectPtr<AProsperitocracyStatHostActor> ArmorHost;
+
+	/**
+	 * The movement's own notifications — the handles for what BeginPlay binds, kept so they can be let
+	 * go with the body. They are removed BY HANDLE, because the bindings are lambdas and a multicast
+	 * delegate cannot find a lambda by object.
+	 */
+	TArray<FDelegateHandle> MovementStatChangeHandles;
+
+	/**
+	 * The walk and run numbers this component last published, so a re-price knows which of the two the
+	 * body is already moving at: a change re-prices the speed the body is IN — walk stays walk, run
+	 * stays run — and never picks one for it.
+	 */
+	float LastPublishedWalkSpeed = 0.0f;
+	float LastPublishedRunSpeed = 0.0f;
 
 	//~ The live shot push. One slot per speed number, and one push: a shot refreshes it, it never
 	//~ stacks. Slot 0 = the standing number (walk/run/sprint), slot 1 = the crouch number.

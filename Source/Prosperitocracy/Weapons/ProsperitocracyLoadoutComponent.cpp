@@ -2,9 +2,12 @@
 
 #include "ProsperitocracyLoadoutComponent.h"
 
+#include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
+#include "AbilitySystem/ProsperitocracyStatHostActor.h"
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "GameFramework/Pawn.h"
 #include "ProsperitocracyLogChannels.h"
+#include "Stats/ProsperitocracyStatSystemStatics.h"
 #include "Stats/ProsperitocracyStatTable.h"
 #include "Weapons/ProsperitocracyWeapon.h"
 
@@ -81,15 +84,15 @@ EProsperitocracyWeaponDressResult UProsperitocracyLoadoutComponent::DressGun(APr
 	// gun whose weight was modified by something is counted for what it now is.
 	DressedGunsBySlot.Add(Slot, Gun);
 
-	// What this character carries just changed, so the weight-derived numbers are re-applied — the
-	// JUMP only. The walk and run speeds are written by the movement state that owns them (the
-	// template's sprint start/stop), and writing them from here would stomp the speed the player is
-	// currently in; those re-read the stat the next time they run, which is where they belong.
+	// What this character carries just changed, so the body's Carried Weight row is written again — the
+	// ONE number everything else reads, including the movement. The movement numbers follow that row by
+	// themselves (the stats component listens to it), so nothing here has to know what to re-apply and
+	// nothing can forget to: this only tells the truth about the kit, and the body gets the new weight.
 	if (AActor* Owner = GetOwner())
 	{
 		if (UProsperitocracyPlayerStatsComponent* Stats = Owner->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
 		{
-			Stats->ApplyJumpVelocity();
+			Stats->SyncCarriedWeight();
 		}
 	}
 
@@ -98,29 +101,49 @@ EProsperitocracyWeaponDressResult UProsperitocracyLoadoutComponent::DressGun(APr
 
 float UProsperitocracyLoadoutComponent::GetCarriedWeightLbs() const
 {
-	if (!Loadout)
+	float TotalLbs = 0.0f;
+
+	// Everything in a slot.
+	if (Loadout)
 	{
-		return 0.0f;
+		TArray<TPair<FGameplayTag, UProsperitocracyStatTable*>> Carried;
+		Loadout->CollectCarriedBlocks(Carried);
+
+		for (const TPair<FGameplayTag, UProsperitocracyStatTable*>& Entry : Carried)
+		{
+			// A live gun first: its own GAS home is the truth about its weight once it exists.
+			if (const TWeakObjectPtr<AProsperitocracyWeapon>* LiveGun = DressedGunsBySlot.Find(Entry.Key))
+			{
+				if (const AProsperitocracyWeapon* Gun = LiveGun->Get())
+				{
+					TotalLbs += Gun->GetWeaponStat(EProsperitocracyStat::Weight);
+					continue;
+				}
+			}
+
+			// Otherwise the block it will be built from — the same number the host would be handed.
+			TotalLbs += Entry.Value->GetBaseValue(EProsperitocracyStat::Weight);
+		}
 	}
 
-	TArray<TPair<FGameplayTag, UProsperitocracyStatTable*>> Carried;
-	Loadout->CollectCarriedBlocks(Carried);
-
-	float TotalLbs = 0.0f;
-	for (const TPair<FGameplayTag, UProsperitocracyStatTable*>& Entry : Carried)
+	// And what the character is WEARING, asked by that same rule: a thing that exists answers through
+	// its own GAS home (so an armor whose weight something modified is counted for what it now is),
+	// and a thing that is not up yet answers from the block it will be built from. One total, one
+	// place, both kinds of carried thing in it.
+	if (const AActor* Owner = GetOwner())
 	{
-		// A live gun first: its own GAS home is the truth about its weight once it exists.
-		if (const TWeakObjectPtr<AProsperitocracyWeapon>* LiveGun = DressedGunsBySlot.Find(Entry.Key))
+		if (const UProsperitocracyPlayerStatsComponent* Stats = Owner->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
 		{
-			if (const AProsperitocracyWeapon* Gun = LiveGun->Get())
+			if (const AProsperitocracyStatHostActor* ArmorHost = Stats->GetArmorHost())
 			{
-				TotalLbs += Gun->GetWeaponStat(EProsperitocracyStat::Weight);
-				continue;
+				TotalLbs += UProsperitocracyStatSystemStatics::GetStatFinal(
+					ArmorHost->GetProsperitocracyAbilitySystemComponent(), EProsperitocracyStat::Weight);
+			}
+			else if (const UProsperitocracyStatTable* ArmorWeave = Stats->GetWornWeave())
+			{
+				TotalLbs += ArmorWeave->GetBaseValue(EProsperitocracyStat::Weight);
 			}
 		}
-
-		// Otherwise the block it will be built from — the same number the host would be handed.
-		TotalLbs += Entry.Value->GetBaseValue(EProsperitocracyStat::Weight);
 	}
 
 	return TotalLbs;
