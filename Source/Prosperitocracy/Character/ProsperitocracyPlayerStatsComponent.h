@@ -49,6 +49,14 @@ class UProsperitocracyStatTable;
  * body back along the line it went down (see the shot push below), so firing drags you while you walk
  * forward and carries you while you walk back. It is a derived value off the gun's Weight — the same
  * species as the weight penalty and as Sway — never a stat row and never a second numeric path.
+ *
+ * And a shot moves one more thing on that body: the animation. While a push is live the body plays its
+ * animation at the same share the push is moving it by — slower while the shot drags them, faster while
+ * they ride it back — and at normal speed the whole rest of the time. Nothing else re-times the
+ * animation: not walking, not crouching, not how much the character carries, and not a reload or a
+ * mantle, which are not things the gun in their hands gets to slow down. That is why it hangs off the
+ * shot rather than off the body's speed — a body that is always a little slower would slow everything
+ * it plays, and only a shot is meant to.
  */
 UCLASS(ClassGroup = (Prosperitocracy), meta = (BlueprintSpawnableComponent))
 class UProsperitocracyPlayerStatsComponent : public UActorComponent
@@ -176,6 +184,15 @@ public:
 	static constexpr float WalkSpeedMultiplier = 0.5f;
 
 	/**
+	 * The floor on the animation rate, so a body dragged to nearly a standstill crawls rather than
+	 * freezing its animation. The push can never drive the rate below it. [TUNE]
+	 */
+	static constexpr float MinAnimationRate = 0.25f;
+
+	/** How fast the animation rate slides to a new value, per second, so it never snaps. [TUNE] */
+	static constexpr float AnimationRateEase = 6.0f;
+
+	/**
 	 * The one weight constant: percent of run speed and jump velocity that one pound costs.
 	 *
 	 * One number for every weapon, every armor, every character — Design/loadout.md: "Total weight
@@ -201,14 +218,15 @@ public:
 	 */
 	static constexpr float ShotPushBasePercent = 20.0f;
 	static constexpr float ShotPushPercentPerWeight = 2.0f;
-	static constexpr float ShotPushSeconds = 0.75f;
+	static constexpr float ShotPushSeconds = 0.5f;
 
 protected:
 	virtual void BeginPlay() override;
 
 	/**
-	 * Runs only while a shot's push is alive (a shot switches it on, the window lapsing switches it
-	 * off), so a character that is not firing pays nothing for this.
+	 * Runs every frame, for two jobs: the shot's push, which has a life of its own and nothing else in
+	 * the engine ends, and the animation rate, which follows that push down and back up — the ease back
+	 * to normal has to keep running after the push itself has lapsed.
 	 */
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
@@ -255,6 +273,27 @@ private:
 	void PushWalkSpeed();
 
 	/**
+	 * The animation rate onto the body: how fast its animation should play for what a shot is doing to
+	 * it right now.
+	 *
+	 * It reads the live push, so the legs cycle slower while the shot drags the body and faster while
+	 * they ride it back, and it is 1.0 whenever there is no push to ride — which is every moment the
+	 * character is not firing. One number, one place: the same component that reaches the body with the
+	 * movement numbers reaches it with this.
+	 *
+	 * Called every frame: the push's own decay is what moves it, so a rate written only on the shot
+	 * would sit still while the push faded. DeltaSeconds eases the change; 0 snaps.
+	 */
+	void PushAnimationRate(float DeltaSeconds);
+
+	/**
+	 * That same rate as a number, before it is eased onto the body: normal, plus the share of their
+	 * speed the push is moving them by this frame — negative while it drags them, positive while it
+	 * carries them, and nothing at all while they stand still or move across the shot's line.
+	 */
+	float GetAnimationRate() const;
+
+	/**
 	 * The body's speed number with the live push folded in: what the body is actually moving at while
 	 * a shot's push is running.
 	 *
@@ -284,7 +323,7 @@ private:
 	//~ The live shot push. One slot per speed number, and one push: a shot refreshes it, it never
 	//~ stacks. Slot 0 = the standing number (walk/run/sprint), slot 1 = the crouch number.
 
-	/** True while a shot's push is running. The tick only runs while it is. */
+	/** True while a shot's push is running. */
 	bool bShotPushActive = false;
 
 	/** When the push lapses, in world seconds. A new shot pushes this out, it never adds to it. */
@@ -301,6 +340,9 @@ private:
 
 	/** What this component last wrote into each number, so somebody else's write can be told apart. */
 	float ShotPushLastWritten[2] = { 0.0f, 0.0f };
+
+	/** The animation rate currently on the mesh, eased toward the target so a change is never a snap. */
+	float CurrentAnimationRate = 1.0f;
 
 	/** One warning per component, not one per read, when there is no baseline to apply. */
 	bool bBaselineWarned = false;
