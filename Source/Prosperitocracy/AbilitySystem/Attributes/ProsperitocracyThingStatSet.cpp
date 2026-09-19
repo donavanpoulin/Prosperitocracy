@@ -26,6 +26,11 @@ UProsperitocracyThingStatSet::UProsperitocracyThingStatSet()
 	, Penetration(0.0f)
 	, Drag(0.0f)
 	, Carry(0.0f)
+	// The armour's colour rows start at NOTHING CHOSEN, not at black: a piece that has never been
+	// painted keeps the paint it ships with, and 0 IS a colour a player can pick. (Design/armor.md)
+	, TrimColor1(-1.0f)
+	, TrimColor2(-1.0f)
+	, TrimColor3(-1.0f)
 {
 }
 
@@ -50,6 +55,9 @@ void UProsperitocracyThingStatSet::GetLifetimeReplicatedProps(TArray<FLifetimePr
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, Penetration, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, Drag, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, Carry, COND_OwnerOnly, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, TrimColor1, COND_OwnerOnly, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, TrimColor2, COND_OwnerOnly, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, TrimColor3, COND_OwnerOnly, REPNOTIFY_Always);
 }
 
 void UProsperitocracyThingStatSet::OnRep_ImpactDamage(const FGameplayAttributeData& OldValue)
@@ -135,4 +143,19 @@ void UProsperitocracyThingStatSet::OnRep_Drag(const FGameplayAttributeData& OldV
 void UProsperitocracyThingStatSet::OnRep_Carry(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UProsperitocracyThingStatSet, Carry, OldValue);
+}
+
+void UProsperitocracyThingStatSet::OnRep_TrimColor1(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UProsperitocracyThingStatSet, TrimColor1, OldValue);
+}
+
+void UProsperitocracyThingStatSet::OnRep_TrimColor2(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UProsperitocracyThingStatSet, TrimColor2, OldValue);
+}
+
+void UProsperitocracyThingStatSet::OnRep_TrimColor3(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UProsperitocracyThingStatSet, TrimColor3, OldValue);
 }

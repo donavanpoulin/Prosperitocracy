@@ -8,6 +8,7 @@
 #include "ProsperitocracyCharacter.generated.h"
 
 class AProsperitocracyWeapon;
+class USkeletalMeshComponent;
 
 /**
  * AProsperitocracyCharacter
@@ -22,10 +23,11 @@ class AProsperitocracyWeapon;
  * the reticle circle and the bullet use (Design/combat.md: "the sway feeds the same aim the circle,
  * the bullet, and the character pose read").
  *
- * Two facts belong to the rig and cannot be guessed from C++, so the blueprint answers them. Each is
+ * Three facts belong to the rig and cannot be guessed from C++, so the blueprint answers them. Each is
  * a BlueprintNativeEvent with an honest empty default, which is the whole door:
  *   - which gun is in hand (`GetGunInHand`) — the template's equip state decides it;
  *   - how far into ADS we are (`GetAimingAlpha`) — the template's `Aim_Smooth` timeline owns it.
+ *   - which mesh the body is DRAWN with (`GetBodyMesh`) — the rig put the visible body on it.
  *
  * Nobody recomputes either from a proxy: not from a mesh being visible, not from a camera boom
  * length. There is one answer, and it comes from the thing that owns the fact.
@@ -76,6 +78,24 @@ public:
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Prosperitocracy|Aim")
 	float GetAimingAlpha() const;
 	virtual float GetAimingAlpha_Implementation() const;
+
+	/**
+	 * The skeletal mesh this body is DRAWN with — the one you actually see, or null when the
+	 * blueprint has not said which it is.
+	 *
+	 * A character here has two skeletal meshes: the one it is ANIMATED from (the hidden mannequin,
+	 * what `ACharacter::GetMesh()` returns) and the one on screen — the retargeted visible body the
+	 * armor is painted on. Which component is which is a fact about the rig, and nothing in C++ can
+	 * honestly work it out: a mesh being visible is not a statement about what it is, and the answer
+	 * must not be guessed from a proxy. So the blueprint answers, exactly as it does for the gun in
+	 * hand and the aim alpha.
+	 *
+	 * Null is a truthful answer, not a failure: a body that does not say which mesh is drawn has
+	 * nothing painted on it, and whatever asked says so rather than painting the wrong mesh.
+	 */
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Prosperitocracy|Body")
+	USkeletalMeshComponent* GetBodyMesh() const;
+	virtual USkeletalMeshComponent* GetBodyMesh_Implementation() const;
 
 	/**
 	 * The aim the body and the animation read: the base aim rotation plus the in-hand gun's drift.

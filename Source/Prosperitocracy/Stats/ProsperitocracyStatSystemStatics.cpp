@@ -64,6 +64,11 @@ FGameplayAttribute UProsperitocracyStatSystemStatics::GetAttributeForStat(EProsp
 		{ EProsperitocracyStat::Penetration, UProsperitocracyThingStatSet::GetPenetrationAttribute() },
 		{ EProsperitocracyStat::Drag, UProsperitocracyThingStatSet::GetDragAttribute() },
 		{ EProsperitocracyStat::Carry, UProsperitocracyThingStatSet::GetCarryAttribute() },
+		// What the armour LOOKS like: its colour, one row per piece, on the armour's own GAS home
+		// beside its Weight (Design/armor.md). Carried, never aggregated — the look reads it.
+		{ EProsperitocracyStat::TrimColor1, UProsperitocracyThingStatSet::GetTrimColor1Attribute() },
+		{ EProsperitocracyStat::TrimColor2, UProsperitocracyThingStatSet::GetTrimColor2Attribute() },
+		{ EProsperitocracyStat::TrimColor3, UProsperitocracyThingStatSet::GetTrimColor3Attribute() },
 	};
 
 	if (const FGameplayAttribute* Found = Registry.Find(Stat))

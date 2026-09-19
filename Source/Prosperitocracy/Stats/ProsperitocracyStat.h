@@ -96,4 +96,30 @@ enum class EProsperitocracyStat : uint8
 	ImpactResist		UMETA(DisplayName = "Impact Resist"),
 	// % — receiver-side, per type; weakness = negative
 	PiercingResist		UMETA(DisplayName = "Piercing Resist"),
+
+	// --- What a thing LOOKS like (Design/armor.md — the armor's trim) ---
+	//
+	// APPENDED, never inserted: an enum value is what a saved stat block stores, so a new row goes on
+	// the END of this list or every block already authored would silently become a different stat.
+
+	// The armor's trim colour: ONE ROW PER REGION the body carries (three of them), each holding the
+	// whole colour as a single number — its RGB hex (0xRRGGBB). Never three (red / green / blue) rows
+	// for one region. Nothing is lost: white 0xFFFFFF = 16,777,215 is below 2^24, and a 32-bit float
+	// holds every integer below that exactly.
+	//
+	// The regions are numbered for the PLAYER and named by what the player SEES — 1 the collar, 2 the
+	// shoulders and arms, 3 the legs — because the mesh's own slot labels name the ARTIST's chunks
+	// ("head and hands", "torso", "legs") and do not match what those regions look like. The player's
+	// words are what the UI and the dev command speak; the mesh's labels stay where they are, on the
+	// mesh.
+	//
+	// 0 is black — a real colour a player can pick. A NEGATIVE means "nothing chosen", and the region
+	// keeps the paint it ships with.
+	//
+	// A THING stat: the armor carries its trim on its own GAS home, beside its Weight, never on the
+	// player. Carried, not aggregated — nothing reads a raw base for a look, and no perk addresses it
+	// (a look is not a mechanic).
+	TrimColor1			UMETA(DisplayName = "Trim 1"),
+	TrimColor2			UMETA(DisplayName = "Trim 2"),
+	TrimColor3			UMETA(DisplayName = "Trim 3"),
 };

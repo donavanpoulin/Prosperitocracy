@@ -6,16 +6,53 @@
 #include "AbilitySystem/Attributes/ProsperitocracyStatSet.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
+#include "Character/ProsperitocracyCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
 #include "Stats/ProsperitocracyStatTable.h"
 #include "Weapons/ProsperitocracyLoadoutComponent.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyPlayerStatsComponent)
+
+/** The parameter the body's materials take their colour through — the pack's own name for it. */
+const FName UProsperitocracyPlayerStatsComponent::ArmorColorParameterName(TEXT("Color"));
+
+namespace
+{
+	/** Whether a stat is one of the armor's colour rows. The pieces are the only ones that are. */
+	bool IsArmorColorPiece(EProsperitocracyStat Stat)
+	{
+		for (const ProsperitocracyArmor::FPiece& Piece : ProsperitocracyArmor::Pieces)
+		{
+			if (Piece.Color == Stat)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * A colour's hex (0xRRGGBB) as the colour the material is handed: the number unpacked back into
+	 * red / green / blue. This is a CONVERSION at the moment of use, not a second thing stored — the
+	 * row carries the one number and nothing else.
+	 */
+	FLinearColor ColorFromHex(int32 Hex)
+	{
+		const uint8 R = static_cast<uint8>((Hex >> 16) & 0xFF);
+		const uint8 G = static_cast<uint8>((Hex >> 8) & 0xFF);
+		const uint8 B = static_cast<uint8>(Hex & 0xFF);
+
+		// A colour is picked in the numbers every colour picker speaks, so it is handed over as the
+		// colour it reads as — not a darkened or brightened version of it.
+		return FLinearColor::FromSRGBColor(FColor(R, G, B, 255));
+	}
+}
 
 UProsperitocracyPlayerStatsComponent::UProsperitocracyPlayerStatsComponent()
 {
@@ -104,6 +141,9 @@ void UProsperitocracyPlayerStatsComponent::EndPlay(const EEndPlayReason::Type En
 	// The notifications go with the body: a listener outliving the thing it was bound to is a dangling
 	// pointer waiting for a perk to fire.
 	UnbindMovementStatListeners();
+
+	// The colour rows' notifications go the same way, for the same reason.
+	UnbindArmorColorListeners();
 
 	// The armor's GAS home only exists for as long as the body does, exactly as a gun's does.
 	if (ArmorHost)
@@ -307,6 +347,12 @@ void UProsperitocracyPlayerStatsComponent::WearWeave(UProsperitocracyStatTable* 
 		if (ArmorHost)
 		{
 			ArmorHost->InitializeFromStatBlock(Weave);
+
+			// And from here on the body listens to the armour's colour rows: a colour written by
+			// anyone repaints the piece on the spot, with nothing in between. A weave carries no
+			// colours, so wearing a different one keeps the colours the body already has — the look
+			// is detached from the weave (Design/armor.md).
+			BindArmorColorListeners();
 		}
 
 		// 3. And the weave's BODY rows — its two resists — onto this character, through the same door
@@ -316,7 +362,10 @@ void UProsperitocracyPlayerStatsComponent::WearWeave(UProsperitocracyStatTable* 
 	}
 	else if (ArmorHost)
 	{
-		// Bare: the armor's own numbers go away with it.
+		// Bare: the armor's own numbers go away with it — and its colours with it, so the pieces go
+		// back to the paint they ship with. The listener is let go BEFORE the host, so nothing fires
+		// off a dead armour.
+		UnbindArmorColorListeners();
 		ArmorHost->Destroy();
 		ArmorHost = nullptr;
 	}
@@ -328,6 +377,11 @@ void UProsperitocracyPlayerStatsComponent::WearWeave(UProsperitocracyStatTable* 
 	// re-priced, walk, run, crouch and jump, keeping the speed the body is already in.
 	SyncCarriedWeight();
 
+	// 5. And the look: every piece painted from its own colour row, read through the one evaluator.
+	// A piece with no colour chosen goes back to the paint it ships with — which is also what a body
+	// wearing no armour shows. One call and one log line, the same ones a colour change makes.
+	ApplyArmorColors();
+
 	// One line with the whole story — which weave, its three numbers as the ONE evaluator resolves
 	// them, what the body now carries, and the speeds it moves at with it on.
 	const UAbilitySystemComponent* ArmorASC = ArmorHost ? ArmorHost->GetProsperitocracyAbilitySystemComponent() : nullptr;
@@ -337,6 +391,255 @@ void UProsperitocracyPlayerStatsComponent::WearWeave(UProsperitocracyStatTable* 
 		GetStat(EProsperitocracyStat::ImpactResist), GetStat(EProsperitocracyStat::PiercingResist),
 		UProsperitocracyStatSystemStatics::GetStatFinal(ArmorASC, EProsperitocracyStat::Weight),
 		GetCarriedWeightLbs(), GetWeightSpeedMultiplier(), GetRunSpeed(), GetWalkSpeed(), GetJumpVelocity());
+}
+
+//~ The armor's trim (Design/armor.md) -------------------------------------------------------------------
+//
+// A trim colour is ONE number per region, carried on the armour's own GAS home beside its Weight.
+// Setting it writes that number and nothing else; painting it reads that number and nothing else. The
+// two halves meet at the row — which is why a colour set from a dev command today and a colour set
+// from a customizer later are the same act, and why neither has to know about the other.
+
+int32 UProsperitocracyPlayerStatsComponent::GetArmorColor(EProsperitocracyStat PieceColor) const
+{
+	if (!IsArmorColorPiece(PieceColor) || !ArmorHost)
+	{
+		return ProsperitocracyArmor::NoColor;
+	}
+
+	// The row's FINAL value through the one evaluator — never a raw base read.
+	const UAbilitySystemComponent* ArmorASC = ArmorHost->GetProsperitocracyAbilitySystemComponent();
+	return ArmorASC
+		? FMath::RoundToInt(UProsperitocracyStatSystemStatics::GetStatFinal(ArmorASC, PieceColor))
+		: ProsperitocracyArmor::NoColor;
+}
+
+bool UProsperitocracyPlayerStatsComponent::SetArmorColor(EProsperitocracyStat PieceColor, int32 Hex)
+{
+	if (!IsArmorColorPiece(PieceColor))
+	{
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("%s on %s: that is not one of the armor's colour rows, so there is no piece to paint."),
+			*GetName(), *GetNameSafe(GetOwner()));
+		return false;
+	}
+
+	if (!ArmorHost)
+	{
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("%s on %s: no armor worn, so there is nowhere for a colour to be carried."),
+			*GetName(), *GetNameSafe(GetOwner()));
+		return false;
+	}
+
+	// ONE number onto the armour's own row, through the thing's own door onto the evaluator. Nothing
+	// else happens here: the row's own notification paints the piece, so a colour set from anywhere
+	// lands the same way.
+	ArmorHost->SetStatBase(PieceColor, static_cast<float>(Hex));
+	return true;
+}
+
+USkeletalMeshComponent* UProsperitocracyPlayerStatsComponent::GetBodyMesh() const
+{
+	// The rig's answer, through the one place that can give it: the character. Never worked out from
+	// here — C++ cannot tell the mesh on screen from the mesh the body is animated from, and painting
+	// a guess is worse than painting nothing (the character's GetBodyMesh says exactly that).
+	const AProsperitocracyCharacter* Character = Cast<AProsperitocracyCharacter>(GetOwner());
+	return Character ? Character->GetBodyMesh() : nullptr;
+}
+
+int32 UProsperitocracyPlayerStatsComponent::FindArmorColorSlot(const USkeletalMeshComponent* Body, const TCHAR* SlotName) const
+{
+	if (!Body || !SlotName)
+	{
+		return INDEX_NONE;
+	}
+
+	// A piece is found by the NAME its slot carries on the mesh — the name the mesh was built with —
+	// never by an index: slot order is the mesh's business, and the head's colour must not be able to
+	// land on the legs because the slots were re-ordered or re-imported.
+	const FString Wanted(SlotName);
+	const TArray<FName> SlotNames = Body->GetMaterialSlotNames();
+	for (int32 Slot = 0; Slot < SlotNames.Num(); ++Slot)
+	{
+		if (SlotNames[Slot].ToString().Contains(Wanted, ESearchCase::IgnoreCase))
+		{
+			return Slot;
+		}
+	}
+
+	return INDEX_NONE;
+}
+
+void UProsperitocracyPlayerStatsComponent::EnsureArmorColorMIDs()
+{
+	if (bArmorColorMIDsMade)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* Body = GetBodyMesh();
+	if (!Body)
+	{
+		// Not a failure to shout about, and not something to retry forever either: nothing has said
+		// which mesh the body is DRAWN with, so there is nothing to paint. Leaving this un-made means
+		// the moment the rig answers, the paint happens (a body can come up before its mesh is set).
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("%s on %s: nothing has said which mesh the body is drawn with, so the armor's colours have "
+				 "nowhere to go. The character's GetBodyMesh must answer with the visible body."),
+			*GetName(), *GetNameSafe(GetOwner()));
+		return;
+	}
+
+	ArmorColorMIDs.SetNumZeroed(ProsperitocracyArmor::PieceCount);
+	OriginalArmorColors.SetNumZeroed(ProsperitocracyArmor::PieceCount);
+
+	for (int32 Index = 0; Index < ProsperitocracyArmor::PieceCount; ++Index)
+	{
+		const ProsperitocracyArmor::FPiece& Piece = ProsperitocracyArmor::Pieces[Index];
+
+		const int32 Slot = FindArmorColorSlot(Body, Piece.SlotName);
+		if (Slot == INDEX_NONE)
+		{
+			// Say which slots the mesh DOES have — a name is the whole fix, and hunting for it is the
+			// only other way to find out.
+			const TArray<FName> SlotNames = Body->GetMaterialSlotNames();
+			TArray<FString> Names;
+			for (const FName& Name : SlotNames)
+			{
+				Names.Add(Name.ToString());
+			}
+
+			UE_LOG(LogProsperitocracy, Warning,
+				TEXT("%s on %s: the body mesh (%s) has no material slot for trim %s (looked for a slot name "
+					 "containing '%s'; the mesh's slots are: %s)."),
+				*GetName(), *GetNameSafe(GetOwner()), *GetNameSafe(Body->GetSkeletalMeshAsset()),
+				Piece.Name, Piece.SlotName, *FString::Join(Names, TEXT(", ")));
+			continue;
+		}
+
+		// The material COPY that makes a colour possible at all: the material asset is a file and
+		// cannot be repainted while the game runs, but a copy of it can be, as often as we like — and
+		// every player gets their own, which is why one player's colour is never another's. Made FROM
+		// the material already on the slot, so the piece's own textures and paint stay underneath and
+		// only the colour is ours.
+		UMaterialInstanceDynamic* MID = Body->CreateDynamicMaterialInstance(Slot);
+		if (!MID)
+		{
+			continue;
+		}
+
+		ArmorColorMIDs[Index] = MID;
+
+		// What the piece looked like BEFORE we touched it: "nothing chosen" puts this back, so a piece
+		// with no colour is the piece the pack shipped, never a black we invented.
+		OriginalArmorColors[Index] = MID->K2_GetVectorParameterValue(ArmorColorParameterName);
+	}
+
+	bArmorColorMIDsMade = true;
+}
+
+void UProsperitocracyPlayerStatsComponent::ApplyArmorColors()
+{
+	EnsureArmorColorMIDs();
+
+	// The colours live on the ARMOUR, so they are read from the armour's own ability system — the
+	// same home its Weight is evaluated on. No armour, no colours (nothing chosen, all three).
+	const UAbilitySystemComponent* ArmorASC = ArmorHost ? ArmorHost->GetProsperitocracyAbilitySystemComponent() : nullptr;
+
+	TArray<FString> Pieces;
+	Pieces.Reserve(ProsperitocracyArmor::PieceCount);
+
+	for (int32 Index = 0; Index < ProsperitocracyArmor::PieceCount; ++Index)
+	{
+		const ProsperitocracyArmor::FPiece& Piece = ProsperitocracyArmor::Pieces[Index];
+
+		// Read at the moment of painting, through the one evaluator: a colour that moved for any
+		// reason is painted, with nobody having to remember to ask.
+		const float Final = ArmorASC
+			? UProsperitocracyStatSystemStatics::GetStatFinal(ArmorASC, Piece.Color)
+			: static_cast<float>(ProsperitocracyArmor::NoColor);
+
+		// Nothing chosen is not a colour: the piece goes back to the paint it ships with.
+		const bool bChosen = Final >= 0.0f;
+		const int32 Hex = bChosen ? FMath::Clamp(FMath::RoundToInt(Final), 0, 0xFFFFFF) : ProsperitocracyArmor::NoColor;
+
+		UMaterialInstanceDynamic* MID = ArmorColorMIDs.IsValidIndex(Index) ? ArmorColorMIDs[Index] : nullptr;
+		if (MID)
+		{
+			const FLinearColor Colour = bChosen ? ColorFromHex(Hex) : OriginalArmorColors[Index];
+			MID->SetVectorParameterValue(ArmorColorParameterName, Colour);
+
+			// Read it back: a colour that cannot land (a material with no parameter by that name) is a
+			// fact worth hearing once, not a silent no-op nobody can explain later.
+			if (bChosen && !bArmorColorParameterWarned
+				&& !MID->K2_GetVectorParameterValue(ArmorColorParameterName).Equals(Colour, 0.01f))
+			{
+				bArmorColorParameterWarned = true;
+				UE_LOG(LogProsperitocracy, Warning,
+					TEXT("%s on %s: the body's material does not take a colour through '%s', so a colour cannot "
+						 "land on it. The material's own parameter name is what this must be."),
+					*GetName(), *GetNameSafe(GetOwner()), *ArmorColorParameterName.ToString());
+			}
+		}
+
+		Pieces.Add(bChosen
+			? FString::Printf(TEXT("trim %s #%06X"), Piece.Name, Hex)
+			: FString::Printf(TEXT("trim %s own paint"), Piece.Name));
+	}
+
+	// One line with all three pieces, said once — the same shape as every other number this component
+	// reports, so what is on the body can be read back out of the log without a screenshot.
+	UE_LOG(LogProsperitocracy, Log, TEXT("%s on %s: armor colours — %s"),
+		*GetName(), *GetNameSafe(GetOwner()), *FString::Join(Pieces, TEXT(" | ")));
+}
+
+void UProsperitocracyPlayerStatsComponent::BindArmorColorListeners()
+{
+	// Bound fresh each time the armour comes on: the binding is to the ARMOUR's ability system, and a
+	// body that wears two weaves in a row must not end up listening twice.
+	UnbindArmorColorListeners();
+
+	UAbilitySystemComponent* ArmorASC = ArmorHost ? ArmorHost->GetProsperitocracyAbilitySystemComponent() : nullptr;
+	if (!ArmorASC)
+	{
+		return;
+	}
+
+	for (const ProsperitocracyArmor::FPiece& Piece : ProsperitocracyArmor::Pieces)
+	{
+		const FGameplayAttribute Attribute = UProsperitocracyStatSystemStatics::GetAttributeForStat(Piece.Color);
+		if (!Attribute.IsValid())
+		{
+			continue;
+		}
+
+		// The body is told by the NUMBER, not by whoever moved it — the same shape as the movement's
+		// listeners. A command today, a customizer later, a re-tune: they all arrive here.
+		ArmorColorChangeHandles.Add(
+			ArmorASC->GetGameplayAttributeValueChangeDelegate(Attribute)
+				.AddLambda([this](const FOnAttributeChangeData&) { ApplyArmorColors(); }));
+	}
+}
+
+void UProsperitocracyPlayerStatsComponent::UnbindArmorColorListeners()
+{
+	UAbilitySystemComponent* ArmorASC = ArmorHost ? ArmorHost->GetProsperitocracyAbilitySystemComponent() : nullptr;
+	if (ArmorASC)
+	{
+		// Removed BY HANDLE: the bindings are lambdas, so the delegate cannot find them by object.
+		for (int32 Index = 0; Index < ProsperitocracyArmor::PieceCount; ++Index)
+		{
+			const FGameplayAttribute Attribute =
+				UProsperitocracyStatSystemStatics::GetAttributeForStat(ProsperitocracyArmor::Pieces[Index].Color);
+			if (Attribute.IsValid() && ArmorColorChangeHandles.IsValidIndex(Index))
+			{
+				ArmorASC->GetGameplayAttributeValueChangeDelegate(Attribute).Remove(ArmorColorChangeHandles[Index]);
+			}
+		}
+	}
+
+	ArmorColorChangeHandles.Reset();
 }
 
 float UProsperitocracyPlayerStatsComponent::GetStat(EProsperitocracyStat Stat) const

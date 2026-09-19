@@ -60,6 +60,10 @@ public:
 	// --- The shot's push on the body ---
 	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, Drag);
 	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, Carry);
+	// --- What the thing LOOKS like (the armor's colour — Design/armor.md) ---
+	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, TrimColor1);
+	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, TrimColor2);
+	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, TrimColor3);
 
 protected:
 	UFUNCTION()
@@ -112,6 +116,15 @@ protected:
 
 	UFUNCTION()
 	UE_API void OnRep_Carry(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	UE_API void OnRep_TrimColor1(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	UE_API void OnRep_TrimColor2(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	UE_API void OnRep_TrimColor3(const FGameplayAttributeData& OldValue);
 
 private:
 	// blunt melee, explosions, grenades, push, mech stomp, vehicle ram, thrown objects (enemies, barrels)
@@ -186,6 +199,18 @@ private:
 	// % — the same shove when it carries you backwards instead of fighting you: always half of Drag.
 	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_Carry, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
 	FGameplayAttributeData Carry;
+
+	// The armor's colour, one row per piece, each the whole colour as ONE number — the piece's RGB hex
+	// (0xRRGGBB). Carried, not aggregated: the look reads it to set the mesh material. 0 = black;
+	// a negative = nothing chosen, so the piece keeps the paint it ships with. (Design/armor.md)
+	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_TrimColor1, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
+	FGameplayAttributeData TrimColor1;
+
+	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_TrimColor2, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
+	FGameplayAttributeData TrimColor2;
+
+	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_TrimColor3, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
+	FGameplayAttributeData TrimColor3;
 };
 
 #undef UE_API

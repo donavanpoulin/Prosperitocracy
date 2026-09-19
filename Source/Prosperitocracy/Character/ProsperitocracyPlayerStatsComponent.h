@@ -15,6 +15,47 @@ class UProsperitocracyAbilitySystemComponent;
 class UProsperitocracyHealthSet;
 class UProsperitocracyStatSet;
 class UProsperitocracyStatTable;
+class UMaterialInstanceDynamic;
+class USkeletalMeshComponent;
+
+/**
+ * The armor's TRIM REGIONS — the three the body carries, each with the row that holds its colour and
+ * the name the player speaks it by.
+ *
+ * One list, one place: the component paints from it and the dev command speaks it, so the regions can
+ * never be written down twice and disagree. Each region's colour is a row of the universal stat table
+ * (Trim 1 / Trim 2 / Trim 3) — never a second place a colour lives.
+ *
+ * The regions are numbered by what the player SEES (1 the collar, 2 the shoulders and arms, 3 the
+ * legs), which is NOT what the mesh calls its slots — the mesh's labels name the artist's chunks
+ * ("head and hands", "torso", "legs"). So `SlotName` is the mesh's own fragment, matched against the
+ * mesh's slot names, and `Name` is the player's number: the two are deliberately different things,
+ * and this table is the one place they meet.
+ */
+namespace ProsperitocracyArmor
+{
+	/** Nothing chosen: the region keeps the paint it ships with. A real colour is 0x000000 or above. */
+	constexpr int32 NoColor = -1;
+
+	/** One region: the row that holds its colour, the player's number, and the mesh slot it lands in. */
+	struct FPiece
+	{
+		EProsperitocracyStat Color;
+		const TCHAR* Name;
+		const TCHAR* SlotName;
+	};
+
+	/** The regions, numbered for the player — and the mesh slot each one's colour lands in. */
+	constexpr FPiece Pieces[] =
+	{
+		{ EProsperitocracyStat::TrimColor1, TEXT("1"), TEXT("torso") },  // the collar
+		{ EProsperitocracyStat::TrimColor2, TEXT("2"), TEXT("head")  },  // the shoulders and arms
+		{ EProsperitocracyStat::TrimColor3, TEXT("3"), TEXT("legs")  },  // the legs
+	};
+
+	/** How many pieces an armor is worn as — the count everything about the colour walks over. */
+	constexpr int32 PieceCount = sizeof(Pieces) / sizeof(Pieces[0]);
+}
 
 /**
  * UProsperitocracyPlayerStatsComponent
@@ -145,6 +186,28 @@ public:
 	 * get. Null while the body is bare. Read by whoever counts what the body carries.
 	 */
 	AProsperitocracyStatHostActor* GetArmorHost() const { return ArmorHost; }
+
+	//~ The armor's colour — the look, on the armor's own rows (Design/armor.md) --------------------
+
+	/**
+	 * Paint one piece of the armor: write that piece's colour row on the armor's OWN GAS home — the
+	 * one door a colour comes through, the same shape as WearWeave for the weave.
+	 *
+	 * One number per piece: the RGB hex (0xRRGGBB). `ProsperitocracyArmor::NoColor` clears it, and the
+	 * piece goes back to the paint it ships with. Nothing here decides a colour, and nothing here
+	 * touches the mesh: the row changes, and the body's own listener — which is already reading the
+	 * rows — paints the piece on the spot. That is the whole reason a customizer will need no new path
+	 * when it arrives: it writes the same row through the same call.
+	 *
+	 * False when the stat is not one of the armor's colour rows, or when no armor is worn: a colour
+	 * lives on the armor, so a bare body has nowhere to carry one.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Armor")
+	bool SetArmorColor(EProsperitocracyStat PieceColor, int32 Hex);
+
+	/** One piece's colour right now, as its hex — or nothing chosen, when none is. */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Armor")
+	int32 GetArmorColor(EProsperitocracyStat PieceColor) const;
 
 	/**
 	 * Write what this body is CARRYING onto its own Carried Weight row — the sum of its things, which
@@ -313,6 +376,52 @@ private:
 	/** Let those notifications go with the body. */
 	void UnbindMovementStatListeners();
 
+	//~ Painting the armor (the other half of the colour) -------------------------------------------
+
+	/**
+	 * The mesh the armor is painted on: the rig's answer through the character (`GetBodyMesh`), never
+	 * a guess — C++ cannot tell the drawn body from the animation source by looking at them.
+	 */
+	USkeletalMeshComponent* GetBodyMesh() const;
+
+	/**
+	 * Make the live copy of each piece's material, once, and remember what each piece looked like
+	 * before we touched it.
+	 *
+	 * A copy (a dynamic material instance) is what makes the colour movable at all: the material
+	 * ASSET is a file and cannot be repainted while the game runs, but a copy of it can be, any
+	 * number of times. Every player gets their own copies, which is why one player's colour is never
+	 * another's. Made FROM the material already on the slot, so the piece's own textures and paint
+	 * stay underneath the colour — only the colour is ours to move.
+	 */
+	void EnsureArmorColorMIDs();
+
+	/**
+	 * Which of the body mesh's material slots a piece is drawn in — found by the piece's own name,
+	 * matched against the names the mesh carries for its slots. INDEX_NONE when the mesh has no slot
+	 * by that name (the mesh's own slot names are logged, so the fix is a name and not a hunt).
+	 */
+	int32 FindArmorColorSlot(const USkeletalMeshComponent* Body, const TCHAR* SlotName) const;
+
+	/**
+	 * Paint every piece from its own row — the half of the colour that touches the body.
+	 *
+	 * Each piece is read at the moment it is painted, through the one evaluator, so a colour set by
+	 * anything (a command today, a customizer later) lands the same way with nothing in between.
+	 * Nothing chosen (`NoColor`) is not a colour: the piece is put back to the paint it shipped with.
+	 */
+	void ApplyArmorColors();
+
+	/**
+	 * Listen to the three colour rows on the armour's OWN GAS home, so a colour written by anyone
+	 * repaints the piece on the spot — the same shape as the movement listening to its own numbers,
+	 * and the reason nothing has to remember to call the paint.
+	 */
+	void BindArmorColorListeners();
+
+	/** Let those notifications go — with the armour, and with the body. */
+	void UnbindArmorColorListeners();
+
 	/** Push the baseline block into the character's attributes, once per life. */
 	void ApplyBaselineStats();
 
@@ -421,6 +530,37 @@ private:
 	 * delegate cannot find a lambda by object.
 	 */
 	TArray<FDelegateHandle> MovementStatChangeHandles;
+
+	/**
+	 * The color rows' notifications on the armour's own ability system, kept so they can be let go.
+	 * Removed BY HANDLE for the same reason as the movement's: the bindings are lambdas.
+	 */
+	TArray<FDelegateHandle> ArmorColorChangeHandles;
+
+	/**
+	 * One live copy of each piece's material, in the piece order — made once (a copy per piece per
+	 * body is the point: this is what the player's own colour is written into).
+	 */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> ArmorColorMIDs;
+
+	/**
+	 * What each piece's colour was before we touched it, so "nothing chosen" can put the pack's own
+	 * paint back rather than a black we invented. Same order as ArmorColorMIDs.
+	 */
+	TArray<FLinearColor> OriginalArmorColors;
+
+	/** True once the live copies have been made — the one-time half of painting a body. */
+	bool bArmorColorMIDsMade = false;
+
+	/** One warning, not one per paint, when the material has no colour parameter by our name. */
+	bool bArmorColorParameterWarned = false;
+
+	/**
+	 * The parameter the body's materials take their colour through — the pack's own name for it. One
+	 * name for all three pieces: a piece's material IS the same material, per part.
+	 */
+	static const FName ArmorColorParameterName;
 
 	/**
 	 * The walk and run numbers this component last published, so a re-price knows which of the two the

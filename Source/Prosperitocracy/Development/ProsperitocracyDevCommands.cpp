@@ -15,8 +15,8 @@
 #include "Weapons/ProsperitocracyLoadoutComponent.h"
 
 /**
- * The in-game dev sandbox — DEVELOPMENT ONLY. Two commands, one per thing you cannot try by walking
- * around: the gun you are holding, and the weave you are wearing.
+ * The in-game dev sandbox — DEVELOPMENT ONLY. Three commands, one per thing you cannot try by walking
+ * around: the gun you are holding, the weave you are wearing, and the armour's colour.
  *
  * `Prosperitocracy.Gun <name>` puts one of our four guns in your hands without touching what the
  * character spawns with and without a pickup system.
@@ -33,6 +33,12 @@
  * spawn with the weave it ships wearing, asked for again. It exists because an armor has no pickup
  * system yet and no customizer yet, and because a weave's weight is something you have to FEEL: wear
  * a heavy one and run, wear a light one and run.
+ *
+ * `Prosperitocracy.ArmorColor <1|2|3> <#RRGGBB|none>` paints one trim region of the armour you are
+ * wearing — 1 the collar, 2 the shoulders and arms, 3 the legs, each its own colour, each one number.
+ * It exists because the colour has no customizer yet, and because a colour is something you have to
+ * SEE: it is the same call a customizer will make when it arrives, and the region repaints the moment
+ * the row changes.
  *
  * Nothing here writes a value, spawns an actor, or adds a rule: each calls the one function that
  * already puts that thing on the body, and deleting this file would change no number in the game.
@@ -287,4 +293,172 @@ namespace ProsperitocracyDevArmor
 		TEXT("Tungsten (lightest to heaviest). It goes on through the same door a weave is worn through ")
 		TEXT("at spawn, so it takes effect on the spot. No argument lists them."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleArmorCommand));
+}
+
+/**
+ * The look half of the sandbox: the trim colour of the armor you are wearing.
+ *
+ * One region at a time, because that is what the trim IS — three regions, three rows, one number each.
+ * This command owns no colour of its own: it writes a region's row through the same call a customizer
+ * will make, so what it does and what the menu will do cannot drift apart. The regions are spoken of
+ * by the PLAYER's numbers — 1 the collar, 2 the shoulders and arms, 3 the legs — which is what the
+ * menu will show too, because those are the parts the player can see.
+ */
+namespace ProsperitocracyDevArmorColor
+{
+	/** Say something in the log and on screen, as the COLOUR sandbox. LineIndex = which on-screen slot. */
+	void Report(const FString& Message, int32 LineIndex = 0)
+	{
+		ProsperitocracyDev::Report(TEXT("DevColor"), /*OnScreenKey=*/ 0x9004 + LineIndex, Message);
+	}
+
+	/** The character's own numbers — where a piece of armour is painted from. Null outside PIE. */
+	UProsperitocracyPlayerStatsComponent* FindStats(UWorld* World)
+	{
+		if (!World)
+		{
+			return nullptr;
+		}
+
+		const APlayerController* PlayerController = World->GetFirstPlayerController();
+		APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
+		return Pawn ? Pawn->FindComponentByClass<UProsperitocracyPlayerStatsComponent>() : nullptr;
+	}
+
+	/** The region a word names ("1", "2", "3"), or null when it is not one. One list: the armour's. */
+	const ProsperitocracyArmor::FPiece* FindPiece(const FString& Name)
+	{
+		for (const ProsperitocracyArmor::FPiece& Piece : ProsperitocracyArmor::Pieces)
+		{
+			if (Name.Equals(Piece.Name, ESearchCase::IgnoreCase))
+			{
+				return &Piece;
+			}
+		}
+		return nullptr;
+	}
+
+	/**
+	 * A colour as it is typed: six hex digits, with or without the '#'. Nothing else is a colour —
+	 * a value we half-understood would land on the body as a colour nobody asked for.
+	 */
+	bool ParseHex(const FString& Text, int32& OutHex)
+	{
+		const int32 Start = (!Text.IsEmpty() && Text[0] == TEXT('#')) ? 1 : 0;
+		const int32 Digits = Text.Len() - Start;
+		if (Digits < 1 || Digits > 6)
+		{
+			return false;
+		}
+
+		int32 Value = 0;
+		for (int32 Index = Start; Index < Text.Len(); ++Index)
+		{
+			const TCHAR Char = Text[Index];
+			int32 Digit = 0;
+			if (Char >= TEXT('0') && Char <= TEXT('9'))
+			{
+				Digit = Char - TEXT('0');
+			}
+			else if (Char >= TEXT('a') && Char <= TEXT('f'))
+			{
+				Digit = (Char - TEXT('a')) + 10;
+			}
+			else if (Char >= TEXT('A') && Char <= TEXT('F'))
+			{
+				Digit = (Char - TEXT('A')) + 10;
+			}
+			else
+			{
+				return false;
+			}
+			Value = (Value << 4) | Digit;
+		}
+
+		OutHex = Value;
+		return true;
+	}
+
+	/** One region's colour as it is spoken of: the hex, or the paint it ships with. */
+	FString DescribeColor(int32 Hex)
+	{
+		return (Hex == ProsperitocracyArmor::NoColor)
+			? FString(TEXT("its own paint"))
+			: FString::Printf(TEXT("#%06X"), Hex);
+	}
+
+	/** The armour's three trim regions and what each is painted right now — one line each on screen. */
+	void ListColors(const UProsperitocracyPlayerStatsComponent* Stats)
+	{
+		int32 Line = 0;
+		Report(TEXT("Prosperitocracy.ArmorColor <1|2|3> <#RRGGBB|none> — the armor's trim:"), Line++);
+
+		for (const ProsperitocracyArmor::FPiece& Piece : ProsperitocracyArmor::Pieces)
+		{
+			const int32 Hex = Stats ? Stats->GetArmorColor(Piece.Color) : ProsperitocracyArmor::NoColor;
+			Report(FString::Printf(TEXT("  Trim %-4s %s"), Piece.Name, *DescribeColor(Hex)), Line++);
+		}
+
+		if (!Stats)
+		{
+			Report(TEXT("  (no character — this reads, and paints, only while the game is running)"), Line++);
+		}
+	}
+
+	void HandleArmorColorCommand(const TArray<FString>& Args, UWorld* World)
+	{
+		UProsperitocracyPlayerStatsComponent* Stats = FindStats(World);
+
+		// No region named: say what can be typed, by saying what the armour has and what it is painted.
+		if (Args.Num() < 2 || Args[0].IsEmpty() || Args[1].IsEmpty())
+		{
+			ListColors(Stats);
+			return;
+		}
+
+		const ProsperitocracyArmor::FPiece* Piece = FindPiece(Args[0]);
+		if (!Piece)
+		{
+			Report(FString::Printf(TEXT("'%s' is not one of the armor's trim regions — 1, 2 or 3."), *Args[0]));
+			ListColors(Stats);
+			return;
+		}
+
+		if (!Stats)
+		{
+			Report(TEXT("no character to paint — this only works while the game is running (PIE)."));
+			return;
+		}
+
+		// "none" is how a region goes back to the paint it ships with — not a colour, and not black.
+		int32 Hex = ProsperitocracyArmor::NoColor;
+		if (!Args[1].Equals(TEXT("none"), ESearchCase::IgnoreCase) && !ParseHex(Args[1], Hex))
+		{
+			Report(FString::Printf(
+				TEXT("'%s' is not a colour — give six hex digits (like #FF0000), or 'none' to go back to its own paint."),
+				*Args[1]));
+			return;
+		}
+
+		// The ONE door, the same call a customizer will make: the region's row is written, and the body
+		// paints it on the spot (it listens to that row). Nothing is painted from here.
+		if (!Stats->SetArmorColor(Piece->Color, Hex))
+		{
+			Report(FString::Printf(TEXT("could not paint trim %s — see the log for why."), Piece->Name));
+			return;
+		}
+
+		Report(FString::Printf(TEXT("trim %s: %s."), Piece->Name, *DescribeColor(Hex)));
+	}
+
+	// A plain console command like the gun and armour ones, so it needs no cheat manager, no
+	// PlayerController subclass and no exec routing — type it in the Output Log's Cmd box during PIE.
+	static FAutoConsoleCommandWithWorldAndArgs ArmorColorCommand(
+		TEXT("Prosperitocracy.ArmorColor"),
+		TEXT("Paint one trim region of the armor you are wearing, one colour per region: 1 the collar, ")
+		TEXT("2 the shoulders and arms, 3 the legs — each given six hex digits (like #FF0000) or 'none' ")
+		TEXT("for the paint it ships with. It writes the region's own colour row through the same call a ")
+		TEXT("customizer will make, so the change shows on the body the moment you press enter. No ")
+		TEXT("arguments list the regions and their colours."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleArmorColorCommand));
 }

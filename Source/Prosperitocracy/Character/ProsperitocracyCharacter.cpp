@@ -55,6 +55,16 @@ float AProsperitocracyCharacter::GetAimingAlpha_Implementation() const
 	return 0.0f;
 }
 
+USkeletalMeshComponent* AProsperitocracyCharacter::GetBodyMesh_Implementation() const
+{
+	// Nothing in C++ can say which of the character's meshes is the one on screen — the rig decided
+	// that when the visible body was put on it, and a mesh being visible is not a statement about
+	// what it is. Null is the honest default: nothing drawn, so nothing painted, and whoever asked
+	// says so (see UProsperitocracyPlayerStatsComponent::ApplyArmorColors) instead of painting a
+	// guess. The blueprint overrides this with the body it actually draws.
+	return nullptr;
+}
+
 FRotator AProsperitocracyCharacter::GetBaseAimRotation() const
 {
 	FRotator AimRotation = Super::GetBaseAimRotation();
