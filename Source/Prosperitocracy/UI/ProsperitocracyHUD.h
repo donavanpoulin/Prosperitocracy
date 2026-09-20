@@ -38,20 +38,23 @@ public:
 	/** Everything is drawn in one pass, once a frame. */
 	virtual void DrawHUD() override;
 
-	// The bar's geometry, in one list so the look is one place. [TUNE] — all four are mine to pick, and
+	// The bar's geometry, in one list so the look is one place. [TUNE] — all of them are mine to pick, and
 	// moving any of them moves nothing else.
-	static constexpr float BarWidthShareOfScreen = 0.4f;
+	//
+	// It sits in the BOTTOM LEFT corner (his call, 2026-09-20): off to the side so it does not sit in the
+	// middle of what you are looking at, half the width it had when it was centred.
+	static constexpr float BarWidthShareOfScreen = 0.2f;
 	static constexpr float BarHeightPixels = 10.0f;
 	static constexpr float BarBottomMarginPixels = 70.0f;
+	static constexpr float BarLeftMarginPixels = 40.0f;
 	static constexpr float BorderThicknessPixels = 2.0f;
 
 	/**
-	 * The health's colour: a dark red with a crimson lean (his call, 2026-09-20 — the first pass read a
-	 * touch too purple, so this is the same colour nudged red). Stated as a hex because that is how a
-	 * colour is picked, and converted from sRGB so what is drawn is the colour that was picked rather than
-	 * a linear-space guess at it.
+	 * The health's colour: a dark red with a crimson lean — his own pick, 2026-09-20, after two passes of
+	 * his eye. Stated as a hex because that is how a colour is picked, and converted from sRGB so what is
+	 * drawn is the colour that was picked rather than a linear-space guess at it.
 	 */
-	static constexpr uint32 HealthColorHex = 0xA21634;
+	static constexpr uint32 HealthColorHex = 0xB3001C;
 
 protected:
 	/** The health set of the body this HUD is showing, or null when there is none to show. */

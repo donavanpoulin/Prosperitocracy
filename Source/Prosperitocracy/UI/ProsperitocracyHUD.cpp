@@ -70,7 +70,7 @@ void AProsperitocracyHUD::DrawHUD()
 	const float ScreenHeight = Canvas->SizeY;
 
 	const float BarWidth = ScreenWidth * BarWidthShareOfScreen;
-	const float BarLeft = (ScreenWidth - BarWidth) * 0.5f;
+	const float BarLeft = BarLeftMarginPixels;
 	const float BarTop = ScreenHeight - BarBottomMarginPixels - BarHeightPixels;
 	const float Border = BorderThicknessPixels;
 
