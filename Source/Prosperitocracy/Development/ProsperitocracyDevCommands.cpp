@@ -10,13 +10,15 @@
 #include "UObject/UObjectGlobals.h"
 
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
+#include "Classes/ProsperitocracyClass.h"
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStatTable.h"
 #include "Weapons/ProsperitocracyLoadoutComponent.h"
 
 /**
- * The in-game dev sandbox — DEVELOPMENT ONLY. Three commands, one per thing you cannot try by walking
- * around: the gun you are holding, the weave you are wearing, and the armour's colour.
+ * The in-game dev sandbox — DEVELOPMENT ONLY. Four commands, one per thing you cannot try by walking
+ * around: the gun you are holding, the weave you are wearing, the armour's colour, and which of your
+ * class's three loadouts you are playing.
  *
  * `Prosperitocracy.Gun <name>` puts one of our four guns in your hands without touching what the
  * character spawns with and without a pickup system.
@@ -39,6 +41,11 @@
  * It exists because the colour has no customizer yet, and because a colour is something you have to
  * SEE: it is the same call a customizer will make when it arrives, and the region repaints the moment
  * the row changes.
+ *
+ * `Prosperitocracy.Loadout <1|2|3>` plays one of your class's three loadouts, and what that loadout
+ * carries comes with it — the armour and the guns. A class owns three (Design/loadout.md) and there is
+ * no picker yet, so this is the only way to reach the second and the third; it is one call to the door
+ * a switch goes through, the same call the picker will make.
  *
  * Nothing here writes a value, spawns an actor, or adds a rule: each calls the one function that
  * already puts that thing on the body, and deleting this file would change no number in the game.
@@ -461,4 +468,137 @@ namespace ProsperitocracyDevArmorColor
 		TEXT("customizer will make, so the change shows on the body the moment you press enter. No ")
 		TEXT("arguments list the regions and their colours."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleArmorColorCommand));
+}
+
+/**
+ * The loadout half of the sandbox: which of your class's three loadouts you are playing.
+ *
+ * A class owns three (Design/loadout.md) and a player has both classes, so "which loadout am I on" is
+ * real state the body carries — and with no picker yet, this is the only way to reach loadouts 2 and 3.
+ * It is one call to the door a switch goes through (SelectLoadout), which is the same call the picker
+ * will make, so switching from here cannot dress a body differently from the way the picker will.
+ */
+namespace ProsperitocracyDevLoadout
+{
+	/** Say something in the log and on screen, as the LOADOUT sandbox. LineIndex = which on-screen slot. */
+	void Report(const FString& Message, int32 LineIndex = 0)
+	{
+		ProsperitocracyDev::Report(TEXT("DevLoadout"), /*OnScreenKey=*/ 0x9005 + LineIndex, Message);
+	}
+
+	/** The character's loadout component — the thing that knows which of the three is being played. */
+	UProsperitocracyLoadoutComponent* FindLoadout(UWorld* World)
+	{
+		if (!World)
+		{
+			return nullptr;
+		}
+
+		const APlayerController* PlayerController = World->GetFirstPlayerController();
+		APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
+		return Pawn ? Pawn->FindComponentByClass<UProsperitocracyLoadoutComponent>() : nullptr;
+	}
+
+	/** One loadout as a line: the armour it names, then the gun each of its slots carries. */
+	FString Describe(const UProsperitocracyLoadout* Loadout)
+	{
+		if (!Loadout)
+		{
+			return TEXT("nothing at all");
+		}
+
+		// The armour first — it is the piece you FEEL, because it is what the weight comes from.
+		const UProsperitocracyStatTable* Weave = Loadout->Weave;
+		FString Text = Weave ? Weave->GetName() : FString(TEXT("no armour"));
+
+		// Then the guns, in slot order, by the block each slot carries. A slot that names nothing is
+		// simply not carried, which is exactly what an empty loadout is.
+		const FProsperitocracyWeaponSlot* const Slots[] =
+		{
+			&Loadout->Primary, &Loadout->Secondary, &Loadout->Special, &Loadout->Grenade
+		};
+		for (const FProsperitocracyWeaponSlot* Slot : Slots)
+		{
+			if (const UProsperitocracyStatTable* Block = Slot->StatBlock.LoadSynchronous())
+			{
+				Text += FString::Printf(TEXT(" + %s"), *Block->GetName());
+			}
+		}
+
+		return Text;
+	}
+
+	/** The class's three loadouts and which one is being played — one line per on-screen slot. */
+	void ListLoadouts(const UProsperitocracyLoadoutComponent* LoadoutComponent)
+	{
+		int32 Line = 0;
+
+		if (!LoadoutComponent)
+		{
+			Report(TEXT("Prosperitocracy.Loadout <1|2|3> — no character yet: this works while the game is running (PIE)."), Line++);
+			return;
+		}
+
+		const UProsperitocracyClass* Class = LoadoutComponent->Class;
+		if (!Class)
+		{
+			Report(TEXT("Prosperitocracy.Loadout <1|2|3> — no class is chosen on this character, so it plays the one loadout it was authored with."), Line++);
+			return;
+		}
+
+		Report(FString::Printf(TEXT("Prosperitocracy.Loadout <1|2|3> — %s:"), *Class->DisplayName.ToString()), Line++);
+
+		const UProsperitocracyLoadout* Three[] = { Class->Loadout1, Class->Loadout2, Class->Loadout3 };
+		for (int32 Index = 0; Index < 3; ++Index)
+		{
+			Report(FString::Printf(TEXT("  %d. %s%s"), Index + 1, *Describe(Three[Index]),
+				(LoadoutComponent->SelectedLoadout == Index) ? TEXT("   <- playing") : TEXT("")), Line++);
+		}
+	}
+
+	void HandleLoadoutCommand(const TArray<FString>& Args, UWorld* World)
+	{
+		UProsperitocracyLoadoutComponent* LoadoutComponent = FindLoadout(World);
+
+		// No argument: say what the three are, and which one is being played.
+		if (Args.Num() < 1 || Args[0].IsEmpty())
+		{
+			ListLoadouts(LoadoutComponent);
+			return;
+		}
+
+		if (!LoadoutComponent)
+		{
+			Report(TEXT("no character to change — this only works while the game is running (PIE)."));
+			return;
+		}
+
+		// Spoken of as 1, 2 and 3 — the way the player counts a class's three loadouts.
+		const int32 Index = FCString::Atoi(*Args[0]) - 1;
+		if (Index < 0 || Index > 2)
+		{
+			Report(FString::Printf(TEXT("'%s' is not one of the three — give 1, 2 or 3."), *Args[0]));
+			ListLoadouts(LoadoutComponent);
+			return;
+		}
+
+		// The ONE door a switch goes through, the same call the picker will make. Everything a switch
+		// does — the armour, and the guns in hand — happens in there, so nothing is dressed from here.
+		if (!LoadoutComponent->SelectLoadout(Index))
+		{
+			Report(TEXT("could not change loadout — see the log for why."));
+			return;
+		}
+
+		Report(FString::Printf(TEXT("playing loadout %d — %s"), Index + 1, *Describe(LoadoutComponent->GetLoadout())));
+	}
+
+	// A plain console command like the other three, so it needs no cheat manager, no PlayerController
+	// subclass and no exec routing — type it in the Output Log's Cmd box during PIE.
+	static FAutoConsoleCommandWithWorldAndArgs LoadoutCommand(
+		TEXT("Prosperitocracy.Loadout"),
+		TEXT("Play one of your class's three loadouts: 1, 2 or 3. What that loadout carries comes with it ")
+		TEXT("— the armour and the guns — through the same call a switch goes through, so the change ")
+		TEXT("shows in hand. No argument lists the three and marks the one being played."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleLoadoutCommand));
 }

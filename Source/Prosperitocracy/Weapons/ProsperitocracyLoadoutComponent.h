@@ -90,11 +90,13 @@ public:
 	/**
 	 * Play one of the class's three loadouts, and dress the body from the one chosen.
 	 *
-	 * This is the door a loadout is switched through: choose the loadout, and the armour it names
-	 * comes with it — one call, the same one the body makes at spawn, so a swap can never dress a
-	 * body differently from the way it spawns. Guns already in hand keep the numbers they were
-	 * dressed with until the rig re-creates them; the picker's own re-dress lands with the picker
-	 * (ROADMAP section 2).
+	 * This is the door a loadout is switched through: choose the loadout, and what it carries comes
+	 * with it — the ARMOUR through the same call the body makes at spawn, and the GUNS already in hand
+	 * through the same DressGun that gave them their numbers — so a switch can never dress a body or a
+	 * gun differently from the way they came up.
+	 *
+	 * A slot the new loadout no longer carries is left as it is: which gun actors exist in the rig is
+	 * the rig's business, not this call's.
 	 *
 	 * False when there is no class, or the index is not one of the three: nothing changes, and the
 	 * character keeps playing the loadout it is already playing.

@@ -69,15 +69,36 @@ bool UProsperitocracyLoadoutComponent::SelectLoadout(int32 Index)
 	SelectedLoadout = Index;
 
 	// Choosing a loadout chooses its armour with it: the LOADOUT dresses the body, through the same
-	// call the body makes at spawn, so a swap can never dress a body differently from the way it
-	// spawns. Guns already in hand are not re-dressed here — the rig re-creates them, and the picker's
-	// own re-dress lands with the picker (ROADMAP section 2).
+	// call the body makes at spawn, so a switch can never dress a body differently from the way it
+	// spawns.
 	if (AActor* Owner = GetOwner())
 	{
 		if (UProsperitocracyPlayerStatsComponent* Stats = Owner->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
 		{
 			Stats->DressFromLoadout(GetLoadout());
 		}
+	}
+
+	// And its GUNS come with it too. A gun the rig has already built is holding the previous loadout's
+	// numbers, so every live one is dressed again — through DressGun, which is the one act that gives a
+	// gun its numbers (at spawn, after a slot switch, and here). It is collected first because
+	// re-dressing a gun records it in that map, and a map is not something to walk while it is written.
+	//
+	// A slot this loadout no longer carries answers NoEntry and its gun is left as it is: which gun
+	// actors exist in the rig belongs to the rig, and a loadout that carries nothing in a slot is a
+	// real loadout, not a reason for this call to delete something.
+	TArray<AProsperitocracyWeapon*> LiveGuns;
+	LiveGuns.Reserve(DressedGunsBySlot.Num());
+	for (const TPair<FGameplayTag, TWeakObjectPtr<AProsperitocracyWeapon>>& Dressed : DressedGunsBySlot)
+	{
+		if (AProsperitocracyWeapon* Gun = Dressed.Value.Get())
+		{
+			LiveGuns.Add(Gun);
+		}
+	}
+	for (AProsperitocracyWeapon* Gun : LiveGuns)
+	{
+		DressGun(Gun);
 	}
 
 	return true;
