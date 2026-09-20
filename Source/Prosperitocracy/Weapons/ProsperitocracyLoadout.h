@@ -188,6 +188,16 @@ public:
 	const FProsperitocracyWeaponSlot* FindEntryForSlot(const FGameplayTag& Slot) const;
 
 	/**
+	 * The same entry, to WRITE INTO — what puts a weapon into a loadout.
+	 *
+	 * A loadout is the one holder of what a character carries, so a weapon being chosen is a write to
+	 * one of these four slots and nothing else (there is no second place a carried gun lives). Null when
+	 * the tag is not one of the four; a slot this loadout does not carry is a slot that names nothing,
+	 * which is a real state, not a missing entry.
+	 */
+	FProsperitocracyWeaponSlot* FindMutableEntryForSlot(const FGameplayTag& Slot);
+
+	/**
 	 * The entry a gun blueprint belongs to, and the slot it sits in.
 	 *
 	 * This exists for a gun the rig created without telling us which slot it is (the template's child

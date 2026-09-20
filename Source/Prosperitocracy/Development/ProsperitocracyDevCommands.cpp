@@ -23,11 +23,11 @@
  * `Prosperitocracy.Gun <name>` puts one of our four guns in your hands without touching what the
  * character spawns with and without a pickup system.
  *
- * It is this small because of how a gun is built: four guns are TWO bodies (pistol, rifle) x FOUR
- * stat blocks, and a body carries NO numbers. You already carry both bodies — the rifle in Primary,
- * the pistol in Secondary — and the template's own keys 1 and 2 already switch between them. So the
- * only thing a different gun needs is a different BLOCK, which is exactly what the loadout already
- * does at spawn. This command asks it to do that again, at runtime.
+ * It is this small because of how a gun is built: four guns are TWO bodies (pistol, rifle) x FOUR stat
+ * blocks, and a body carries NO numbers — so a gun is a body AND a block, and picking one is writing
+ * that pair into a slot of the loadout you are playing. That write goes through the SAME door the
+ * picker will use (SetWeaponInSlot), which is what checks the class's access rules and then dresses the
+ * body from the loadout — so what this command leaves behind is what a switch and a menu will read.
  *
  * Every gun arrives with a fresh gun's ammo: a full magazine and a full spare pool.
  *
@@ -80,17 +80,23 @@ namespace ProsperitocracyDevGuns
 	struct FGunEntry
 	{
 		const TCHAR* Name;
+		const TCHAR* BodyPath;
 		const TCHAR* BlockPath;
 		const TCHAR* BlockName;
 	};
 
-	// The four guns we have. The block — not a body — is what makes a gun, so this table names blocks.
+	/** The two gun bodies: every gun we have is built on one of them. */
+	const TCHAR* const RifleBodyPath  = TEXT("/Game/ThirdPerson/Blueprints/WeaponBP/weaponChild/BP_Rifle.BP_Rifle_C");
+	const TCHAR* const PistolBodyPath = TEXT("/Game/ThirdPerson/Blueprints/WeaponBP/weaponChild/BP_Pistol.BP_Pistol_C");
+
+	// The four guns we have, each as the body it is built on AND the block that is its numbers — both
+	// halves, because both halves are what a gun is and a slot carries the pair.
 	const FGunEntry Guns[] =
 	{
-		{ TEXT("Pistol"), TEXT("/Game/Weapons/StatBlocks/STB_Pistol.STB_Pistol"),       TEXT("STB_Pistol")    },
-		{ TEXT("SMG"),    TEXT("/Game/Weapons/StatBlocks/STB_SMG.STB_SMG"),             TEXT("STB_SMG")       },
-		{ TEXT("Auto"),   TEXT("/Game/Weapons/StatBlocks/STB_RifleAuto.STB_RifleAuto"), TEXT("STB_RifleAuto") },
-		{ TEXT("Semi"),   TEXT("/Game/Weapons/StatBlocks/STB_RifleSemi.STB_RifleSemi"), TEXT("STB_RifleSemi") },
+		{ TEXT("Pistol"), PistolBodyPath, TEXT("/Game/Weapons/StatBlocks/STB_Pistol.STB_Pistol"),       TEXT("STB_Pistol")    },
+		{ TEXT("SMG"),    PistolBodyPath, TEXT("/Game/Weapons/StatBlocks/STB_SMG.STB_SMG"),             TEXT("STB_SMG")       },
+		{ TEXT("Auto"),   RifleBodyPath,  TEXT("/Game/Weapons/StatBlocks/STB_RifleAuto.STB_RifleAuto"), TEXT("STB_RifleAuto") },
+		{ TEXT("Semi"),   RifleBodyPath,  TEXT("/Game/Weapons/StatBlocks/STB_RifleSemi.STB_RifleSemi"), TEXT("STB_RifleSemi") },
 	};
 
 	/** The character's loadout — the thing that owns what it carries. Null outside PIE, or before a pawn. */
@@ -161,16 +167,23 @@ namespace ProsperitocracyDevGuns
 		}
 
 		UProsperitocracyStatTable* Block = LoadObject<UProsperitocracyStatTable>(nullptr, Wanted->BlockPath);
-		if (!Block)
+		UClass* Body = LoadClass<AActor>(nullptr, Wanted->BodyPath);
+		if (!Block || !Body)
 		{
-			Report(FString::Printf(TEXT("could not load %s"), Wanted->BlockPath));
+			Report(FString::Printf(TEXT("could not load the gun: %s"), Block ? Wanted->BodyPath : Wanted->BlockPath));
 			return;
 		}
 
-		// One line either way: the reason it could not be installed, or the whole story of the install
-		// (which slot, and whether the gun that was already there was re-dressed on the spot).
+		// The gun, as a loadout carries it: the body it is built on, and the block that is its numbers.
+		FProsperitocracyWeaponSlot Entry;
+		Entry.BodyClass = Body;
+		Entry.StatBlock = Block;
+
+		// The slot is the block's own tag, and the loadout is what checks it — along with the class's
+		// access rules — so nothing here decides what may go where. One line comes back either way: the
+		// reason it was refused, or what was put where.
 		FString Message;
-		Loadout->DevEquipStatBlock(Block, Message);
+		Loadout->SetWeaponInSlot(Block->GetSlot(), Entry, Message);
 		Report(Message);
 	}
 
@@ -219,8 +232,8 @@ namespace ProsperitocracyDevArmor
 		ProsperitocracyDev::Report(TEXT("DevArmor"), /*OnScreenKey=*/ 0x9003 + LineIndex, Message);
 	}
 
-	/** The character's own numbers — the component a weave is worn through. Null outside PIE, or before a pawn. */
-	UProsperitocracyPlayerStatsComponent* FindStats(UWorld* World)
+	/** The character's loadout — the thing a weave is chosen IN. Null outside PIE, or before a pawn. */
+	UProsperitocracyLoadoutComponent* FindLoadout(UWorld* World)
 	{
 		if (!World)
 		{
@@ -229,7 +242,7 @@ namespace ProsperitocracyDevArmor
 
 		const APlayerController* PlayerController = World->GetFirstPlayerController();
 		APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
-		return Pawn ? Pawn->FindComponentByClass<UProsperitocracyPlayerStatsComponent>() : nullptr;
+		return Pawn ? Pawn->FindComponentByClass<UProsperitocracyLoadoutComponent>() : nullptr;
 	}
 
 	/** List the five weaves, lightest to heaviest — one line per on-screen slot, so all five are readable. */
@@ -270,8 +283,8 @@ namespace ProsperitocracyDevArmor
 			return;
 		}
 
-		UProsperitocracyPlayerStatsComponent* Stats = FindStats(World);
-		if (!Stats)
+		UProsperitocracyLoadoutComponent* Loadout = FindLoadout(World);
+		if (!Loadout)
 		{
 			Report(TEXT("no character to wear it — this only works while the game is running (PIE)."));
 			return;
@@ -284,12 +297,13 @@ namespace ProsperitocracyDevArmor
 			return;
 		}
 
-		// The ONE door: the same call this character already made at spawn with the weave it shipped
-		// wearing. Everything a weave does to the body happens in there — nothing is done from here, so
-		// this command cannot dress a body differently from the way the game dresses it.
-		Stats->WearWeave(Block);
-
-		Report(FString::Printf(TEXT("wearing %s (%s) — watch the run and the jump."), Wanted->Name, Wanted->BlockName));
+		// The ONE door a weave is chosen through: it is written into the loadout being played, and the
+		// body is dressed from there — the same dress a loadout switch performs. Nothing about the body
+		// is touched from here, which is why the choice survives a switch and the shipped default is
+		// never written.
+		FString Message;
+		Loadout->SetWeave(Block, Message);
+		Report(FString::Printf(TEXT("%s (%s) — watch the run and the jump."), *Message, Wanted->BlockName));
 	}
 
 	// The command itself: a plain console command like the gun one, so it needs no cheat manager, no
@@ -319,8 +333,8 @@ namespace ProsperitocracyDevArmorColor
 		ProsperitocracyDev::Report(TEXT("DevColor"), /*OnScreenKey=*/ 0x9004 + LineIndex, Message);
 	}
 
-	/** The character's own numbers — where a piece of armour is painted from. Null outside PIE. */
-	UProsperitocracyPlayerStatsComponent* FindStats(UWorld* World)
+	/** The character's loadout — where a colour is chosen. Null outside PIE, or before a pawn. */
+	UProsperitocracyLoadoutComponent* FindLoadout(UWorld* World)
 	{
 		if (!World)
 		{
@@ -329,7 +343,7 @@ namespace ProsperitocracyDevArmorColor
 
 		const APlayerController* PlayerController = World->GetFirstPlayerController();
 		APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
-		return Pawn ? Pawn->FindComponentByClass<UProsperitocracyPlayerStatsComponent>() : nullptr;
+		return Pawn ? Pawn->FindComponentByClass<UProsperitocracyLoadoutComponent>() : nullptr;
 	}
 
 	/** The region a word names ("1", "2", "3"), or null when it is not one. One list: the armour's. */
@@ -394,32 +408,42 @@ namespace ProsperitocracyDevArmorColor
 			: FString::Printf(TEXT("#%06X"), Hex);
 	}
 
-	/** The armour's three trim regions and what each is painted right now — one line each on screen. */
-	void ListColors(const UProsperitocracyPlayerStatsComponent* Stats)
+	/** The three colour regions of the armour and the colour the playing loadout holds for each. */
+	void ListColors(const UProsperitocracyLoadoutComponent* LoadoutComponent)
 	{
 		int32 Line = 0;
-		Report(TEXT("Prosperitocracy.ArmorColor <1|2|3> <#RRGGBB|none> — the armor's trim:"), Line++);
+		Report(TEXT("Prosperitocracy.ArmorColor <1|2|3> <#RRGGBB|none> — the armor's colours:"), Line++);
 
-		for (const ProsperitocracyArmor::FPiece& Piece : ProsperitocracyArmor::Pieces)
+		// The colours live in the loadout being played, so that is what is read — the same holder a
+		// loadout switch reads, which is exactly why a colour set here is still there after one.
+		const UProsperitocracyLoadout* Playing = LoadoutComponent ? LoadoutComponent->GetLoadout() : nullptr;
+		const int32 Trims[] =
 		{
-			const int32 Hex = Stats ? Stats->GetArmorColor(Piece.Color) : ProsperitocracyArmor::NoColor;
-			Report(FString::Printf(TEXT("  Trim %-4s %s"), Piece.Name, *DescribeColor(Hex)), Line++);
+			Playing ? Playing->Trim1 : ProsperitocracyArmor::NoColor,
+			Playing ? Playing->Trim2 : ProsperitocracyArmor::NoColor,
+			Playing ? Playing->Trim3 : ProsperitocracyArmor::NoColor,
+		};
+
+		for (int32 Index = 0; Index < ProsperitocracyArmor::PieceCount; ++Index)
+		{
+			Report(FString::Printf(TEXT("  Trim %-4s %s"), ProsperitocracyArmor::Pieces[Index].Name,
+				*DescribeColor(Trims[Index])), Line++);
 		}
 
-		if (!Stats)
+		if (!LoadoutComponent)
 		{
-			Report(TEXT("  (no character — this reads, and paints, only while the game is running)"), Line++);
+			Report(TEXT("  (no character — this reads, and sets, only while the game is running)"), Line++);
 		}
 	}
 
 	void HandleArmorColorCommand(const TArray<FString>& Args, UWorld* World)
 	{
-		UProsperitocracyPlayerStatsComponent* Stats = FindStats(World);
+		UProsperitocracyLoadoutComponent* Loadout = FindLoadout(World);
 
-		// No region named: say what can be typed, by saying what the armour has and what it is painted.
+		// No region named: say what can be typed, by saying what the armour has and what each holds.
 		if (Args.Num() < 2 || Args[0].IsEmpty() || Args[1].IsEmpty())
 		{
-			ListColors(Stats);
+			ListColors(Loadout);
 			return;
 		}
 
@@ -427,11 +451,11 @@ namespace ProsperitocracyDevArmorColor
 		if (!Piece)
 		{
 			Report(FString::Printf(TEXT("'%s' is not one of the armor's trim regions — 1, 2 or 3."), *Args[0]));
-			ListColors(Stats);
+			ListColors(Loadout);
 			return;
 		}
 
-		if (!Stats)
+		if (!Loadout)
 		{
 			Report(TEXT("no character to paint — this only works while the game is running (PIE)."));
 			return;
@@ -447,11 +471,13 @@ namespace ProsperitocracyDevArmorColor
 			return;
 		}
 
-		// The ONE door, the same call a customizer will make: the region's row is written, and the body
-		// paints it on the spot (it listens to that row). Nothing is painted from here.
-		if (!Stats->SetArmorColor(Piece->Color, Hex))
+		// The ONE door a colour is chosen through: it is written into the loadout being played — one
+		// number, one holder — and the body is painted from it on the spot. Nothing is painted from here,
+		// which is why the colour survives a loadout switch and the shipped default is never written.
+		FString Message;
+		if (!Loadout->SetTrim(Piece->Color, Hex, Message))
 		{
-			Report(FString::Printf(TEXT("could not paint trim %s — see the log for why."), Piece->Name));
+			Report(FString::Printf(TEXT("could not set trim %s — %s"), Piece->Name, *Message));
 			return;
 		}
 
@@ -548,10 +574,11 @@ namespace ProsperitocracyDevLoadout
 
 		Report(FString::Printf(TEXT("Prosperitocracy.Loadout <1|2|3> — %s:"), *Class->DisplayName.ToString()), Line++);
 
-		const UProsperitocracyLoadout* Three[] = { Class->Loadout1, Class->Loadout2, Class->Loadout3 };
+		// What THIS character holds at each index — its own copy, which is what it would actually play and
+		// therefore what anything changed in play shows up in. Not the asset the class ships.
 		for (int32 Index = 0; Index < 3; ++Index)
 		{
-			Report(FString::Printf(TEXT("  %d. %s%s"), Index + 1, *Describe(Three[Index]),
+			Report(FString::Printf(TEXT("  %d. %s%s"), Index + 1, *Describe(LoadoutComponent->GetLoadoutAt(Index)),
 				(LoadoutComponent->SelectedLoadout == Index) ? TEXT("   <- playing") : TEXT("")), Line++);
 		}
 	}

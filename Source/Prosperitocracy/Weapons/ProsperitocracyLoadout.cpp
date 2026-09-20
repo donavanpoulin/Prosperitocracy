@@ -38,6 +38,31 @@ const FProsperitocracyWeaponSlot* UProsperitocracyLoadout::FindEntryForSlot(cons
 	return nullptr;
 }
 
+FProsperitocracyWeaponSlot* UProsperitocracyLoadout::FindMutableEntryForSlot(const FGameplayTag& Slot)
+{
+	if (!Slot.IsValid())
+	{
+		return nullptr;
+	}
+
+	// The ONE list of slots, read for writing: CollectEntries is the same list the read path uses, so a
+	// slot cannot be found by one and missed by the other. The const in the entries is the LIST's const,
+	// not the slot's — each entry is one of this loadout's own fields — so writing through it writes the
+	// loadout, which is what a weapon being chosen IS.
+	TArray<TPair<FGameplayTag, const FProsperitocracyWeaponSlot*>> Entries;
+	CollectEntries(Entries);
+
+	for (const TPair<FGameplayTag, const FProsperitocracyWeaponSlot*>& Entry : Entries)
+	{
+		if (Entry.Key == Slot)
+		{
+			return const_cast<FProsperitocracyWeaponSlot*>(Entry.Value);
+		}
+	}
+
+	return nullptr;
+}
+
 const FProsperitocracyWeaponSlot* UProsperitocracyLoadout::FindEntryForBodyClass(const UClass* InBodyClass, FGameplayTag& OutSlot, int32& OutMatchCount) const
 {
 	OutSlot = FGameplayTag();

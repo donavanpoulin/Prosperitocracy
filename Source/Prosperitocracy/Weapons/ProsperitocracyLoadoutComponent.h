@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "GameplayTagContainer.h"
+#include "Stats/ProsperitocracyStat.h"
 #include "Weapons/ProsperitocracyLoadout.h"
 
 #include "ProsperitocracyLoadoutComponent.generated.h"
@@ -81,11 +82,27 @@ public:
 	 * The loadout being played — the ONE answer to "what does this character carry".
 	 *
 	 * A class owns three loadouts (Design/loadout.md), so the one being played is the class's at the
-	 * selected index; a character with no class plays on the loadout it was authored with. Nothing
-	 * holds a second copy of this answer: everything that has to know — a gun, the armour, the weight
-	 * — asks here, exactly as it asks for a slot's entry.
+	 * selected index, and a character with no class plays on the loadout it was authored with.
+	 *
+	 * It is this character's OWN COPY of that loadout, made once when the character comes up — because a
+	 * class's three loadouts ARE the defaults the game ships, and nothing in play is allowed to write to
+	 * those. Change a loadout in play and you change your copy of it: the shipped default is untouched,
+	 * a switch comes back to your copy with your changes still in it, and when the finished game has a
+	 * save, the copy is what it saves.
+	 *
+	 * Nothing holds a second copy of this answer: everything that has to know — a gun, the armour, the
+	 * weight — asks here, exactly as it asks for a slot's entry.
 	 */
 	UProsperitocracyLoadout* GetLoadout() const;
+
+	/**
+	 * What this character holds at one of a class's three indices — the copy it made of that loadout when
+	 * it came up, and the asset that copy came from when it has not made one.
+	 *
+	 * This is what a listing reads: the thing the character would actually play, which is not the same
+	 * question as "what does the class ship" once anything has been changed in play.
+	 */
+	UProsperitocracyLoadout* GetLoadoutAt(int32 Index) const;
 
 	/**
 	 * Play one of the class's three loadouts, and dress the body from the one chosen.
@@ -103,6 +120,47 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Loadout")
 	bool SelectLoadout(int32 Index);
+
+	//~ Changing what you take in, IN PLAY — the doors a gun, a weave and a colour go through ---------
+	//
+	// Nothing about a character is set by reaching into the body: a gun, a weave and a colour are
+	// written into the loadout being played, and the body is dressed from there by the same dress a
+	// switch performs. That is what makes a change SURVIVE a switch — there is one holder of it, and a
+	// switch reads the same holder — and it is why the dev commands and the picker go through here
+	// rather than each writing their own thing.
+
+	/**
+	 * Put a weapon into one of the playing loadout's slots, with the class's access rules enforced HERE
+	 * — because this is the door a weapon goes into a slot through.
+	 *
+	 * Refused, with the reason: a slot this class does not carry (the Reclaimer has no Special), a
+	 * Primary for a class whose Primary is its melee (the Reclaimer's blade — melee is a weapon with no
+	 * fire-mode tag), and a stat block whose own slot tag disagrees with the slot it is being put in.
+	 *
+	 * An entry that names nothing empties the slot. A gun the rig has already built keeps the numbers it
+	 * is holding until the rig rebuilds it.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Loadout")
+	bool SetWeaponInSlot(FGameplayTag Slot, FProsperitocracyWeaponSlot Entry, FString& OutMessage);
+
+	/**
+	 * Wear a weave in the playing loadout — the armour half of it. Null is a real choice: a loadout that
+	 * names no weave is a bare body. Armour is not class-locked (Design/armor.md), so there is no access
+	 * rule to check here.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Loadout")
+	bool SetWeave(UProsperitocracyStatTable* Weave, FString& OutMessage);
+
+	/**
+	 * Set one of the armour's three colour regions in the playing loadout: the region's colour row, and
+	 * the body is painted from it on the spot.
+	 *
+	 * A colour is not part of the weave and never needs one (Design/armor.md): it is the body's own row,
+	 * so it is set the same way whether the body is wearing anything or not. `Hex` is the RGB
+	 * (0xRRGGBB), or ProsperitocracyArmor::NoColor for "nothing chosen" — the paint it ships with.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Loadout")
+	bool SetTrim(EProsperitocracyStat Trim, int32 Hex, FString& OutMessage);
 
 	/** What this character carries in that slot, or null when the slot names nothing. */
 	const FProsperitocracyWeaponSlot* GetEntryForSlot(const FGameplayTag& Slot) const;
@@ -154,41 +212,36 @@ public:
 	/** The ammo this slot holds as it stands, or null when it holds none yet. Creates nothing. */
 	const FProsperitocracyWeaponAmmo* FindAmmoForSlot(const FGameplayTag& Slot) const;
 
-	//~ DEV — the in-game gun sandbox (Development/ProsperitocracyDevCommands.cpp) ---------------
-
-	/**
-	 * DEV ONLY: put a different stat block into a slot right now, and give that slot a fresh gun's
-	 * ammo — a full magazine and a full spare pool.
-	 *
-	 * Why this is the whole sandbox and not a new system: four guns are two bodies x four blocks, and
-	 * a body carries NO numbers, so a "different gun" differs in exactly one thing — its block. This
-	 * is therefore the same act DressGun already performs at spawn (hand the body a block), asked for
-	 * again at runtime. It works only because ApplyLoadoutEntry is re-callable by design: "a body can
-	 * be two guns: the pistol's body is also the SMG's".
-	 *
-	 * The override lives HERE, on the component, and not on the gun: the rig destroys and re-creates
-	 * gun actors (a slot switch, a level change), so anything kept on a gun dies with it. Kept on the
-	 * carrier, the block survives the gun actor being thrown away and rebuilt.
-	 *
-	 * It is not a second path: the block is still resolved through the ONE evaluator, and the block's
-	 * own slot tag is still checked against the slot it is installed in, so a dev command cannot file
-	 * a Secondary block under Primary.
-	 *
-	 * Transient by construction — a level change, a respawn or a PIE restart drops every override,
-	 * because it is runtime state, never authored data.
-	 *
-	 * Returns false and fills OutMessage with the reason when the block cannot be installed.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Loadout|Dev")
-	bool DevEquipStatBlock(UProsperitocracyStatTable* StatBlock, FString& OutMessage);
-
 private:
+
+	//~ The loadout in play, held as this character's own copy of what a class ships --------------------
+
 	/**
-	 * DEV ONLY: what a slot's block is overridden to, instead of the loadout asset's entry for it.
-	 * Empty in every real (non-sandbox) session — nothing but the dev gun command writes it.
+	 * This character's own copy of each loadout it can play, under the index it is played at.
+	 *
+	 * Made once, when the character comes up, from the class's three — or from the loadout a class-less
+	 * character was authored with, at index 0 (a character has a class or it does not, so the two never
+	 * meet). The copy is what makes "change your loadout in play" safe: nothing is ever written to the
+	 * asset the game ships, the copy is what a switch comes back to with your changes still in it, and
+	 * it is what a save will hold when there is one.
 	 */
 	UPROPERTY(Transient)
-	TMap<FGameplayTag, TObjectPtr<UProsperitocracyStatTable>> DevStatBlockBySlot;
+	TMap<int32, TObjectPtr<UProsperitocracyLoadout>> PlayingCopies;
+
+	/** Copy each loadout this character can play, once, when it comes up. */
+	virtual void BeginPlay() override;
+
+	/** The asset a loadout in play is copied from: the class's at that index, or the authored one at index 0. */
+	UProsperitocracyLoadout* ResolveLoadoutSource(int32 Index) const;
+
+	/**
+	 * Dress the body from the loadout being played: the armour, then the guns in hand.
+	 *
+	 * ONE act, so a switch and a change made in play cannot dress a body or a gun differently — and so
+	 * there is exactly one place that has to know what "this character is now carrying something else"
+	 * means.
+	 */
+	void Redress();
 
 	/** One entry per slot this carrier has fired or reloaded, keyed by the slot's tag. */
 	UPROPERTY(Transient)
