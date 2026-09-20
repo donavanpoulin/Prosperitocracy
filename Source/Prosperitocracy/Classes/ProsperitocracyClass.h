@@ -47,8 +47,8 @@ public:
 	 * region's colour as one hex). A loadout's three trims default to this (Design/loadout.md), so
 	 * giving a body its class colour is a copy and never a conversion — one colour vocabulary.
 	 *
-	 * The two classes the palette names are the Reclaimer #C81930 and the Anchor #2BC8FF (Design/ui.md,
-	 * 0xC81930 / 0x2BC8FF here).
+	 * The two classes the palette names are the Reclaimer #820721 and the Anchor #075F82 (Design/ui.md,
+	 * 0x820721 / 0x075F82 here).
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Class")
 	int32 ClassColor = 0xFFFFFF;
