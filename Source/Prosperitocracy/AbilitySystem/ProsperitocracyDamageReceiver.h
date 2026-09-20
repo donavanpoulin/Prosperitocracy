@@ -58,4 +58,21 @@ public:
 	FProsperitocracyDamageProfile GetDamageProfile(const FGameplayEffectContextHandle& EffectContext) const;
 
 	virtual FProsperitocracyDamageProfile GetDamageProfile_Implementation(const FGameplayEffectContextHandle& EffectContext) const;
+
+	/**
+	 * The target AS A WHOLE (2026-09-20) — what a damage line that carries NO pen is answered by.
+	 *
+	 * A line with a pen strikes a PART and is gated by that part's armor. A line with no pen (burn)
+	 * does not penetrate anything, it reaches the target itself, so there is no part to ask and no gate
+	 * to run: the answer is this. Armor is meaningless here — return 0.
+	 *
+	 * The resists here are **averaged across the target's parts, all parts weighing the same** (the
+	 * user's rule), and they are the FINAL values — after everything that modifies them — never the
+	 * authored bases, so a resist perk or a temporary buff counts exactly as it would on any other
+	 * read. A player has one part (the weave), so their "average" is simply their own resist.
+	 */
+	UFUNCTION(BlueprintNativeEvent, Category = "Damage")
+	FProsperitocracyDamageProfile GetBodyDamageProfile(const FGameplayEffectContextHandle& EffectContext) const;
+
+	virtual FProsperitocracyDamageProfile GetBodyDamageProfile_Implementation(const FGameplayEffectContextHandle& EffectContext) const;
 };

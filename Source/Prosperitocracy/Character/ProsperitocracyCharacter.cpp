@@ -5,6 +5,7 @@
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
+#include "AbilitySystem/ProsperitocracyStatusComponent.h"
 #include "ProsperitocracyGameplayTags.h"
 #include "Weapons/ProsperitocracyWeapon.h"
 
@@ -12,6 +13,10 @@
 
 AProsperitocracyCharacter::AProsperitocracyCharacter()
 {
+	// The one place a status lives on this body. It is created here rather than in the blueprint so
+	// that every body that can carry a status — this one and the damage targets — carries the same
+	// component, and a status applied to either goes through the same code.
+	Statuses = CreateDefaultSubobject<UProsperitocracyStatusComponent>(TEXT("Statuses"));
 }
 
 AActor* AProsperitocracyCharacter::GetGunInHand_Implementation() const

@@ -8,6 +8,7 @@
 #include "ProsperitocracyCharacter.generated.h"
 
 class AProsperitocracyWeapon;
+class UProsperitocracyStatusComponent;
 class USkeletalMeshComponent;
 
 /**
@@ -104,4 +105,16 @@ public:
 	 * in all three places (Design/ui.md: every bullet lands exactly where the circle points).
 	 */
 	virtual FRotator GetBaseAimRotation() const override;
+
+protected:
+	/**
+	 * Where a STATUS on this body lives — the one component that carries a status's numbers, its
+	 * ticking, and the movement gate a stun closes.
+	 *
+	 * It is on the character rather than in a blueprint because every body that can carry a status
+	 * carries the SAME component (the damage dummies have it too), so nothing about being stunned is
+	 * special to the player. The player is simply the only body with controls to take away today.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Prosperitocracy|Status")
+	TObjectPtr<UProsperitocracyStatusComponent> Statuses;
 };

@@ -5,6 +5,7 @@
 #include "AbilitySystem/Attributes/ProsperitocracyHealthSet.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyGameplayEffectContext.h"
+#include "AbilitySystem/ProsperitocracyStatusComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/EngineTypes.h"
 #include "Materials/MaterialInterface.h"
@@ -61,6 +62,11 @@ AProsperitocracyDamageTarget::AProsperitocracyDamageTarget()
 	AbilitySystemComponent->SetIsReplicated(false);
 
 	HealthSet = CreateDefaultSubobject<UProsperitocracyHealthSet>(TEXT("HealthSet"));
+
+	// And the one place a STATUS lives on a body. A target can be set alight, so it carries the status
+	// component — the same component every body that can burn or be stunned carries, which is why the
+	// burn needs no code here and no code in the gun that set it.
+	Statuses = CreateDefaultSubobject<UProsperitocracyStatusComponent>(TEXT("Statuses"));
 }
 
 void AProsperitocracyDamageTarget::PostInitializeComponents()
@@ -166,4 +172,21 @@ FProsperitocracyDamageProfile AProsperitocracyDamageTarget::GetDamageProfile_Imp
 		}
 	}
 	return ChestProfile;
+}
+
+FProsperitocracyDamageProfile AProsperitocracyDamageTarget::GetBodyDamageProfile_Implementation(const FGameplayEffectContextHandle& EffectContext) const
+{
+	// The target AS A WHOLE, for a line that carries no pen — a burn, which never strikes a part and so
+	// has no part to be priced against. Both parts weigh the same (the user's rule, 2026-09-20), so the
+	// whole-target resist is the plain mean of the two. Armor is 0 and meaningless here: a line with no
+	// pen is never gated and can never bounce.
+	//
+	// The parts' resists are authored numbers today, on a test dummy with no stats of its own. When an
+	// enemy is built of parts, each part's resist has to be a value on ITS OWN GAS home so this read is
+	// the FINAL one — after perks and buffs — exactly as the player's own resist read already is.
+	FProsperitocracyDamageProfile Body;
+	Body.Armor = 0;
+	Body.ImpactResist = (HeadProfile.ImpactResist + ChestProfile.ImpactResist) * 0.5f;
+	Body.PiercingResist = (HeadProfile.PiercingResist + ChestProfile.PiercingResist) * 0.5f;
+	return Body;
 }

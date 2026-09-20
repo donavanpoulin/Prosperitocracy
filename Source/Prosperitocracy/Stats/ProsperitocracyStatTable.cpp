@@ -58,3 +58,16 @@ float UProsperitocracyStatTable::GetBaseValue(EProsperitocracyStat Stat) const
 	// every caller of this door is asking about a stat it believes the block carries.
 	return 0.0f;
 }
+
+bool UProsperitocracyStatTable::Carries(EProsperitocracyStat Stat) const
+{
+	for (const FProsperitocracyStatTableEntry& Entry : StatEntries)
+	{
+		if (Entry.Stat == Stat)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}

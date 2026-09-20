@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "GameplayEffectTypes.h"
+#include "Stats/ProsperitocracyStatTable.h"
 #include "Templates/SubclassOf.h"
 
 #include "ProsperitocracyDamageStatics.generated.h"
@@ -43,6 +44,24 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Damage")
 	static void ApplyDamageEffectToHit(FGameplayEffectContextHandle Context, AActor* HitActor, UAbilitySystemComponent* SourceAbilitySystemComponent, TSubclassOf<UGameplayEffect> DamageEffectClass);
+
+	/**
+	 * Put every STATUS this thing's block names onto what it just hit — the one door a status is
+	 * applied through, walked by every hit that deals damage.
+	 *
+	 * The thing only NAMES its statuses (UProsperitocracyStatTable::AppliedEffects); each status's
+	 * numbers are its own block, so a status can never be priced at the numbers of the thing that
+	 * applied it (Design/abilities.md — a thing may have a Duration of its own AND hand out a stun of
+	 * a different length).
+	 *
+	 * DamageEffectClass is the effect the ONE damage pipeline runs on — the same asset the shot itself
+	 * used — so a burn's tick is a normal damage line through the same pen-gate → resist path and
+	 * never a second way to take health off someone.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Damage")
+	static void ApplyEffectsToHit(FGameplayEffectContextHandle Context, AActor* HitActor,
+		UAbilitySystemComponent* SourceAbilitySystemComponent, const UProsperitocracyStatTable* SourceStatBlock,
+		TSubclassOf<UGameplayEffect> DamageEffectClass);
 
 	/** True if the context holds a valid effect context (a source stamped it / lines were added). */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Damage")

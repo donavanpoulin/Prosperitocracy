@@ -2,25 +2,31 @@
 
 #include "CoreMinimal.h"
 
+#include "AbilitySystemBlueprintLibrary.h"
+#include "AbilitySystemComponent.h"
+#include "AbilitySystem/ProsperitocracyStatusComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "GameplayEffect.h"
 #include "HAL/IConsoleManager.h"
 #include "UObject/UObjectGlobals.h"
 
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "Classes/ProsperitocracyClass.h"
+#include "ProsperitocracyGameplayTags.h"
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStatTable.h"
+#include "Weapons/ProsperitocracyLoadout.h"
 #include "Weapons/ProsperitocracyLoadoutComponent.h"
 
 /**
- * The in-game dev sandbox — DEVELOPMENT ONLY. Four commands, one per thing you cannot try by walking
- * around: the gun you are holding, the weave you are wearing, the armour's colour, and which of your
- * class's three loadouts you are playing.
+ * The in-game dev sandbox — DEVELOPMENT ONLY. Five commands, one per thing you cannot try by walking
+ * around: the gun you are holding, the weave you are wearing, the armour's colour, which of your
+ * class's three loadouts you are playing, and the Stun status you cannot otherwise put on yourself.
  *
- * `Prosperitocracy.Gun <name>` puts one of our four guns in your hands without touching what the
+ * `Prosperitocracy.Gun <name>` puts one of our six guns in your hands without touching what the
  * character spawns with and without a pickup system.
  *
  * It is this small because of how a gun is built: four guns are TWO bodies (pistol, rifle) x FOUR stat
@@ -89,14 +95,18 @@ namespace ProsperitocracyDevGuns
 	const TCHAR* const RifleBodyPath  = TEXT("/Game/ThirdPerson/Blueprints/WeaponBP/weaponChild/BP_Rifle.BP_Rifle_C");
 	const TCHAR* const PistolBodyPath = TEXT("/Game/ThirdPerson/Blueprints/WeaponBP/weaponChild/BP_Pistol.BP_Pistol_C");
 
-	// The four guns we have, each as the body it is built on AND the block that is its numbers — both
-	// halves, because both halves are what a gun is and a slot carries the pair.
+	// The six guns we have, each as the body it is built on AND the block that is its numbers — both
+	// halves, because both halves are what a gun is and a slot carries the pair. The incendiary rifle
+	// and the stun pistol are the two that carry a STATUS: the block each one names applies it, and the
+	// status's own block is where its numbers are.
 	const FGunEntry Guns[] =
 	{
-		{ TEXT("Pistol"), PistolBodyPath, TEXT("/Game/Weapons/StatBlocks/STB_Pistol.STB_Pistol"),       TEXT("STB_Pistol")    },
-		{ TEXT("SMG"),    PistolBodyPath, TEXT("/Game/Weapons/StatBlocks/STB_SMG.STB_SMG"),             TEXT("STB_SMG")       },
-		{ TEXT("Auto"),   RifleBodyPath,  TEXT("/Game/Weapons/StatBlocks/STB_RifleAuto.STB_RifleAuto"), TEXT("STB_RifleAuto") },
-		{ TEXT("Semi"),   RifleBodyPath,  TEXT("/Game/Weapons/StatBlocks/STB_RifleSemi.STB_RifleSemi"), TEXT("STB_RifleSemi") },
+		{ TEXT("Pistol"),      PistolBodyPath, TEXT("/Game/Weapons/StatBlocks/STB_Pistol.STB_Pistol"),                   TEXT("STB_Pistol")           },
+		{ TEXT("SMG"),         PistolBodyPath, TEXT("/Game/Weapons/StatBlocks/STB_SMG.STB_SMG"),                         TEXT("STB_SMG")              },
+		{ TEXT("Auto"),        RifleBodyPath,  TEXT("/Game/Weapons/StatBlocks/STB_RifleAuto.STB_RifleAuto"),             TEXT("STB_RifleAuto")        },
+		{ TEXT("Semi"),        RifleBodyPath,  TEXT("/Game/Weapons/StatBlocks/STB_RifleSemi.STB_RifleSemi"),             TEXT("STB_RifleSemi")        },
+		{ TEXT("Incendiary"),  RifleBodyPath,  TEXT("/Game/Weapons/StatBlocks/STB_IncendiaryRifle.STB_IncendiaryRifle"), TEXT("STB_IncendiaryRifle")  },
+		{ TEXT("StunPistol"),  PistolBodyPath, TEXT("/Game/Weapons/StatBlocks/STB_StunPistol.STB_StunPistol"),           TEXT("STB_StunPistol")       },
 	};
 
 	/** The character's loadout — the thing that owns what it carries. Null outside PIE, or before a pawn. */
@@ -192,8 +202,8 @@ namespace ProsperitocracyDevGuns
 	// in-game console.
 	static FAutoConsoleCommandWithWorldAndArgs GunCommand(
 		TEXT("Prosperitocracy.Gun"),
-		TEXT("Equip one of our four guns by name, with a full magazine and a full spare pool: ")
-		TEXT("Pistol, SMG, Auto, Semi. Puts that gun's stat block into the slot its own tag says it ")
+		TEXT("Equip one of our six guns by name, with a full magazine and a full spare pool: ")
+		TEXT("Pistol, SMG, Auto, Semi, Incendiary, StunPistol. Puts that gun's stat block into the slot its own tag says it ")
 		TEXT("belongs in and re-dresses the gun already there, so it changes in hand. No argument lists them."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleGunCommand));
 }
@@ -628,4 +638,91 @@ namespace ProsperitocracyDevLoadout
 		TEXT("— the armour and the guns — through the same call a switch goes through, so the change ")
 		TEXT("shows in hand. No argument lists the three and marks the one being played."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleLoadoutCommand));
+}
+
+/**
+ * The status half of the sandbox: the Stun you cannot otherwise put on yourself.
+ *
+ * Burn shows itself — you set a target alight and watch it burn down. A stun shows itself on the only
+ * body that can be stopped dead today: the player. Nothing can damage the player yet, so no round can
+ * ever land a stun on the one body it would be felt on, and this command is that missing door.
+ *
+ * It reads the stun pistol's OWN block for both halves of the status — the tag it stamps and the block
+ * that is its Duration — so what lands on you is exactly what a stun pistol round puts on a target.
+ * This file states no status tag and no duration of its own: change the pistol's block in the editor
+ * and this command changes with it, because both read the same pairing.
+ */
+namespace ProsperitocracyDevStatus
+{
+	/** The stun pistol's block — the thing that NAMES its status. Read, never restated. */
+	const TCHAR* const StunPistolBlockPath = TEXT("/Game/Weapons/StatBlocks/STB_StunPistol.STB_StunPistol");
+
+	/** Say something in the log and on screen, as the STATUS sandbox. LineIndex = which on-screen slot. */
+	void Report(const FString& Message, int32 LineIndex = 0)
+	{
+		ProsperitocracyDev::Report(TEXT("DevStatus"), /*OnScreenKey=*/ 0x9006 + LineIndex, Message);
+	}
+
+	void HandleStunCommand(const TArray<FString>& Args, UWorld* World)
+	{
+		const APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
+		APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
+		if (!Pawn)
+		{
+			Report(TEXT("no character to stun — this only works while the game is running (PIE)."));
+			return;
+		}
+
+		UAbilitySystemComponent* SourceAbilitySystemComponent = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Pawn);
+		UProsperitocracyStatusComponent* Statuses = Pawn->FindComponentByClass<UProsperitocracyStatusComponent>();
+		const UProsperitocracyStatTable* PistolBlock = LoadObject<UProsperitocracyStatTable>(nullptr, StunPistolBlockPath);
+		if (!SourceAbilitySystemComponent || !Statuses || !PistolBlock)
+		{
+			Report(TEXT("cannot stun — the character has no status component, or the stun pistol's block is missing."));
+			return;
+		}
+
+		// The status the pistol names, and the block that is ITS OWN numbers: the same pairing a round
+		// from that gun applies, read from the same place.
+		for (const FProsperitocracyAppliedEffect& Applied : PistolBlock->AppliedEffects)
+		{
+			if (Applied.StatusTag != ProsperitocracyGameplayTags::Status_Stun)
+			{
+				continue;
+			}
+
+			const UProsperitocracyStatTable* StatusBlock = Applied.StatBlock.LoadSynchronous();
+			if (!StatusBlock)
+			{
+				break;
+			}
+
+			// The effect the ONE damage pipeline runs on comes from the loadout, exactly as a gun's
+			// shot takes it — one asset for the game, never a second one minted for a dev command.
+			const UProsperitocracyLoadoutComponent* LoadoutComponent = Pawn->FindComponentByClass<UProsperitocracyLoadoutComponent>();
+			const UProsperitocracyLoadout* Playing = LoadoutComponent ? LoadoutComponent->GetLoadout() : nullptr;
+			const TSubclassOf<UGameplayEffect> DamageEffectClass = Playing ? Playing->GunDamageEffectClass : nullptr;
+			if (!DamageEffectClass)
+			{
+				Report(TEXT("cannot stun — the loadout names no damage effect to carry a status."));
+				return;
+			}
+
+			// The same door a hit goes through: the one place a status is put on a body.
+			Statuses->ApplyStatus(Applied.StatusTag, StatusBlock, SourceAbilitySystemComponent, DamageEffectClass, FHitResult());
+			Report(TEXT("stun applied to you — for its Duration you cannot walk, jump, fire or use anything."));
+			return;
+		}
+
+		Report(TEXT("the stun pistol's block names no Stun status — nothing applied."));
+	}
+
+	// A plain console command like the other four, so it needs no cheat manager, no PlayerController
+	// subclass and no exec routing — type it in the Output Log's Cmd box during PIE.
+	static FAutoConsoleCommandWithWorldAndArgs StunCommand(
+		TEXT("Prosperitocracy.Stun"),
+		TEXT("Put Stun on yourself, using the stun pistol's own status block — the duration it lands with is ")
+		TEXT("that block's own, so it is the same stun a stun pistol round puts on a target. Nothing can ")
+		TEXT("damage you yet, so this is the only way to feel a stun on the one body it stops."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleStunCommand));
 }

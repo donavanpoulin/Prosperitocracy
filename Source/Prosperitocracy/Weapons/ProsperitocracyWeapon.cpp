@@ -437,6 +437,11 @@ void AProsperitocracyWeapon::ApplyDamageToHit(const FHitResult& Hit)
 	// The one place a built context becomes damage: the same applier the bash reaches the execution
 	// through, so a shot and a bash cannot drift apart in how the shared pen-gate → resist path runs.
 	UProsperitocracyDamageStatics::ApplyDamageEffectToHit(Context, HitActor, SourceAbilitySystemComponent, ShotDamageEffectClass);
+
+	// And the statuses this gun's block NAMES go on with the hit — through the same one door, so a gun
+	// that sets things alight or stops them dead carries no firing code of its own: it lists the
+	// status, and each status's own block is where its numbers are (Design/abilities.md).
+	UProsperitocracyDamageStatics::ApplyEffectsToHit(Context, HitActor, SourceAbilitySystemComponent, GetStatBlock(), ShotDamageEffectClass);
 }
 
 AProsperitocracyCharacter* AProsperitocracyWeapon::GetOwnerCharacter() const

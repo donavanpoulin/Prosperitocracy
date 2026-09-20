@@ -13,6 +13,7 @@
 
 class UProsperitocracyAbilitySystemComponent;
 class UProsperitocracyHealthSet;
+class UProsperitocracyStatusComponent;
 class UStaticMeshComponent;
 class UAbilitySystemComponent;
 struct FGameplayEffectSpec;
@@ -39,6 +40,15 @@ public:
 
 	// IProsperitocracyDamageReceiver: return the profile of the part that was hit.
 	virtual FProsperitocracyDamageProfile GetDamageProfile_Implementation(const FGameplayEffectContextHandle& EffectContext) const override;
+
+	/**
+	 * The target AS A WHOLE — what a line with no pen (burn) is answered by.
+	 *
+	 * A burn never strikes a part, so there is no part to ask. Both parts weigh the same (the user's
+	 * rule, 2026-09-20), so the whole-target resist is the plain mean across them — one part at 50%
+	 * piercing and one at 50% impact leaves a burn facing 25%.
+	 */
+	virtual FProsperitocracyDamageProfile GetBodyDamageProfile_Implementation(const FGameplayEffectContextHandle& EffectContext) const override;
 
 	// IAbilitySystemInterface
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
@@ -81,4 +91,13 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Damage Target")
 	TObjectPtr<UProsperitocracyHealthSet> HealthSet;
+
+	/**
+	 * Where a STATUS on this target lives: the one component that carries a status's numbers, its
+	 * ticking and its ending. A target that can be set alight carries it exactly like any other body
+	 * that can (the player's body carries the same component), so nothing about burning is special to
+	 * a target.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Damage Target")
+	TObjectPtr<UProsperitocracyStatusComponent> Statuses;
 };

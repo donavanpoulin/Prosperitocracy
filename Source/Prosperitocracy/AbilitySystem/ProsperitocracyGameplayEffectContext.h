@@ -16,9 +16,9 @@ class UPhysicalMaterial;
 /**
  * FProsperitocracyDamageLine
  *
- * One damage value in a damage instance: exactly ONE type (Impact or Piercing), a pen tier (1-4),
- * and the amount. A normal hit carries one line; a hybrid attack (e.g. a railgun/railcannon that
- * slams AND pierces) carries SEVERAL lines, each resolved through the same pen-gate → resist pipeline.
+ * One damage value in a damage instance: exactly ONE type (Impact or Piercing), a pen tier, and the
+ * amount. A normal hit carries one line; a hybrid attack (e.g. a railgun/railcannon that slams AND
+ * pierces) carries SEVERAL lines, each resolved through the same pen-gate → resist pipeline.
  */
 USTRUCT(BlueprintType)
 struct FProsperitocracyDamageLine
@@ -29,7 +29,15 @@ struct FProsperitocracyDamageLine
 	UPROPERTY()
 	FGameplayTag Type;
 
-	// Pen tier 1-4 (light/medium/heavy/anti-tank) — the gate value.
+	/**
+	 * Pen tier 1-4 (light/medium/heavy/anti-tank) — the gate value — or **0 = the line carries NO pen**.
+	 *
+	 * Presence is scope, and the pipeline reads it: a line WITH a pen strikes a PART, so it faces that
+	 * part's armor (full / reduced / bounced). A line with NO pen (0) is not an attack that penetrates
+	 * anything — it reaches the target ITSELF, so no gate is asked and it is answered by the body's own
+	 * resist instead of the part's. Burn is the case (the user's rule, 2026-09-20): any burn burns a big
+	 * guy whatever plates he is wearing, and what he resists is his Piercing Resist as a whole.
+	 */
 	UPROPERTY()
 	uint8 PenTier = 1;
 
@@ -97,6 +105,17 @@ public:
 	void ResetDamageLines() { DamageLines.Reset(); }
 	const TArray<FProsperitocracyDamageLine>& GetDamageLines() const { return DamageLines; }
 
+	/**
+	 * What this hit ACTUALLY dealt, written by the one execution when it resolves (2026-09-20).
+	 *
+	 * The gate has exactly one judge, and it is the execution — so a status that may only land on a hit
+	 * that got through (a gun's burn: a shot that bounced sets nothing alight) does not work the gate
+	 * out a second time and risk disagreeing with it. It reads the answer here.
+	 */
+	void SetLandedDamage(float InLandedDamage) { LandedDamage = FMath::Max(0.0f, InLandedDamage); }
+	float GetLandedDamage() const { return LandedDamage; }
+	bool LandedAnyDamage() const { return LandedDamage > 0.0f; }
+
 public:
 	/** ID to allow the identification of multiple bullets that were part of the same cartridge */
 	UPROPERTY()
@@ -110,6 +129,10 @@ protected:
 	// The damage lines carried by this damage instance.
 	UPROPERTY()
 	TArray<FProsperitocracyDamageLine> DamageLines;
+
+	// What the execution resolved this hit to — see SetLandedDamage. 0 until the hit has resolved, and 0
+	// for a hit that bounced or was fully resisted.
+	float LandedDamage = 0.0f;
 };
 
 template<>

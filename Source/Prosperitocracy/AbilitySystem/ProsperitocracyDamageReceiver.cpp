@@ -13,3 +13,14 @@ FProsperitocracyDamageProfile IProsperitocracyDamageReceiver::GetDamageProfile_I
 	Profile.PiercingResist = 0.0f;
 	return Profile;
 }
+
+FProsperitocracyDamageProfile IProsperitocracyDamageReceiver::GetBodyDamageProfile_Implementation(const FGameplayEffectContextHandle& EffectContext) const
+{
+	// Default: the target as a whole resists nothing. Armor 0, because nothing is being penetrated —
+	// a line that carries no pen is never bounced.
+	FProsperitocracyDamageProfile Profile;
+	Profile.Armor = 0;
+	Profile.ImpactResist = 0.0f;
+	Profile.PiercingResist = 0.0f;
+	return Profile;
+}
