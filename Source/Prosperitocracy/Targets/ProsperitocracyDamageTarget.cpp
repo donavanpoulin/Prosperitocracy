@@ -10,6 +10,9 @@
 #include "Engine/EngineTypes.h"
 #include "Materials/MaterialInterface.h"
 #include "ProsperitocracyLogChannels.h"
+#include "Stats/ProsperitocracyStatSystemStatics.h"
+#include "Stats/ProsperitocracyStatTable.h"
+#include "Targets/ProsperitocracyBodyPart.h"
 #include "UObject/ConstructorHelpers.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyDamageTarget)
@@ -53,9 +56,10 @@ AProsperitocracyDamageTarget::AProsperitocracyDamageTarget()
 		HeadMesh->SetMaterial(0, TargetMaterial.Object);
 	}
 
-	// Per-part profiles. Head = no armor (always full). Chest = armor 1 (pen 1 -> 50%, pen 2+ -> full).
-	HeadProfile.Armor = 0;
-	ChestProfile.Armor = 1;
+	// The parts' numbers are NOT here. Each part wears a BLOCK (HeadBlock / ChestBlock) and both of its
+	// numbers — its armour and its one resistance or none — are read FINAL off that block's own GAS home.
+	// A part left wearing no block answers with no armour and no resistance, which is a real answer.
+	// Presence is scope, and a number on this actor would be a second home for one number.
 
 	// Give it a health pool + ability system so the pipeline can actually apply damage.
 	AbilitySystemComponent = CreateDefaultSubobject<UProsperitocracyAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
@@ -83,10 +87,93 @@ void AProsperitocracyDamageTarget::BeginPlay()
 
 	ApplyBaseColor();
 
+	// The body's own numbers first — its health — then the parts, so a body is never standing there with
+	// its parts dressed and no health of its own.
+	DressBody();
+	SpawnParts();
+
 	if (HealthSet)
 	{
 		HealthSet->OnOutOfHealth.AddUObject(this, &ThisClass::HandleOutOfHealth);
 	}
+}
+
+void AProsperitocracyDamageTarget::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// A body that goes away takes its parts' GAS homes with it.
+	for (const TObjectPtr<AProsperitocracyBodyPart>& Part : PartHomes)
+	{
+		if (Part)
+		{
+			Part->Destroy();
+		}
+	}
+	PartHomes.Reset();
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void AProsperitocracyDamageTarget::DressBody()
+{
+	// An enemy's health is the universal Health row — the same row players and vehicles use — so it is
+	// authored in a block and written onto this body's own rows, through the same door the player's
+	// baseline block comes in through. Nothing numeric is authored on this actor.
+	//
+	// Through the one evaluator like everything else: the number is a row, a perk or a debuff can move it,
+	// and the death handler reads it back off the attribute rather than off a copy.
+	if (!HealthBlock)
+	{
+		UE_LOG(LogProsperitocracy, Warning, TEXT("[Enemy] %s has no body block — it is standing with whatever its health set came up with, not with an authored Health row."), *GetName());
+		return;
+	}
+
+	UProsperitocracyStatSystemStatics::ApplyBlockBodyRows(AbilitySystemComponent, HealthBlock, /*bBare=*/ false);
+}
+
+void AProsperitocracyDamageTarget::SpawnParts()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// One home per part. The BODY names the mesh and hands over the block; the part does the rest, so
+	// nothing here knows what a part's numbers are or what they mean.
+	const auto AddPart = [this, World](UPrimitiveComponent* PartMesh, UProsperitocracyStatTable* PartBlock)
+	{
+		if (!PartMesh)
+		{
+			return;
+		}
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = this;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		AProsperitocracyBodyPart* Part = World->SpawnActor<AProsperitocracyBodyPart>(
+			AProsperitocracyBodyPart::StaticClass(), GetActorTransform(), SpawnParams);
+		if (!Part)
+		{
+			return;
+		}
+
+		Part->InitializePart(PartMesh, PartBlock);
+		PartHomes.Add(Part);
+
+		if (!PartBlock)
+		{
+			// A part with no block is a real state — it answers with no armour and no resistance — but it
+			// is usually an unfinished body, so it is said out loud.
+			UE_LOG(LogProsperitocracy, Warning, TEXT("[Part] %s wears no block on %s — it answers with no armour and no resistance. Give the part a block."),
+				*GetNameSafe(PartMesh), *GetName());
+		}
+	};
+
+	// The two parts this body has. Head first or chest first does not matter: a part is found by the mesh
+	// a hit landed on.
+	AddPart(ChestMesh, ChestBlock);
+	AddPart(HeadMesh, HeadBlock);
 }
 
 void AProsperitocracyDamageTarget::ApplyBaseColor()
@@ -151,42 +238,67 @@ UAbilitySystemComponent* AProsperitocracyDamageTarget::GetAbilitySystemComponent
 	return AbilitySystemComponent;
 }
 
-FProsperitocracyDamageProfile AProsperitocracyDamageTarget::GetDamageProfile_Implementation(const FGameplayEffectContextHandle& EffectContext) const
+FProsperitocracyDamageProfile AProsperitocracyDamageTarget::GetDamageProfile_Implementation(const FGameplayEffectContextHandle& EffectContext, FGameplayTag DamageType) const
 {
-	// Return the profile of the part that was hit. If we can't tell which part, default to the chest.
+	// The answer comes off the PART the hit landed on and from nowhere else: each part wears its own
+	// block, and reads its armour and its one resistance FINAL off its own GAS home.
 	if (const FProsperitocracyGameplayEffectContext* TypedContext = FProsperitocracyGameplayEffectContext::ExtractEffectContext(EffectContext))
 	{
 		if (const FHitResult* HitResult = TypedContext->GetHitResult())
 		{
-			if (const UPrimitiveComponent* HitComponent = HitResult->GetComponent())
+			if (const AProsperitocracyBodyPart* Part = FindPartFor(HitResult->GetComponent()))
 			{
-				if (HitComponent == HeadMesh)
-				{
-					return HeadProfile;
-				}
-				if (HitComponent == ChestMesh)
-				{
-					return ChestProfile;
-				}
+				return Part->GetProfile(DamageType);
 			}
 		}
 	}
-	return ChestProfile;
+
+	// A hit that landed on no part of this body has nothing to be priced against. Said out loud, because
+	// every hit a body takes is supposed to land on one of its parts.
+	UE_LOG(LogProsperitocracy, Warning, TEXT("[Damage] %s was hit where it has no part — answered with no armour and no resistance."), *GetName());
+	return FProsperitocracyDamageProfile();
 }
 
-FProsperitocracyDamageProfile AProsperitocracyDamageTarget::GetBodyDamageProfile_Implementation(const FGameplayEffectContextHandle& EffectContext) const
+float AProsperitocracyDamageTarget::GetBodyResist_Implementation(const FGameplayEffectContextHandle& EffectContext, FGameplayTag DamageType) const
 {
-	// The target AS A WHOLE, for a line that carries no pen — a burn, which never strikes a part and so
-	// has no part to be priced against. Both parts weigh the same (the user's rule, 2026-09-20), so the
-	// whole-target resist is the plain mean of the two. Armor is 0 and meaningless here: a line with no
-	// pen is never gated and can never bounce.
+	// The body AS A WHOLE, for ONE damage type — the question a line with no pen (burn) asks, because
+	// such a line strikes no part.
 	//
-	// The parts' resists are authored numbers today, on a test dummy with no stats of its own. When an
-	// enemy is built of parts, each part's resist has to be a value on ITS OWN GAS home so this read is
-	// the FINAL one — after perks and buffs — exactly as the player's own resist read already is.
-	FProsperitocracyDamageProfile Body;
-	Body.Armor = 0;
-	Body.ImpactResist = (HeadProfile.ImpactResist + ChestProfile.ImpactResist) * 0.5f;
-	Body.PiercingResist = (HeadProfile.PiercingResist + ChestProfile.PiercingResist) * 0.5f;
-	return Body;
+	// The plain mean across this body's parts, all parts weighing the same (the user's rule): a part
+	// that does not carry a resistance of this type counts as 0, because a row a part does not carry is
+	// not a row it has. Every number is the part's FINAL value off its own home, so a perk or a debuff
+	// that moves a part's resistance moves this answer too.
+	if (PartHomes.Num() == 0)
+	{
+		return 0.0f;
+	}
+
+	float Total = 0.0f;
+	for (const TObjectPtr<AProsperitocracyBodyPart>& Part : PartHomes)
+	{
+		if (Part)
+		{
+			Total += Part->GetResistAgainst(DamageType);
+		}
+	}
+
+	return Total / static_cast<float>(PartHomes.Num());
+}
+
+AProsperitocracyBodyPart* AProsperitocracyDamageTarget::FindPartFor(const UPrimitiveComponent* HitComponent) const
+{
+	if (!HitComponent)
+	{
+		return nullptr;
+	}
+
+	for (const TObjectPtr<AProsperitocracyBodyPart>& Part : PartHomes)
+	{
+		if (Part && Part->GetPartMesh() == HitComponent)
+		{
+			return Part;
+		}
+	}
+
+	return nullptr;
 }

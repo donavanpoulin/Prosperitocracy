@@ -31,6 +31,9 @@ UProsperitocracyThingStatSet::UProsperitocracyThingStatSet()
 	, TrimColor1(-1.0f)
 	, TrimColor2(-1.0f)
 	, TrimColor3(-1.0f)
+	// The pen gate's threshold starts at UNARMOURED, which is a real state and not an absence: 0
+	// over-pens to everything, so a part with nothing said about its armour takes full damage.
+	, Armor(0.0f)
 {
 }
 
@@ -58,6 +61,7 @@ void UProsperitocracyThingStatSet::GetLifetimeReplicatedProps(TArray<FLifetimePr
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, TrimColor1, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, TrimColor2, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, TrimColor3, COND_OwnerOnly, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UProsperitocracyThingStatSet, Armor, COND_OwnerOnly, REPNOTIFY_Always);
 }
 
 void UProsperitocracyThingStatSet::OnRep_ImpactDamage(const FGameplayAttributeData& OldValue)
@@ -158,4 +162,9 @@ void UProsperitocracyThingStatSet::OnRep_TrimColor2(const FGameplayAttributeData
 void UProsperitocracyThingStatSet::OnRep_TrimColor3(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UProsperitocracyThingStatSet, TrimColor3, OldValue);
+}
+
+void UProsperitocracyThingStatSet::OnRep_Armor(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UProsperitocracyThingStatSet, Armor, OldValue);
 }

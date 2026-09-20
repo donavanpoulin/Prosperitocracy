@@ -64,6 +64,8 @@ public:
 	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, TrimColor1);
 	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, TrimColor2);
 	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, TrimColor3);
+	// --- Receiver side: the pen gate's threshold, on an enemy part (Design/damage.md) ---
+	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, Armor);
 
 protected:
 	UFUNCTION()
@@ -125,6 +127,9 @@ protected:
 
 	UFUNCTION()
 	UE_API void OnRep_TrimColor3(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	UE_API void OnRep_Armor(const FGameplayAttributeData& OldValue);
 
 private:
 	// blunt melee, explosions, grenades, push, mech stomp, vehicle ram, thrown objects (enemies, barrels)
@@ -211,6 +216,13 @@ private:
 
 	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_TrimColor3, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
 	FGameplayAttributeData TrimColor3;
+
+	// The pen-gate threshold a PART carries, 0-3: the number an attacker's Penetration is compared
+	// against. 0 = unarmoured, so every pen over-pens it and takes full; 3 = only pen 4 gets full.
+	// Enemy parts only — a player answers with resists and carries no armour. It sits on the part's
+	// OWN GAS home, so it is read FINAL like every other stat and a perk can move it.
+	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_Armor, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
+	FGameplayAttributeData Armor;
 };
 
 #undef UE_API

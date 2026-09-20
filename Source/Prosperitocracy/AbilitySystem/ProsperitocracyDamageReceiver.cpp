@@ -4,23 +4,20 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyDamageReceiver)
 
-FProsperitocracyDamageProfile IProsperitocracyDamageReceiver::GetDamageProfile_Implementation(const FGameplayEffectContextHandle& EffectContext) const
+FProsperitocracyDamageProfile IProsperitocracyDamageReceiver::GetDamageProfile_Implementation(const FGameplayEffectContextHandle& EffectContext, FGameplayTag DamageType) const
 {
-	// Default: no armor, no resists — a plain, unarmored target.
+	// Default: a part with no armour and nothing to say about any damage type. Armor is 0 and not 1:
+	// unarmoured is a real state on the 0-3 scale, and it means every pen over-pens this part and takes
+	// full. Nothing about a target that says no armour should quietly halve a light round.
 	FProsperitocracyDamageProfile Profile;
-	Profile.Armor = 1;
-	Profile.ImpactResist = 0.0f;
-	Profile.PiercingResist = 0.0f;
+	Profile.Armor = 0;
+	Profile.Resist = 0.0f;
 	return Profile;
 }
 
-FProsperitocracyDamageProfile IProsperitocracyDamageReceiver::GetBodyDamageProfile_Implementation(const FGameplayEffectContextHandle& EffectContext) const
+float IProsperitocracyDamageReceiver::GetBodyResist_Implementation(const FGameplayEffectContextHandle& EffectContext, FGameplayTag DamageType) const
 {
-	// Default: the target as a whole resists nothing. Armor 0, because nothing is being penetrated —
-	// a line that carries no pen is never bounced.
-	FProsperitocracyDamageProfile Profile;
-	Profile.Armor = 0;
-	Profile.ImpactResist = 0.0f;
-	Profile.PiercingResist = 0.0f;
-	return Profile;
+	// Default: the target as a whole resists nothing. No armour is involved — a line that carries no
+	// pen is never gated.
+	return 0.0f;
 }

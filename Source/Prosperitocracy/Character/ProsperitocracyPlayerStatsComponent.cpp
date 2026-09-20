@@ -288,31 +288,7 @@ void UProsperitocracyPlayerStatsComponent::ApplyBaselineStats()
 
 	// The block's BODY rows and nothing else — the same act, through the same guard, that a weave goes
 	// in through when it is worn.
-	ApplyBlockBodyRows(BaselineStats, /*bBare=*/ false);
-}
-
-void UProsperitocracyPlayerStatsComponent::ApplyBlockBodyRows(const UProsperitocracyStatTable* Block, bool bBare)
-{
-	if (!AbilitySystemComponent || !Block)
-	{
-		return;
-	}
-
-	for (const FProsperitocracyStatTableEntry& Entry : Block->StatEntries)
-	{
-		// This component carries the BODY's numbers. A thing stat (a gun's damage, a gun's or an
-		// armor's Weight) belongs to that thing's own stat host, never here — pushing it would put a
-		// thing's number on the player. Presence-is-scope, in both directions, asked in one place.
-		if (!UProsperitocracyStatSystemStatics::IsCharacterStat(Entry.Stat))
-		{
-			continue;
-		}
-
-		// Bare = the block's rows come back off the body. Not a subtraction and not a second rule:
-		// the body's number is the block's number, so no block means the number it left is gone.
-		const FGameplayAttribute Attribute = UProsperitocracyStatSystemStatics::GetAttributeForStat(Entry.Stat);
-		AbilitySystemComponent->SetNumericAttributeBase(Attribute, bBare ? 0.0f : Entry.BaseValue);
-	}
+	UProsperitocracyStatSystemStatics::ApplyBlockBodyRows(AbilitySystemComponent, BaselineStats, /*bBare=*/ false);
 }
 
 void UProsperitocracyPlayerStatsComponent::DressFromLoadout(UProsperitocracyLoadout* Loadout)
@@ -375,7 +351,7 @@ void UProsperitocracyPlayerStatsComponent::WearWeave(UProsperitocracyStatTable* 
 	// number sitting there dressed as the new one's.
 	if (ArmorWeave)
 	{
-		ApplyBlockBodyRows(ArmorWeave, /*bBare=*/ true);
+		UProsperitocracyStatSystemStatics::ApplyBlockBodyRows(AbilitySystemComponent, ArmorWeave, /*bBare=*/ true);
 	}
 
 	ArmorWeave = Weave;
@@ -413,7 +389,7 @@ void UProsperitocracyPlayerStatsComponent::WearWeave(UProsperitocracyStatTable* 
 		// 3. And the weave's BODY rows — its two resists — onto this character, through the same door
 		// the baseline block comes in through. That is what makes them the player's own numbers: the
 		// one evaluator resolves them, and a resist perk lands on top of them like any other stat.
-		ApplyBlockBodyRows(Weave, /*bBare=*/ false);
+		UProsperitocracyStatSystemStatics::ApplyBlockBodyRows(AbilitySystemComponent, Weave, /*bBare=*/ false);
 	}
 	else if (ArmorHost)
 	{

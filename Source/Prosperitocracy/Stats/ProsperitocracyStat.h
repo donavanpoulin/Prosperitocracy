@@ -122,4 +122,18 @@ enum class EProsperitocracyStat : uint8
 	TrimColor1			UMETA(DisplayName = "Trim 1"),
 	TrimColor2			UMETA(DisplayName = "Trim 2"),
 	TrimColor3			UMETA(DisplayName = "Trim 3"),
+
+	// --- Receiver-side, enemy parts only ---
+
+	// The pen-gate threshold a PART carries: 0-3. It is the number an attacker's Penetration (1-4) is
+	// compared against — over it the line is full, level with it the line is halved, under it the line
+	// gets nothing and the shot stops there (Design/damage.md).
+	//
+	// 0 = unarmoured: anything at all over-pens it, so every pen gets full. 3 = the top of the scale:
+	// only pen 4 gets full against it.
+	//
+	// A THING stat, never a character one: players have no armour, they answer with their resists.
+	// It lives on the part's OWN GAS home with the part's resists, so a perk moves it exactly like any
+	// other stat and a part's armour is never authored on an actor.
+	Armor				UMETA(DisplayName = "Armor"),
 };

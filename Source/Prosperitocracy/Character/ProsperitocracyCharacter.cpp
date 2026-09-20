@@ -6,10 +6,27 @@
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyStatusComponent.h"
+#include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "ProsperitocracyGameplayTags.h"
+#include "Stats/ProsperitocracyStat.h"
+#include "Stats/ProsperitocracyStatSystemStatics.h"
 #include "Weapons/ProsperitocracyWeapon.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyCharacter)
+
+namespace
+{
+	/**
+	 * This body's stat component — the one that owns its ability system and its own rows.
+	 *
+	 * Found rather than stored: the template's blueprint is what puts the component on the character, so
+	 * C++ cannot hold a reference to it. Null when the body has none.
+	 */
+	const UProsperitocracyPlayerStatsComponent* GetStats(const AActor* Body)
+	{
+		return Body ? Body->FindComponentByClass<UProsperitocracyPlayerStatsComponent>() : nullptr;
+	}
+}
 
 AProsperitocracyCharacter::AProsperitocracyCharacter()
 {
@@ -86,4 +103,47 @@ FRotator AProsperitocracyCharacter::GetBaseAimRotation() const
 	}
 
 	return AimRotation;
+}
+
+//~ Being damageable -------------------------------------------------------------------------------
+
+UAbilitySystemComponent* AProsperitocracyCharacter::GetAbilitySystemComponent() const
+{
+	// The body's ability system lives on the stats component, so this is where a hit finds it — and
+	// finding it is what makes this body damageable at all (see AProsperitocracyWeapon::ApplyDamageToHit:
+	// no ability system on the hit actor means the hit has nowhere to land).
+	const UProsperitocracyPlayerStatsComponent* Stats = GetStats(this);
+	return Stats ? Stats->GetAbilitySystemComponent() : nullptr;
+}
+
+FProsperitocracyDamageProfile AProsperitocracyCharacter::GetDamageProfile_Implementation(const FGameplayEffectContextHandle& EffectContext, FGameplayTag DamageType) const
+{
+	// The player's ONE part answers, and it carries NO armour: armour is the pen gate's number on enemy
+	// parts, and a player answers with resists. So every pen over-pens this body — armour 0, always full
+	// on the gate — and the rest of the answer is the body's resist for the type of the line that hit it.
+	//
+	// Plain English: wearing nothing means nothing is ever halved or stopped on you, and what a worn weave
+	// does is take a share off the damage you DO take.
+	FProsperitocracyDamageProfile Profile;
+	Profile.Armor = 0;
+	Profile.Resist = GetBodyResist_Implementation(EffectContext, DamageType);
+	return Profile;
+}
+
+float AProsperitocracyCharacter::GetBodyResist_Implementation(const FGameplayEffectContextHandle& EffectContext, FGameplayTag DamageType) const
+{
+	// What this body resists AS A WHOLE, for one damage type. A player has a single part — the weave — so
+	// the average across parts IS that one part's number, and there is nothing else to weigh.
+	//
+	// The number is the body's OWN row for this type, read FINAL through the one evaluator: a worn weave's
+	// two resists land on these rows (that is what wearing one does), so a resist perk, an item or a
+	// weakening debuff reaches this answer exactly like it reaches any other stat. Bare means no weave, so
+	// both rows are 0 and every line lands at full.
+	const UProsperitocracyPlayerStatsComponent* Stats = GetStats(this);
+	if (!Stats)
+	{
+		return 0.0f;
+	}
+
+	return Stats->GetStat(UProsperitocracyStatSystemStatics::GetResistStatForDamageType(DamageType));
 }

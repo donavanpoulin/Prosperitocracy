@@ -3,11 +3,14 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AbilitySystemInterface.h"
 #include "GameFramework/Character.h"
+#include "AbilitySystem/ProsperitocracyDamageReceiver.h"
 
 #include "ProsperitocracyCharacter.generated.h"
 
 class AProsperitocracyWeapon;
+class UProsperitocracyPlayerStatsComponent;
 class UProsperitocracyStatusComponent;
 class USkeletalMeshComponent;
 
@@ -32,9 +35,19 @@ class USkeletalMeshComponent;
  *
  * Nobody recomputes either from a proxy: not from a mesh being visible, not from a camera boom
  * length. There is one answer, and it comes from the thing that owns the fact.
+ *
+ * This body also TAKES damage. It answers IAbilitySystemInterface — its ability system lives on the
+ * stats component the template's blueprint gives it — and IProsperitocracyDamageReceiver, so a hit finds
+ * where to land and what the body answers with. Anyone's hit: friendly fire is always on and there are no
+ * teams (Design/combat.md), so a teammate's shot lands here exactly like anything else's.
+ *
+ * A player has ONE part — the weave — and NO armour. A weave is a resists-and-weight block, never a
+ * pen-gate number, so every pen over-pens the body, and the number it answers a line with is the body's
+ * own resist row for that line's type, read FINAL through the one evaluator (a worn weave's resists land
+ * on those rows, so a resist perk reaches them like any other stat).
  */
 UCLASS()
-class AProsperitocracyCharacter : public ACharacter
+class AProsperitocracyCharacter : public ACharacter, public IAbilitySystemInterface, public IProsperitocracyDamageReceiver
 {
 	GENERATED_BODY()
 
@@ -105,6 +118,22 @@ public:
 	 * in all three places (Design/ui.md: every bullet lands exactly where the circle points).
 	 */
 	virtual FRotator GetBaseAimRotation() const override;
+
+	//~IAbilitySystemInterface — where this body's damage lands.
+	//
+	// The body's ability system is the one the stats component owns (the template's blueprint puts the
+	// component on the character; C++ never creates it). Answering it here is what makes this body
+	// damageable at all: the gun asks the hit actor for its ability system, and without this the hit has
+	// nowhere to go. Null when the body has no stats component, which is a truthful answer.
+	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
+
+	//~IProsperitocracyDamageReceiver — what this body answers a hit with.
+	//
+	// One part (the weave), no armour, and the body's own resist for the line's type, read FINAL off the
+	// body's rows. Nothing here reads a base and nothing here decides anything: the ONE pipeline asks, and
+	// these are the numbers it gets.
+	virtual FProsperitocracyDamageProfile GetDamageProfile_Implementation(const FGameplayEffectContextHandle& EffectContext, FGameplayTag DamageType) const override;
+	virtual float GetBodyResist_Implementation(const FGameplayEffectContextHandle& EffectContext, FGameplayTag DamageType) const override;
 
 protected:
 	/**

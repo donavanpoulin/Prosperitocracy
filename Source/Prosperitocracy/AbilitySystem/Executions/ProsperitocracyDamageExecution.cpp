@@ -39,21 +39,10 @@ void UProsperitocracyDamageExecution::Execute_Implementation(const FGameplayEffe
 		HitActor = TargetAbilitySystemComponent ? TargetAbilitySystemComponent->GetAvatarActor_Direct() : nullptr;
 	}
 
-	// Ask the receiver for the armor + resists of the part that was hit. Something that doesn't
-	// implement the interface is an unarmored, unresisted target (armor 1, no resists).
-	FProsperitocracyDamageProfile Profile;
-	// And for the SECOND question, the one a burn asks: what does this target resist AS A WHOLE? Only
-	// read by a line that carries no pen (see below) — the part profile is the normal answer.
-	FProsperitocracyDamageProfile BodyProfile;
-	if (HitActor)
-	{
-		if (Cast<IProsperitocracyDamageReceiver>(HitActor))
-		{
-			// Interface events must be dispatched via the generated Execute_ thunk, not called directly.
-			Profile = IProsperitocracyDamageReceiver::Execute_GetDamageProfile(HitActor, Spec.GetContext());
-			BodyProfile = IProsperitocracyDamageReceiver::Execute_GetBodyDamageProfile(HitActor, Spec.GetContext());
-		}
-	}
+	// Ask the receiver for the answer of the PART that was hit: its armour, and the resistance it has
+	// against THE LINE'S TYPE (Design/damage.md). Something that doesn't implement the interface has no
+	// armour and no resistance at all: an unarmoured target, which takes full from every pen (armor 0).
+	const bool bHasReceiver = HitActor && Cast<IProsperitocracyDamageReceiver>(HitActor) != nullptr;
 
 	// Prosperitocracy has no teams and friendly fire is always on (see combat.md), so damage is
 	// never gated by a team check.
@@ -92,33 +81,58 @@ void UProsperitocracyDamageExecution::Execute_Implementation(const FGameplayEffe
 		//   - a line that carries NO pen (0) is not an attack that penetrates anything — it reaches the
 		//     target ITSELF. Burn is the case: any burn burns a big guy whatever plates he wears, so
 		//     there is no gate to run and no part to bounce off. What answers it is the target's own
-		//     resist, averaged across its parts (GetBodyDamageProfile).
+		//     resist, averaged across its parts (GetBodyResist).
 		const bool bGated = (Line.PenTier > 0);
-		const bool bIsImpact = (Line.Type == ProsperitocracyGameplayTags::Damage_Type_Impact);
 		float Gate = 1.0f;
 		float Resist = 0.0f;
+		int32 PartArmor = 0;
 
 		if (bGated)
 		{
-			// Pen gate (full / 50% reduced / ricochet): pen > armor -> full; pen == armor -> 50% reduced;
-			// pen < armor -> bounces/ricochets OFF this target. A bounce is not "no event" — the projectile
-			// keeps flying (handled at the projectile level), but this target takes no damage from this line.
-			if (Line.PenTier < Profile.Armor)
+			// The PART the hit landed on answers FOR THIS LINE'S TYPE: its armour, and the resistance it
+			// has against that type. Asked per line, never once per hit — a hybrid hit asks two different
+			// questions of the same part, and each line is answered on its own.
+			const FProsperitocracyDamageProfile PartProfile = bHasReceiver
+				? IProsperitocracyDamageReceiver::Execute_GetDamageProfile(HitActor, Spec.GetContext(), Line.Type)
+				: FProsperitocracyDamageProfile();
+
+			// The part's pen-gate threshold, clamped to the scale it lives on (Design/damage.md). The
+			// clamp is what keeps the gate to 0-3 no matter what a part's number says, so there is no
+			// fourth armour tier lurking in an authored value.
+			PartArmor = FMath::Clamp(static_cast<int32>(PartProfile.Armor), 0, 3);
+			// The pen gate, armour 0-3 against pen 1-4. ONE comparison, three outcomes:
+			//   pen > armour  -> FULL      (the round over-pens the plate)
+			//   pen == armour -> HALF      (a match half-penetrates)
+			//   pen < armour  -> NOTHING   (it does not get through this part at all)
+			//
+			// Armour 0 is a real, unarmoured state, so every pen over-pens it and nothing is ever
+			// halved or stopped by it. Armour 3 is the top of the scale: only pen 4 gets full
+			// against it, pen 3 is halved, and pen 1 and 2 get nothing.
+			//
+			// A blocked line just does nothing, and the shot stops there. Ricochet — the round
+			// carrying on to hit something else — is DESIGNED and NOT BUILT; until it is, a bounce
+			// is the end of the shot.
+			if (Line.PenTier < PartArmor)
 			{
-				UE_LOG(LogProsperitocracy, Warning, TEXT("[Damage] [%s] %s pen %d < armor %d -> BOUNCE (no damage)"),
-					*GetNameSafe(HitActor), *Line.Type.ToString(), Line.PenTier, Profile.Armor);
+				UE_LOG(LogProsperitocracy, Warning, TEXT("[Damage] [%s] %s pen %d < armor %d -> BOUNCE (no damage, the shot stops there)"),
+					*GetNameSafe(HitActor), *Line.Type.ToString(), Line.PenTier, PartArmor);
 				continue;
 			}
-			const bool bReduced = (Line.PenTier == Profile.Armor);
+			const bool bReduced = (Line.PenTier == PartArmor);
 			Gate = bReduced ? 0.5f : 1.0f;
 
-			// Resist = the per-type efficiency axis, applied after the gate. Weakness = negative resist.
-			Resist = bIsImpact ? Profile.ImpactResist : Profile.PiercingResist;
+			// Resist = the per-type efficiency axis, applied after the gate. This part's answer for THIS
+			// type, and nothing else: a part built against another type resists this one not at all.
+			Resist = PartProfile.Resist;
 		}
 		else
 		{
-			// No pen, so no part: the target as a whole is what this line answers to.
-			Resist = bIsImpact ? BodyProfile.ImpactResist : BodyProfile.PiercingResist;
+			// No pen, so no part: the target AS A WHOLE answers, for THIS line's type — the resist
+			// averaged across its parts, all parts weighing the same, final values. One type per ask, so
+			// a target can never answer a Piercing line with its Impact resistance.
+			Resist = bHasReceiver
+				? IProsperitocracyDamageReceiver::Execute_GetBodyResist(HitActor, Spec.GetContext(), Line.Type)
+				: 0.0f;
 		}
 
 		const float EffectiveAmount = Line.Amount * Gate;
@@ -128,7 +142,7 @@ void UProsperitocracyDamageExecution::Execute_Implementation(const FGameplayEffe
 		UE_LOG(LogProsperitocracy, Warning, TEXT("[Damage] [%s] %s %s | resist %.0f%% | falloff x%.2f (dist %.0fm) -> %.1f"),
 			*GetNameSafe(HitActor), *Line.Type.ToString(),
 			bGated
-				? *FString::Printf(TEXT("pen %d vs armor %d -> %s"), Line.PenTier, Profile.Armor, (Gate < 1.0f) ? TEXT("50% REDUCED") : TEXT("FULL"))
+				? *FString::Printf(TEXT("pen %d vs armor %d -> %s"), Line.PenTier, PartArmor, (Gate < 1.0f) ? TEXT("50% REDUCED") : TEXT("FULL"))
 				: TEXT("no pen -> the target itself"),
 			Resist, DistanceAttenuation, HitDistance / 100.0f, FinalAmount);
 

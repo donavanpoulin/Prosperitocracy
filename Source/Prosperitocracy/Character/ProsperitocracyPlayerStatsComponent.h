@@ -129,6 +129,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
 	float GetStat(EProsperitocracyStat Stat) const;
 
+	/**
+	 * The BODY's ability system — the one the whole character's stats are evaluated on (the ASC the
+	 * template's blueprint gives this component).
+	 *
+	 * It is exposed because a body that TAKES damage has to hand it over: the character answers
+	 * IAbilitySystemInterface through this, which is how a hit finds where to apply its damage and how a
+	 * status finds the ability system it stamps. Null before the component has come up, which is a
+	 * truthful answer — nothing can be damaged before it exists.
+	 */
+	UProsperitocracyAbilitySystemComponent* GetAbilitySystemComponent() const { return AbilitySystemComponent; }
+
 	/** The run speed: Move Speed, through the weight penalty. Running is the number; walk is a fraction. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
 	float GetRunSpeed() const { return GetStat(EProsperitocracyStat::MoveSpeed) * GetWeightSpeedMultiplier(); }
@@ -353,17 +364,9 @@ protected:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
-	/**
-	 * A block's BODY rows onto this character — the one act a block becomes this body's numbers.
-	 *
-	 * Values: the block's own numbers (the baseline block at spawn, a weave being worn). Bare: zero,
-	 * which is what takes a block's rows back OFF the body (a weave coming off, so the next one is
-	 * never wearing the last one's numbers where it carries nothing).
-	 *
-	 * One loop and one guard, `IsCharacterStat`: a thing stat in the block (an armor's Weight) is the
-	 * THING's number, evaluated on the thing's own GAS home, and is skipped here.
-	 */
-	void ApplyBlockBodyRows(const UProsperitocracyStatTable* Block, bool bBare);
+	// A block's BODY rows are written by ONE door, `UProsperitocracyStatSystemStatics::ApplyBlockBodyRows`
+	// — the baseline block at spawn, a weave going on or coming off, and a body part's own block all go
+	// through it, so no body can be dressed one way here and another way there.
 
 	/**
 	 * Listen to the numbers the movement is built from — Move Speed, Jump Velocity, and what the body

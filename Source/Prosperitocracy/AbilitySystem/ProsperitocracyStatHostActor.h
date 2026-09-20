@@ -107,7 +107,7 @@ public:
 	 * sway (read live) and not the push (not read live). Both are stat bases, so perks resolve on top
 	 * of them like any stat.
 	 */
-	void ApplyDerivedStats();
+	virtual void ApplyDerivedStats();
 
 protected:
 	/** FINAL value of a stat on this host's own ASC (the ONE evaluator). */

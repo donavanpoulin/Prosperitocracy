@@ -32,6 +32,13 @@ void UProsperitocracyStatTable::BuildCanonicalStats(TArray<FProsperitocracyStatT
 	Add(EProsperitocracyStat::Weight, 0.0f);
 	Add(EProsperitocracyStat::Penetration, 0.0f);
 
+	// --- Receiver-side, enemy parts only (Design/damage.md) ---
+
+	// The pen-gate threshold a part carries, 0-3. The canonical default is UNARMOURED: a part that
+	// says nothing about its armour takes full damage from every pen, which is the same thing the
+	// thing stat set reads at base 0.
+	Add(EProsperitocracyStat::Armor, 0.0f);
+
 	// --- Character stats ---
 	Add(EProsperitocracyStat::Health, 0.0f);
 	Add(EProsperitocracyStat::MoveSpeed, 0.0f);

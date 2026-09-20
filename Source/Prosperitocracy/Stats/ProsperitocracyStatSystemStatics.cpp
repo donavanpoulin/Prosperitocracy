@@ -6,6 +6,8 @@
 #include "AbilitySystem/Attributes/ProsperitocracyHealthSet.h"
 #include "AbilitySystem/Attributes/ProsperitocracyStatSet.h"
 #include "AbilitySystem/Attributes/ProsperitocracyThingStatSet.h"
+#include "Stats/ProsperitocracyStatTable.h"
+#include "ProsperitocracyGameplayTags.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyStatSystemStatics)
 
@@ -69,6 +71,9 @@ FGameplayAttribute UProsperitocracyStatSystemStatics::GetAttributeForStat(EProsp
 		{ EProsperitocracyStat::TrimColor1, UProsperitocracyThingStatSet::GetTrimColor1Attribute() },
 		{ EProsperitocracyStat::TrimColor2, UProsperitocracyThingStatSet::GetTrimColor2Attribute() },
 		{ EProsperitocracyStat::TrimColor3, UProsperitocracyThingStatSet::GetTrimColor3Attribute() },
+		// The pen gate's threshold, on the enemy PART's own GAS home beside its resists
+		// (Design/damage.md). Enemy parts only: a player carries no armour and answers with resists.
+		{ EProsperitocracyStat::Armor, UProsperitocracyThingStatSet::GetArmorAttribute() },
 	};
 
 	if (const FGameplayAttribute* Found = Registry.Find(Stat))
@@ -115,6 +120,54 @@ float UProsperitocracyStatSystemStatics::GetStatFinal(const UAbilitySystemCompon
 bool UProsperitocracyStatSystemStatics::IsCharacterStat(EProsperitocracyStat Stat)
 {
 	return IsCharacterStatAttribute(GetAttributeForStat(Stat));
+}
+
+EProsperitocracyStat UProsperitocracyStatSystemStatics::GetResistStatForDamageType(FGameplayTag DamageType)
+{
+	// Exactly two damage types exist (Design/damage.md), so anything that is not Impact is Piercing —
+	// which is also the type a burn and every other no-pen source carries.
+	return (DamageType == ProsperitocracyGameplayTags::Damage_Type_Impact)
+		? EProsperitocracyStat::ImpactResist
+		: EProsperitocracyStat::PiercingResist;
+}
+
+void UProsperitocracyStatSystemStatics::ApplyBlockBodyRows(UAbilitySystemComponent* ASC, const UProsperitocracyStatTable* Block, bool bBare)
+{
+	if (!ASC || !Block)
+	{
+		return;
+	}
+
+	for (const FProsperitocracyStatTableEntry& Entry : Block->StatEntries)
+	{
+		// This call dresses the BODY's numbers and nothing else. A thing stat (a gun's damage, a gun's or
+		// a body part's armour) belongs to that thing's own home; pushing it here would put a thing's
+		// number on a body. Presence-is-scope, in both directions, asked in one place.
+		if (!IsCharacterStat(Entry.Stat))
+		{
+			continue;
+		}
+
+		// Bare = the block's rows come back off. Not a subtraction and not a second rule: the body's
+		// number IS the block's number, so no block means the number it left is gone.
+		const float Value = bBare ? 0.0f : Entry.BaseValue;
+
+		// Health is ONE authored number, and GAS needs it in two attributes to mean anything: the body's
+		// Health and its MaxHealth. They are never two rows and never two numbers — max health is the
+		// ceiling that makes Health a value at all, and the health set clamps Health to it, so a body
+		// whose row says 300 must not be sitting under a 100 ceiling. Written FIRST, because the clamp
+		// runs when the ceiling moves.
+		if (Entry.Stat == EProsperitocracyStat::Health)
+		{
+			ASC->SetNumericAttributeBase(UProsperitocracyHealthSet::GetMaxHealthAttribute(), Value);
+		}
+
+		const FGameplayAttribute Attribute = GetAttributeForStat(Entry.Stat);
+		if (Attribute.IsValid())
+		{
+			ASC->SetNumericAttributeBase(Attribute, Value);
+		}
+	}
 }
 
 float UProsperitocracyStatSystemStatics::ComputeDistanceAttenuation(float Distance, float RangeMeters, float FalloffMeters)
