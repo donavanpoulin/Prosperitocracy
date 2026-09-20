@@ -2,6 +2,7 @@
 
 #include "ProsperitocracyDamageExecution.h"
 
+#include "AbilitySystem/Abilities/ProsperitocracyGameplayAbility_ContestedHealth.h"
 #include "AbilitySystem/Attributes/ProsperitocracyHealthSet.h"
 #include "AbilitySystem/ProsperitocracyGameplayEffectContext.h"
 #include "AbilitySystem/ProsperitocracyDamageReceiver.h"
@@ -159,6 +160,14 @@ void UProsperitocracyDamageExecution::Execute_Implementation(const FGameplayEffe
 	{
 		// Apply the combined damage as the Damage meta-attribute, which the HealthSet maps to -Health.
 		OutExecutionOutput.AddOutputModifier(FGameplayModifierEvaluatedData(UProsperitocracyHealthSet::GetDamageAttribute(), EGameplayModOp::Additive, TotalDamage));
+
+		// And the two halves of contested health, at the one place damage becomes real
+		// (Design/combat.md): what the TARGET just took becomes ITS contested pool — already lost, on the
+		// clock, and winnable back — and the body that DEALT it wins a flat quarter of what it dealt back
+		// as health. Credited to the INSTIGATOR, so whoever pulled the trigger is who it counts for,
+		// teammate included: the game does not discriminate.
+		UProsperitocracyGameplayAbility_ContestedHealth::NotifyDamageTaken(HitActor, TotalDamage);
+		UProsperitocracyGameplayAbility_ContestedHealth::NotifyDamageDealt(Spec.GetContext().GetInstigator(), TotalDamage);
 	}
 #endif // #if WITH_SERVER_CODE
 }

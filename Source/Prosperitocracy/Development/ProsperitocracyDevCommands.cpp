@@ -4,6 +4,8 @@
 
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
+#include "AbilitySystem/ProsperitocracyDamageStatics.h"
+#include "AbilitySystem/ProsperitocracyGameplayEffectContext.h"
 #include "AbilitySystem/ProsperitocracyStatusComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -22,9 +24,11 @@
 #include "Weapons/ProsperitocracyLoadoutComponent.h"
 
 /**
- * The in-game dev sandbox — DEVELOPMENT ONLY. Five commands, one per thing you cannot try by walking
+ * The in-game dev sandbox — DEVELOPMENT ONLY. Six commands, one per thing you cannot try by walking
  * around: the gun you are holding, the weave you are wearing, the armour's colour, which of your
- * class's three loadouts you are playing, and the Stun status you cannot otherwise put on yourself.
+ * class's three loadouts you are playing, the Stun status you cannot otherwise put on yourself, and the
+ * damage you cannot otherwise take (Prosperitocracy.Hurt — so a weave's resist and contested health can
+ * both be felt while nothing in the game attacks you).
  *
  * `Prosperitocracy.Gun <name>` puts one of our six guns in your hands without touching what the
  * character spawns with and without a pickup system.
@@ -725,4 +729,110 @@ namespace ProsperitocracyDevStatus
 		TEXT("that block's own, so it is the same stun a stun pistol round puts on a target. Nothing can ")
 		TEXT("damage you yet, so this is the only way to feel a stun on the one body it stops."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleStunCommand));
+}
+
+namespace ProsperitocracyDevHurt
+{
+	/** Say something in the log and on screen, as the other sandboxes do. LineIndex = on-screen slot. */
+	void Report(const FString& Message, int32 LineIndex = 0)
+	{
+		ProsperitocracyDev::Report(TEXT("DevHurt"), /*OnScreenKey=*/ 0x9007 + LineIndex, Message);
+	}
+
+	/**
+	 * Prosperitocracy.Hurt <amount> <impact|piercing>
+	 *
+	 * Take that much damage OF A NAMED TYPE, through the ONE pipeline — everything in this game is a
+	 * damage line and a damage line is always its type, so the type is the one thing the command asks for
+	 * and it has no default.
+	 *
+	 * **No pen, and the command does not ask for one.** Pen is what a PLAYER'S ATTACK carries to get
+	 * through ARMOUR, and a player has no armour — you answer a hit with your weave's resists, so there is
+	 * no gate for a pen to bite on. A wound from nowhere carries none, exactly like a burn does.
+	 *
+	 * That is what makes it the way to feel a weave: run it once as piercing and once as impact against
+	 * the same weave and the two resists answer for themselves.
+	 *
+	 * And it carries NO dealer either: nothing dealt this to you, so it wins you back nothing — but it
+	 * DOES hand you contested health, because contested comes from damage you TAKE. So: hurt yourself,
+	 * then shoot a dummy and watch the health come back.
+	 */
+	void HandleHurtCommand(const TArray<FString>& Args, UWorld* World)
+	{
+		const auto SayUsage = [](const TCHAR* Why)
+		{
+			Report(FString::Printf(TEXT("%s A damage line is a type: Prosperitocracy.Hurt <amount> <impact|piercing> — e.g. Prosperitocracy.Hurt 30 piercing."), Why));
+		};
+
+		APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
+		APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
+		if (!Pawn)
+		{
+			Report(TEXT("no character — this only works while the game is running (PIE)."));
+			return;
+		}
+
+		// The amount AND the type: the type is half of every damage line, so there is nothing to default it
+		// to and no such thing as hurting someone by an untyped number.
+		if (Args.Num() < 2)
+		{
+			SayUsage(TEXT("a damage line is an amount and a type."));
+			return;
+		}
+
+		UAbilitySystemComponent* SourceAbilitySystemComponent = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Pawn);
+		const UProsperitocracyLoadoutComponent* LoadoutComponent = Pawn->FindComponentByClass<UProsperitocracyLoadoutComponent>();
+		const UProsperitocracyLoadout* Playing = LoadoutComponent ? LoadoutComponent->GetLoadout() : nullptr;
+
+		// The effect the ONE damage pipeline runs on comes from the loadout, exactly as a shot takes it —
+		// one asset for the game, never a second one minted for a dev command.
+		const TSubclassOf<UGameplayEffect> DamageEffectClass = Playing ? Playing->GunDamageEffectClass : nullptr;
+		if (!SourceAbilitySystemComponent || !DamageEffectClass)
+		{
+			Report(TEXT("cannot hurt you — the character has no ability system, or the loadout names no damage effect."));
+			return;
+		}
+
+		const float Amount = FMath::Max(0.0f, FCString::Atof(*Args[0]));
+
+		FGameplayTag Type;
+		if (Args[1].Equals(TEXT("impact"), ESearchCase::IgnoreCase))
+		{
+			Type = ProsperitocracyGameplayTags::Damage_Type_Impact;
+		}
+		else if (Args[1].Equals(TEXT("piercing"), ESearchCase::IgnoreCase))
+		{
+			Type = ProsperitocracyGameplayTags::Damage_Type_Piercing;
+		}
+		else
+		{
+			Report(FString::Printf(TEXT("'%s' is not a damage type — the two are impact and piercing."), *Args[1]));
+			return;
+		}
+
+		// The same context a shot builds, with the line on the context where the execution reads it. NO pen
+		// (a body has no armour) and no instigator: nothing fired, and no one is credited for it.
+		FGameplayEffectContextHandle Context = SourceAbilitySystemComponent->MakeEffectContext();
+		if (FProsperitocracyGameplayEffectContext* TypedContext = FProsperitocracyGameplayEffectContext::ExtractEffectContext(Context))
+		{
+			TypedContext->AddDamageLine(Type, /*InPenTier=*/ 0, Amount);
+		}
+		else
+		{
+			Report(TEXT("cannot hurt you — the effect context is not ours. Check AbilitySystemGlobalsClassName in DefaultGame.ini."));
+			return;
+		}
+
+		UProsperitocracyDamageStatics::ApplyDamageEffectToHit(Context, Pawn, SourceAbilitySystemComponent, DamageEffectClass);
+
+		Report(FString::Printf(TEXT("took %.0f %s — the ONE pipeline ran it, and the log says what your weave let through."), Amount, *Type.ToString()), /*LineIndex=*/ 1);
+	}
+
+	static FAutoConsoleCommandWithWorldAndArgs HurtCommand(
+		TEXT("Prosperitocracy.Hurt"),
+		TEXT("Take a damage line of your own naming, through the ONE pipeline, so a worn weave's two resists ")
+		TEXT("and contested health can all be felt: Prosperitocracy.Hurt <amount> <impact|piercing>. No pen — ")
+		TEXT("a player has no armour for one to bite on. Run it both ways against one weave to hear each ")
+		TEXT("resist answer for itself."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleHurtCommand));
 }
