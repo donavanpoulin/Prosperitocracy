@@ -15,6 +15,7 @@
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
 #include "Stats/ProsperitocracyStatTable.h"
+#include "Weapons/ProsperitocracyLoadout.h"
 #include "Weapons/ProsperitocracyLoadoutComponent.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyPlayerStatsComponent)
@@ -130,10 +131,19 @@ void UProsperitocracyPlayerStatsComponent::BeginPlay()
 	// brings up its numbers.
 	GrantAbilities();
 
-	// And what it is WEARING comes up with it too. One call, the same one a swap makes: this is the
-	// only way a body ever gets an armor, so there is no second path for it to arrive by — and its
-	// weight reaches the legs through the row it writes, not through a movement rule of its own.
-	WearWeave(ArmorWeave);
+	// And what it is WEARING comes up with it too — DRESSED FROM THE LOADOUT it is playing, because
+	// the armour is part of what you take in (Design/loadout.md). One call, the same one a loadout
+	// swap makes, so a swap can never dress a body differently from the way it spawns — and the
+	// armour's weight reaches the legs through the row it writes, not through a movement rule.
+	//
+	// A body with no loadout component (or no loadout) is dressed from nothing, which is a bare body:
+	// no armour, and so no armour numbers. That is a real state, not a failure.
+	UProsperitocracyLoadout* Playing = nullptr;
+	if (const UProsperitocracyLoadoutComponent* LoadoutComponent = Owner->FindComponentByClass<UProsperitocracyLoadoutComponent>())
+	{
+		Playing = LoadoutComponent->GetLoadout();
+	}
+	DressFromLoadout(Playing);
 }
 
 void UProsperitocracyPlayerStatsComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -302,6 +312,51 @@ void UProsperitocracyPlayerStatsComponent::ApplyBlockBodyRows(const UProsperitoc
 		// the body's number is the block's number, so no block means the number it left is gone.
 		const FGameplayAttribute Attribute = UProsperitocracyStatSystemStatics::GetAttributeForStat(Entry.Stat);
 		AbilitySystemComponent->SetNumericAttributeBase(Attribute, bBare ? 0.0f : Entry.BaseValue);
+	}
+}
+
+void UProsperitocracyPlayerStatsComponent::DressFromLoadout(UProsperitocracyLoadout* Loadout)
+{
+	// 1. The weave. It is worn FIRST because everything below it lives ON the armour: a colour has
+	//    nowhere to be carried until an armour is on the body. Null is passed straight through —
+	//    a loadout that names no weave is a bare body, and WearWeave's own door takes the last one off.
+	UProsperitocracyStatTable* Worn = nullptr;
+	if (Loadout)
+	{
+		Worn = Loadout->Weave;
+	}
+	WearWeave(Worn);
+
+	// 2. The paint. A bare body has nowhere to carry a colour, so there is nothing to write; and the
+	//    rows live on the armour, so taking the armour off takes the paint with it.
+	if (!GetWornWeave())
+	{
+		return;
+	}
+
+	// Written whether the loadout names a colour or not: "nothing chosen" is a value (-1) and it puts
+	// the region back to the paint it ships with — which is what makes a SWAP land exactly the same
+	// as a spawn, on the rows the last loadout painted.
+	//
+	// The loadout's three trims line up with the body's three regions by ORDER (1 the collar, 2 the
+	// shoulders and arms, 3 the legs — ProsperitocracyArmor::Pieces), so the numbering lives in that
+	// one list and is never written down a second time.
+	for (int32 Index = 0; Index < ProsperitocracyArmor::PieceCount; ++Index)
+	{
+		int32 Hex = ProsperitocracyArmor::NoColor;
+
+		if (Loadout)
+		{
+			switch (Index)
+			{
+			case 0: Hex = Loadout->Trim1; break;
+			case 1: Hex = Loadout->Trim2; break;
+			case 2: Hex = Loadout->Trim3; break;
+			default: break;
+			}
+		}
+
+		SetArmorColor(ProsperitocracyArmor::Pieces[Index].Color, Hex);
 	}
 }
 

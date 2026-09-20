@@ -11,6 +11,7 @@
 
 class AProsperitocracyWeapon;
 class UGameplayEffect;
+class UProsperitocracyClass;
 
 /**
  * The magazine and the spare pool of ONE slot. Runtime state, never authored data.
@@ -61,11 +62,45 @@ class UProsperitocracyLoadoutComponent : public UActorComponent
 public:
 	UProsperitocracyLoadoutComponent();
 
-	/** What this character carries. The one place a gun's numbers are decided. */
+	/**
+	 * What this character carries when NO class is chosen — the loadout a class-less body plays on,
+	 * which is where the test character stands until the class assets exist (ROADMAP section 2).
+	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout")
 	TObjectPtr<UProsperitocracyLoadout> Loadout;
 
-	UProsperitocracyLoadout* GetLoadout() const { return Loadout; }
+	/** The class being played (Design/classes/). Null = no class chosen. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout")
+	TObjectPtr<UProsperitocracyClass> Class;
+
+	/** Which of the class's three loadouts is being played: 0, 1 or 2. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout")
+	int32 SelectedLoadout = 0;
+
+	/**
+	 * The loadout being played — the ONE answer to "what does this character carry".
+	 *
+	 * A class owns three loadouts (Design/loadout.md), so the one being played is the class's at the
+	 * selected index; a character with no class plays on the loadout it was authored with. Nothing
+	 * holds a second copy of this answer: everything that has to know — a gun, the armour, the weight
+	 * — asks here, exactly as it asks for a slot's entry.
+	 */
+	UProsperitocracyLoadout* GetLoadout() const;
+
+	/**
+	 * Play one of the class's three loadouts, and dress the body from the one chosen.
+	 *
+	 * This is the door a loadout is switched through: choose the loadout, and the armour it names
+	 * comes with it — one call, the same one the body makes at spawn, so a swap can never dress a
+	 * body differently from the way it spawns. Guns already in hand keep the numbers they were
+	 * dressed with until the rig re-creates them; the picker's own re-dress lands with the picker
+	 * (ROADMAP section 2).
+	 *
+	 * False when there is no class, or the index is not one of the three: nothing changes, and the
+	 * character keeps playing the loadout it is already playing.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Loadout")
+	bool SelectLoadout(int32 Index);
 
 	/** What this character carries in that slot, or null when the slot names nothing. */
 	const FProsperitocracyWeaponSlot* GetEntryForSlot(const FGameplayTag& Slot) const;

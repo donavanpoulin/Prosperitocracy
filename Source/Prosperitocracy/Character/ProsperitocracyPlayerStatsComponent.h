@@ -13,6 +13,7 @@ class AProsperitocracyStatHostActor;
 class UCharacterMovementComponent;
 class UProsperitocracyAbilitySystemComponent;
 class UProsperitocracyHealthSet;
+class UProsperitocracyLoadout;
 class UProsperitocracyStatSet;
 class UProsperitocracyStatTable;
 class UMaterialInstanceDynamic;
@@ -124,20 +125,6 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Abilities")
 	TObjectPtr<UProsperitocracyAbilitySet> AbilitySet;
 
-	/**
-	 * The weave this body is wearing — one armor, one block.
-	 *
-	 * An armor is a thing the way a gun is: what it is worth is a stat block, and its rows are the
-	 * weave's (Design/armor.md — Impact Resist, Piercing Resist, Weight). Nothing about it is a
-	 * second system: its resists are the body's own resist rows and its weight is a thing stat on its
-	 * own GAS home, so a perk reaches a weave's resists and its weight exactly like anything else.
-	 *
-	 * Null = a bare body: no armor, so no armor numbers. What a body spawns wearing is authored here;
-	 * wearing a different one is the same call made again (`WearWeave`), never a second path.
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Armor")
-	TObjectPtr<UProsperitocracyStatTable> ArmorWeave;
-
 	/** FINAL value of one of this character's stats, through GAS — the ONE evaluator. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
 	float GetStat(EProsperitocracyStat Stat) const;
@@ -176,6 +163,22 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Armor")
 	void WearWeave(UProsperitocracyStatTable* Weave);
+
+	/**
+	 * Dress the body's armour from a loadout — the ONE place the armour reaches this body.
+	 *
+	 * The armour is part of what you take in (Design/loadout.md), so a loadout is where the weave and
+	 * the three trim colours come from, and this is what turns them into a body that is wearing
+	 * something. Two steps, in the armour's own order:
+	 *   1. the WEAVE is worn first, because everything else here lives on the armour — a colour has
+	 *      nowhere to be carried until there is an armour to carry it (SetArmorColor's own guard),
+	 *   2. the three REGIONS are then written, one each, through the same door a customizer will use.
+	 *
+	 * Null takes the armour off, and so does a loadout that names no weave: a bare body is a real
+	 * state, and a loadout with nothing on it is a real loadout (Design/loadout.md).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Armor")
+	void DressFromLoadout(UProsperitocracyLoadout* Loadout);
 
 	/** The weave on this body right now. Null = bare. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Armor")
@@ -523,6 +526,17 @@ private:
 	 */
 	UPROPERTY(Transient)
 	TObjectPtr<AProsperitocracyStatHostActor> ArmorHost;
+
+	/**
+	 * The weave this body is wearing RIGHT NOW — state, not authoring: what a loadout dressed it with
+	 * (DressFromLoadout), or what a swap wore (WearWeave). Kept so the next weave can take the last
+	 * one's rows back off the body, and read out through GetWornWeave.
+	 *
+	 * Null = a bare body. Nothing is authored here any more: the weave is the loadout's choice, and
+	 * a body with no loadout has none.
+	 */
+	UPROPERTY(Transient)
+	TObjectPtr<UProsperitocracyStatTable> ArmorWeave;
 
 	/**
 	 * The movement's own notifications — the handles for what BeginPlay binds, kept so they can be let

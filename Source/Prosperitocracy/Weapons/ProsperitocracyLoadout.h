@@ -5,11 +5,13 @@
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
 #include "GameplayTagContainer.h"
+#include "Templates/SubclassOf.h"
 
 #include "ProsperitocracyLoadout.generated.h"
 
 class AActor;
 class UGameplayEffect;
+class UProsperitocracyGameplayAbility;
 class UProsperitocracyStatTable;
 
 /**
@@ -80,14 +82,23 @@ enum class EProsperitocracyWeaponDressResult : uint8
 /**
  * UProsperitocracyLoadout
  *
- * What one character carries, as data — one weapon per slot, and the slots are the design's
- * (Design/weapons.md): Primary, Secondary, Special, Grenade. A slot names a body or it names nothing,
- * and a slot that names nothing is simply not carried; that is how Special and Grenade sit empty
- * until we have those weapons, with no placeholder to clean up later.
+ * ONE LOADOUT, as data — everything you take in (Design/loadout.md): the guns in their slots, the
+ * armour's weave and its three trim colours, and the four abilities this loadout took from its
+ * class's roster. All of it together is the loadout; a class owns three of them, and a player has
+ * both classes.
  *
+ * NOT carried yet: perks. The perk schema does not exist in any form (ROADMAP section 7), so a
+ * loadout's perks land with the schema rather than being invented here.
+ *
+ * The weapon half is the design's slots (Design/weapons.md): Primary, Secondary, Special, Grenade. A
+ * slot names a body or it names nothing, and a slot that names nothing is simply not carried; that is
+ * how Special and Grenade sit empty until we have those weapons, with no placeholder to clean up.
  * One field per slot is deliberate: two weapons in one Primary is not something to validate against,
  * it is something that cannot be authored. The universal stat table stays the authority on every
  * number, and a gun asks its owner's loadout what it is made of rather than holding a copy.
+ *
+ * EVERY part of a loadout may be left empty — no guns, no armour, no abilities — because a loadout
+ * with nothing on it is a real, playable loadout (Design/loadout.md), not a broken one.
  */
 UCLASS(BlueprintType)
 class UProsperitocracyLoadout : public UPrimaryDataAsset
@@ -110,6 +121,58 @@ public:
 	/** The grenade slot: one grenade. Empty until we have one. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout|Slots")
 	FProsperitocracyWeaponSlot Grenade;
+
+	//~ The armour — which weave, and the paint (Design/loadout.md, Design/armor.md) ----------------
+
+	/**
+	 * The weave this loadout takes in: ONE armour block, whose rows are its Impact Resist, Piercing
+	 * Resist and Weight (Design/armor.md).
+	 *
+	 * Null is a real choice rather than a gap: a loadout that names no weave is a bare body — no
+	 * armour, and so no armour numbers at all.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout|Armor")
+	TObjectPtr<UProsperitocracyStatTable> Weave;
+
+	/**
+	 * The three trim regions, one number each (Design/armor.md): 1 the collar, 2 the shoulders and
+	 * arms, 3 the legs. Each number is that region's colour as an RGB hex (0xRRGGBB) — one value
+	 * carrying the whole colour, never three values per region.
+	 *
+	 * -1 is "nothing chosen" (ProsperitocracyArmor::NoColor, the value the body's own colour door
+	 * speaks), and it means the region keeps the paint it ships with. Written as a literal because a
+	 * UPROPERTY default has to be one.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout|Armor")
+	int32 Trim1 = -1;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout|Armor")
+	int32 Trim2 = -1;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout|Armor")
+	int32 Trim3 = -1;
+
+	//~ The abilities — the four this loadout took from the class's roster (Design/abilities.md) -----
+
+	/**
+	 * The four ability slots, in bar order. Any of them may be empty: a loadout with no abilities is
+	 * a real loadout (Design/loadout.md).
+	 *
+	 * Four fields and not a list, because four is the design's number — 4 slots, the ult included
+	 * (Design/abilities.md) — so a fifth cannot be authored. The pool these are picked FROM is the
+	 * class's roster; what the character owns is these four, never the whole roster.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout|Abilities")
+	TSubclassOf<UProsperitocracyGameplayAbility> Ability1;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout|Abilities")
+	TSubclassOf<UProsperitocracyGameplayAbility> Ability2;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout|Abilities")
+	TSubclassOf<UProsperitocracyGameplayAbility> Ability3;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout|Abilities")
+	TSubclassOf<UProsperitocracyGameplayAbility> Ability4;
 
 	/**
 	 * What every gun's shot applies. One asset for all guns, owned HERE rather than baked into each

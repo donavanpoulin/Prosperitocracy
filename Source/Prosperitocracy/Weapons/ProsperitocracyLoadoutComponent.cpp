@@ -5,6 +5,7 @@
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
+#include "Classes/ProsperitocracyClass.h"
 #include "GameFramework/Pawn.h"
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
@@ -16,6 +17,70 @@
 UProsperitocracyLoadoutComponent::UProsperitocracyLoadoutComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
+}
+
+UProsperitocracyLoadout* UProsperitocracyLoadoutComponent::GetLoadout() const
+{
+	// No class chosen: the character plays on the loadout it was authored with. That is not a second
+	// path — it is the same question ("what do I carry?") answered for a character that has no
+	// class's three to choose between, which is where the test character stands until the class
+	// assets exist (ROADMAP section 2).
+	if (!Class)
+	{
+		return Loadout;
+	}
+
+	switch (SelectedLoadout)
+	{
+	case 0:
+		return Class->Loadout1;
+	case 1:
+		return Class->Loadout2;
+	case 2:
+		return Class->Loadout3;
+	default:
+		// An index that is not one of the three carries nothing, rather than quietly answering with a
+		// loadout nobody selected. A loadout with nothing on it is a real state (Design/loadout.md).
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("%s on %s: loadout %d is not one of a class's three, so nothing is carried."),
+			*GetName(), *GetNameSafe(GetOwner()), SelectedLoadout);
+		return nullptr;
+	}
+}
+
+bool UProsperitocracyLoadoutComponent::SelectLoadout(int32 Index)
+{
+	if (!Class)
+	{
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("%s on %s: no class is chosen, so there are no loadouts to pick from."),
+			*GetName(), *GetNameSafe(GetOwner()));
+		return false;
+	}
+
+	if (Index < 0 || Index > 2)
+	{
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("%s on %s: %d is not one of a class's three loadouts (0, 1, 2)."),
+			*GetName(), *GetNameSafe(GetOwner()), Index);
+		return false;
+	}
+
+	SelectedLoadout = Index;
+
+	// Choosing a loadout chooses its armour with it: the LOADOUT dresses the body, through the same
+	// call the body makes at spawn, so a swap can never dress a body differently from the way it
+	// spawns. Guns already in hand are not re-dressed here — the rig re-creates them, and the picker's
+	// own re-dress lands with the picker (ROADMAP section 2).
+	if (AActor* Owner = GetOwner())
+	{
+		if (UProsperitocracyPlayerStatsComponent* Stats = Owner->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
+		{
+			Stats->DressFromLoadout(GetLoadout());
+		}
+	}
+
+	return true;
 }
 
 const FProsperitocracyWeaponSlot* UProsperitocracyLoadoutComponent::GetEntryForSlot(const FGameplayTag& Slot) const
