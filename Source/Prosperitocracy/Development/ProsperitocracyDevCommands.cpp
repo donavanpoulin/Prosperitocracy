@@ -41,6 +41,11 @@
  *
  * Every gun arrives with a fresh gun's ammo: a full magazine and a full spare pool.
  *
+ * `Prosperitocracy.Blade` puts the Reclaimer's blade in your hands through that same door — one thing,
+ * so no name and no list: the blade's own slot tag and the class's rule (a Primary that IS its melee)
+ * are what decide it may go there. It arrives with its blood full, because the pool is its own MagSize
+ * and it carries no Capacity — the blood is the ammo, minus the spare.
+ *
  * `Prosperitocracy.Armor <name>` wears one of our five weaves — the same call the character makes at
  * spawn with the weave it ships wearing, asked for again. It exists because an armor has no pickup
  * system yet and no customizer yet, and because a weave's weight is something you have to FEEL: wear
@@ -328,6 +333,85 @@ namespace ProsperitocracyDevArmor
 		TEXT("Tungsten (lightest to heaviest). It goes on through the same door a weave is worn through ")
 		TEXT("at spawn, so it takes effect on the spot. No argument lists them."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleArmorCommand));
+}
+
+/**
+ * The melee half of the sandbox: the Reclaimer's blade in your hands.
+ *
+ * It takes no argument and keeps no list, because there is one blade — the blade is the blade. What it
+ * needs is the ONE door a weapon goes into a slot through, because that is where the class's own rule
+ * lives: the Reclaimer's Primary IS its melee, and a weapon with no fire-mode tag is what melee means
+ * (Design/weapons.md), so the blade's own slot tag and the class's rule are what let it in. This
+ * command decides nothing itself, and it is the same call the picker will make.
+ *
+ * The blade arrives with its blood full: the pool is the thing's own MagSize, and a blade carries no
+ * Capacity — an absent Capacity is worth no spare magazines, which is exactly "the blood is the ammo,
+ * minus the spare" (Design/classes/reclaimer.md).
+ */
+namespace ProsperitocracyDevBlade
+{
+	/** The blade, as a loadout carries it: the body it is built on, and the block that is its numbers. */
+	const TCHAR* const BladeBodyPath  = TEXT("/Game/Weapons/Blade/BP_BloodBlade.BP_BloodBlade_C");
+	const TCHAR* const BladeBlockPath = TEXT("/Game/Weapons/StatBlocks/STB_BloodBlade.STB_BloodBlade");
+
+	/** Say something in the log and on screen, as the BLADE sandbox. LineIndex = which on-screen slot. */
+	void Report(const FString& Message, int32 LineIndex = 0)
+	{
+		ProsperitocracyDev::Report(TEXT("DevBlade"), /*OnScreenKey=*/ 0x9008 + LineIndex, Message);
+	}
+
+	/** The character's loadout — the thing a blade is carried in. Null outside PIE, or before a pawn. */
+	UProsperitocracyLoadoutComponent* FindLoadout(UWorld* World)
+	{
+		if (!World)
+		{
+			return nullptr;
+		}
+
+		const APlayerController* PlayerController = World->GetFirstPlayerController();
+		APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
+		return Pawn ? Pawn->FindComponentByClass<UProsperitocracyLoadoutComponent>() : nullptr;
+	}
+
+	void HandleBladeCommand(const TArray<FString>& /*Args*/, UWorld* World)
+	{
+		UProsperitocracyLoadoutComponent* Loadout = FindLoadout(World);
+		if (!Loadout)
+		{
+			Report(TEXT("no character to give it to — this only works while the game is running (PIE)."));
+			return;
+		}
+
+		UProsperitocracyStatTable* Block = LoadObject<UProsperitocracyStatTable>(nullptr, BladeBlockPath);
+		UClass* Body = LoadClass<AActor>(nullptr, BladeBodyPath);
+		if (!Block || !Body)
+		{
+			Report(FString::Printf(TEXT("could not load the blade: %s"), Block ? BladeBodyPath : BladeBlockPath));
+			return;
+		}
+
+		// The blade, as a loadout carries it: the body it is built on, and the block that is its
+		// numbers. Both halves, because both halves are what a thing is and a slot carries the pair.
+		FProsperitocracyWeaponSlot Entry;
+		Entry.BodyClass = Body;
+		Entry.StatBlock = Block;
+
+		// The slot is the block's own tag, and the loadout is what checks it — along with the class's
+		// access rules — so nothing here decides what may go where. One line comes back either way: the
+		// reason it was refused, or what was put where.
+		FString Message;
+		Loadout->SetWeaponInSlot(Block->GetSlot(), Entry, Message);
+		Report(Message);
+	}
+
+	// The command itself: a plain console command like the gun one, so it needs no cheat manager, no
+	// PlayerController subclass and no exec routing — type it in the Output Log's Cmd box during PIE.
+	static FAutoConsoleCommandWithWorldAndArgs BladeCommand(
+		TEXT("Prosperitocracy.Blade"),
+		TEXT("Put the Reclaimer's blood blade in your hands: the blade's body and the block that is its ")
+		TEXT("numbers, into the slot its own tag says it belongs in. Its Primary is its melee and that is ")
+		TEXT("what lets it in — the class's rule decides, not this command."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleBladeCommand));
 }
 
 /**
