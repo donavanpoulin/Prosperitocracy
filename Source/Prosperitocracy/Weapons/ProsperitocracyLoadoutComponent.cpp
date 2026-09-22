@@ -4,6 +4,7 @@
 
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
+#include "Character/ProsperitocracyCharacter.h"
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "Classes/ProsperitocracyClass.h"
 #include "GameFramework/Pawn.h"
@@ -26,6 +27,10 @@ void UProsperitocracyLoadoutComponent::BeginPlay()
 	Super::BeginPlay();
 
 	MakePlayingCopies();
+
+	// Spawn goes through the SAME door a change goes through, so a body coming up cannot be dressed
+	// differently from the way a switch or a change dresses it.
+	NotifyBodyDressed();
 }
 
 void UProsperitocracyLoadoutComponent::MakePlayingCopies()
@@ -154,6 +159,20 @@ void UProsperitocracyLoadoutComponent::Redress()
 	{
 		DressGun(Gun);
 	}
+
+	// And the RIG's channels, through the body's own one door for it: what the loadout carries is
+	// brought in line HERE — so a class switch, a loadout switch and a change made in play all reach
+	// the channels exactly the way spawn does. Which component is a channel is the blueprint's
+	// business; WHICH BODY belongs in it is the loadout's, and this is the only place that says so.
+	NotifyBodyDressed();
+}
+
+void UProsperitocracyLoadoutComponent::NotifyBodyDressed()
+{
+	if (AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(GetOwner()))
+	{
+		Body->OnLoadoutDressed();
+	}
 }
 
 bool UProsperitocracyLoadoutComponent::SelectLoadout(int32 Index)
@@ -215,6 +234,42 @@ bool UProsperitocracyLoadoutComponent::SelectClass(UProsperitocracyClass* InClas
 	Redress();
 
 	return true;
+}
+
+TSubclassOf<AActor> UProsperitocracyLoadoutComponent::GetWeaponBodyClassForSlot(FGameplayTag Slot) const
+{
+	const FProsperitocracyWeaponSlot* Entry = GetEntryForSlot(Slot);
+
+	// Nothing carried there is the answer "nothing" — not a fallback to some other slot's body.
+	if (!Entry || Entry->BodyClass.IsNull())
+	{
+		return nullptr;
+	}
+
+	// The block names the body as a SOFT class (a loadout is data, and a hard reference chain from data
+	// asset to actor to world is not what data assets are for), so it is loaded here — the same load the
+	// rig's own equip path would do with the class itself.
+	return Entry->BodyClass.LoadSynchronous();
+}
+
+bool UProsperitocracyLoadoutComponent::DoesSlotCarryWeapon(FGameplayTag Slot) const
+{
+	const FProsperitocracyWeaponSlot* Entry = GetEntryForSlot(Slot);
+
+	// The same answer the body class gives, asked as a yes or no: a slot with no entry, or an entry
+	// that names no body, carries nothing — and a key with nothing behind it must do nothing at all.
+	return Entry && !Entry->BodyClass.IsNull();
+}
+
+FGameplayTag UProsperitocracyLoadoutComponent::GetPrimarySlotTag() const
+{
+	// The project's own slot vocabulary, so no blueprint has to spell a slot's name out for itself.
+	return ProsperitocracyGameplayTags::Weapon_Slot_Primary;
+}
+
+FGameplayTag UProsperitocracyLoadoutComponent::GetSecondarySlotTag() const
+{
+	return ProsperitocracyGameplayTags::Weapon_Slot_Secondary;
 }
 
 const FProsperitocracyWeaponSlot* UProsperitocracyLoadoutComponent::GetEntryForSlot(const FGameplayTag& Slot) const

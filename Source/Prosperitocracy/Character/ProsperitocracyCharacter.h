@@ -112,6 +112,19 @@ public:
 	virtual USkeletalMeshComponent* GetBodyMesh_Implementation() const;
 
 	/**
+	 * The loadout has just been dressed — at spawn, and after EVERY change to what this character
+	 * carries: a class, a loadout, a gun, a weave, a colour.
+	 *
+	 * ONE place, so the rig's hand channels are brought in line from the loadout exactly when the
+	 * loadout is applied, whether that change came from a switch, a dev command or the picker — and
+	 * never from a dozen spots each remembering to do it separately. The blueprint implements this:
+	 * which component is a channel, and where a channel's body hangs, is the blueprint's business;
+	 * WHAT belongs in that channel is the loadout's, and nothing else decides it.
+	 */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Prosperitocracy|Loadout")
+	void OnLoadoutDressed();
+
+	/**
 	 * The aim the body and the animation read: the base aim rotation plus the in-hand gun's drift.
 	 *
 	 * The drift is the SAME value the bullet flies along and the circle sits on, added the same way

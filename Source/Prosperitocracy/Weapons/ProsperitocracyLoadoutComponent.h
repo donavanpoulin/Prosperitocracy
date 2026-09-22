@@ -177,6 +177,44 @@ public:
 	/** What this character carries in that slot, or null when the slot names nothing. */
 	const FProsperitocracyWeaponSlot* GetEntryForSlot(const FGameplayTag& Slot) const;
 
+	/**
+	 * What BODY belongs in a slot right now — the class half of the entry this character's loadout
+	 * carries there, and NOTHING when the slot names nothing.
+	 *
+	 * This is the one question the rig's own equip path asks before anything comes out, and the one the
+	 * channels are dressed from when the character comes up: an empty slot must mean an EMPTY CHANNEL —
+	 * no body, nothing on the back, and a key with nothing to do. The loadout is the only thing that
+	 * decides what exists on the body; the blueprint keeps what it is good at (which socket a weapon
+	 * moves to, its animation and its sound) and stops deciding WHAT exists.
+	 *
+	 * Null is a real answer: a class carries no Special at all, and a loadout may carry nothing in a
+	 * slot it does have.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Loadout")
+	TSubclassOf<AActor> GetWeaponBodyClassForSlot(FGameplayTag Slot) const;
+
+	/**
+	 * Whether a slot names a weapon at all — the question the rig's own keys ask before they do anything.
+	 *
+	 * False means the key has NOTHING to do: no body comes out, no equip animation plays, no ammo UI
+	 * appears. It is the same answer GetWeaponBodyClassForSlot gives, asked as a yes/no so a branch can
+	 * take it.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Loadout")
+	bool DoesSlotCarryWeapon(FGameplayTag Slot) const;
+
+	/**
+	 * The tag of a hand channel's slot, in the project's own vocabulary (`Prosperitocracy.Weapon.Slot.*`).
+	 *
+	 * Handed over rather than typed into a graph: a slot's name lives in ONE place, so a blueprint wire
+	 * cannot drift from the tag the loadout reads.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Loadout")
+	FGameplayTag GetPrimarySlotTag() const;
+
+	UFUNCTION(BlueprintPure, Category = "Loadout")
+	FGameplayTag GetSecondarySlotTag() const;
+
 	/** What every gun's shot applies, owned by the loadout rather than by each body blueprint. */
 	TSubclassOf<UGameplayEffect> GetGunDamageEffectClass() const;
 
@@ -265,6 +303,12 @@ private:
 	 * chosen, because another class's loadout is not a thing this character plays.
 	 */
 	void MakePlayingCopies();
+
+	/**
+	 * Tell the BODY the loadout has been dressed, so the rig's channels are brought in line from the
+	 * loadout through ONE call — the same one at spawn and after every change made in play.
+	 */
+	void NotifyBodyDressed();
 
 	/** One entry per slot this carrier has fired or reloaded, keyed by the slot's tag. */
 	UPROPERTY(Transient)
