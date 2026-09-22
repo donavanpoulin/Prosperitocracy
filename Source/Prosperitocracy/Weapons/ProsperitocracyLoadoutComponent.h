@@ -121,6 +121,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Loadout")
 	bool SelectLoadout(int32 Index);
 
+	/**
+	 * Play AS a class: the class's own three loadouts become what this character can play, this
+	 * character's own copies are made from them, and the class arrives playing its FIRST loadout —
+	 * exactly as a character coming up does. The class ASSET is never written.
+	 *
+	 * False when nothing was given, because a character plays as a class and a null is a caller's bug;
+	 * true when the class asked for is already the one being played, because asking again must never
+	 * throw away the changes made in play — the copy IS where those changes live.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Loadout")
+	bool SelectClass(UProsperitocracyClass* InClass);
+
 	//~ Changing what you take in, IN PLAY — the doors a gun, a weave and a colour go through ---------
 	//
 	// Nothing about a character is set by reaching into the body: a gun, a weave and a colour are
@@ -242,6 +254,17 @@ private:
 	 * means.
 	 */
 	void Redress();
+
+	/**
+	 * Make this character's OWN copy of every loadout the class being played carries, under the index
+	 * each is played at.
+	 *
+	 * The copy is the only thing anything in play is allowed to change: the shipped default is never
+	 * written, a switch comes back to the copy with your changes still in it, and a save will hold the
+	 * copy when there is one. One copy per loadout, made once — at spawn, and again when a class is
+	 * chosen, because another class's loadout is not a thing this character plays.
+	 */
+	void MakePlayingCopies();
 
 	/** One entry per slot this carrier has fired or reloaded, keyed by the slot's tag. */
 	UPROPERTY(Transient)

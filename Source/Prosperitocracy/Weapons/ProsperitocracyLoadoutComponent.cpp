@@ -25,6 +25,11 @@ void UProsperitocracyLoadoutComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
+	MakePlayingCopies();
+}
+
+void UProsperitocracyLoadoutComponent::MakePlayingCopies()
+{
 	// This character plays on its OWN COPY of every loadout it can play — never on the asset a class
 	// ships with. A class's three loadouts ARE the defaults the game ships (Design/loadout.md), so the
 	// copy is the only thing anything in play is allowed to change: the shipped default is never
@@ -34,6 +39,11 @@ void UProsperitocracyLoadoutComponent::BeginPlay()
 	// One copy per loadout, made once, under the index it is played at. Index 0 is also where a
 	// class-less character's single loadout lands: a character has a class or it does not, so the two
 	// never meet.
+	//
+	// Called at spawn, and again when a class is chosen: the copies of the class just left are dropped,
+	// because another class's loadout is not a thing this character plays.
+	PlayingCopies.Reset();
+
 	UProsperitocracyLoadout* Sources[3] = { nullptr, nullptr, nullptr };
 	if (Class)
 	{
@@ -169,6 +179,39 @@ bool UProsperitocracyLoadoutComponent::SelectLoadout(int32 Index)
 	// The loadout being played is now that index's COPY — the one made when the character came up, with
 	// whatever has been changed in it since — and what it carries comes with it, through the same dress
 	// a change made in play goes through.
+	Redress();
+
+	return true;
+}
+
+bool UProsperitocracyLoadoutComponent::SelectClass(UProsperitocracyClass* InClass)
+{
+	// A character plays AS a class, so a null is a caller's bug: nothing changes and it says so.
+	if (!InClass)
+	{
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("%s on %s: no class was given, so nothing changed — a character plays as a class."),
+			*GetName(), *GetNameSafe(GetOwner()));
+		return false;
+	}
+
+	// Already playing it: nothing to re-copy, and asking again must never throw away the changes made
+	// in play — the copy IS the thing those changes live in.
+	if (InClass == Class)
+	{
+		return true;
+	}
+
+	Class = InClass;
+
+	// The new class brings its OWN three loadouts, copied fresh — the copies of the class just left are
+	// dropped, because another class's loadout is not a thing this character plays. The class ASSET is
+	// still never written: what is played is this character's copy, made the same way as at spawn.
+	MakePlayingCopies();
+
+	// A class arrives playing its FIRST loadout, exactly as a character coming up does, and what that
+	// loadout carries comes with it through the same dress every other change goes through.
+	SelectedLoadout = 0;
 	Redress();
 
 	return true;

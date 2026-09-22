@@ -511,6 +511,148 @@ namespace ProsperitocracyDevArmorColor
 }
 
 /**
+ * The class half of the sandbox: which of our classes this character is playing.
+ *
+ * A class is what a character plays FROM — its three loadouts, its palette and its own access rules
+ * (the Reclaimer's Primary is its melee, and it carries no Special) — and with no picker yet this is
+ * the only way to be the Reclaimer at all. It is one call to the door a class is chosen through
+ * (SelectClass), the same call the picker will make, so choosing from here cannot dress a body
+ * differently from the way the picker will: the class's FIRST loadout is played and the body is dressed
+ * from it, this character's own copies are made from the class's three, and the class ASSET is never
+ * written.
+ *
+ * A NUMBER picks a class — 1 is the first of the list — and so does its name. NO argument plays class
+ * 1, because the command you reach for should work with nothing typed after it.
+ */
+namespace ProsperitocracyDevClass
+{
+	/** One class as you type it, and the class asset that IS that class. */
+	struct FClassEntry
+	{
+		const TCHAR* Name;
+		const TCHAR* ClassPath;
+	};
+
+	/** The classes we have, in the order their numbers go: 1 is the first. */
+	const FClassEntry Classes[] =
+	{
+		{ TEXT("Reclaimer"), TEXT("/Game/Classes/DA_Class_Reclaimer.DA_Class_Reclaimer") },
+		{ TEXT("Anchor"),    TEXT("/Game/Classes/DA_Class_Anchor.DA_Class_Anchor")       },
+	};
+
+	/** How many classes we have — the ceiling of a typed number. */
+	int32 NumClasses() { return UE_ARRAY_COUNT(Classes); }
+
+	/** Say something in the log and on screen, as the CLASS sandbox. LineIndex = which on-screen slot. */
+	void Report(const FString& Message, int32 LineIndex = 0)
+	{
+		ProsperitocracyDev::Report(TEXT("DevClass"), /*OnScreenKey=*/ 0x9009 + LineIndex, Message);
+	}
+
+	/** The character's loadout component — the thing that knows which class is being played. */
+	UProsperitocracyLoadoutComponent* FindLoadout(UWorld* World)
+	{
+		if (!World)
+		{
+			return nullptr;
+		}
+
+		const APlayerController* PlayerController = World->GetFirstPlayerController();
+		APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
+		return Pawn ? Pawn->FindComponentByClass<UProsperitocracyLoadoutComponent>() : nullptr;
+	}
+
+	/** The classes, numbered, with the slots each carries and which one is being played. */
+	void ListClasses(const UProsperitocracyLoadoutComponent* LoadoutComponent)
+	{
+		int32 Line = 0;
+		Report(TEXT("Prosperitocracy.Class [1|2|name] — the classes we have:"), Line++);
+
+		const UProsperitocracyClass* Playing = LoadoutComponent ? LoadoutComponent->Class : nullptr;
+
+		for (int32 Index = 0; Index < NumClasses(); ++Index)
+		{
+			const FClassEntry& Entry = Classes[Index];
+			const UProsperitocracyClass* Class = LoadObject<UProsperitocracyClass>(nullptr, Entry.ClassPath);
+			const FString Slots = Class ? Class->UsableSlots.ToStringSimple() : FString(TEXT("CLASS MISSING"));
+
+			Report(FString::Printf(TEXT("  %d %-10s %s%s"), Index + 1, Entry.Name, *Slots,
+				(Class && Class == Playing) ? TEXT("   <- playing") : TEXT("")), Line++);
+		}
+	}
+
+	void HandleClassCommand(const TArray<FString>& Args, UWorld* World)
+	{
+		UProsperitocracyLoadoutComponent* LoadoutComponent = FindLoadout(World);
+
+		// WHICH class this is: a number from 1, or a name. NOTHING typed plays class 1 — the first of
+		// the list — and it is the same call a number or a name makes.
+		const FString Typed = (Args.Num() > 0) ? Args[0].TrimStartAndEnd() : FString();
+
+		int32 Index = INDEX_NONE;
+		if (Typed.IsEmpty())
+		{
+			Index = 0;
+		}
+		else if (Typed.IsNumeric())
+		{
+			const int32 Wanted = FCString::Atoi(*Typed) - 1;
+			if (Wanted >= 0 && Wanted < NumClasses())
+			{
+				Index = Wanted;
+			}
+		}
+		else
+		{
+			for (int32 Candidate = 0; Candidate < NumClasses(); ++Candidate)
+			{
+				if (Typed.Equals(Classes[Candidate].Name, ESearchCase::IgnoreCase))
+				{
+					Index = Candidate;
+					break;
+				}
+			}
+		}
+
+		if (Index == INDEX_NONE)
+		{
+			Report(FString::Printf(TEXT("'%s' is not one of our classes."), *Typed));
+			ListClasses(LoadoutComponent);
+			return;
+		}
+
+		if (!LoadoutComponent)
+		{
+			Report(TEXT("no character to change — this only works while the game is running (PIE)."));
+			return;
+		}
+
+		UProsperitocracyClass* Class = LoadObject<UProsperitocracyClass>(nullptr, Classes[Index].ClassPath);
+		if (!Class)
+		{
+			Report(FString::Printf(TEXT("could not load %s"), Classes[Index].ClassPath));
+			return;
+		}
+
+		// The ONE door a class is chosen through: that class's three loadouts are what this character
+		// now plays, this character's own copies are made from them, and the first of the three is
+		// played and dressed on the spot. Nothing here decides what a class carries.
+		LoadoutComponent->SelectClass(Class);
+		Report(FString::Printf(TEXT("now playing the %s — class %d of %d, its loadout 1 of three."),
+			*Class->DisplayName.ToString(), Index + 1, NumClasses()));
+	}
+
+	// A plain console command like the others, so it needs no cheat manager, no PlayerController
+	// subclass and no exec routing — type it in the Output Log's Cmd box during PIE.
+	static FAutoConsoleCommandWithWorldAndArgs ClassCommand(
+		TEXT("Prosperitocracy.Class"),
+		TEXT("Play as one of our classes — a number (1 Reclaimer, 2 Anchor) or a name. NO argument plays ")
+		TEXT("class 1. It goes in through the same door a class is chosen through, so that class's own ")
+		TEXT("rules (the Reclaimer's Primary is its melee, and it carries no Special) hold from then on."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleClassCommand));
+}
+
+/**
  * The loadout half of the sandbox: which of your class's three loadouts you are playing.
  *
  * A class owns three (Design/loadout.md) and a player has both classes, so "which loadout am I on" is
