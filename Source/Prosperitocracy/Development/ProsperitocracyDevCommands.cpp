@@ -57,6 +57,11 @@
  * SEE: it is the same call a customizer will make when it arrives, and the region repaints the moment
  * the row changes.
  *
+ * `Prosperitocracy.Class <Anchor|Reclaimer>` plays as one of our classes, and this is the only way to
+ * be the Reclaimer while there is no picker: the class's three loadouts are what the character then
+ * plays, its first is dressed on the spot, and the class's own rules (the Reclaimer's Primary is its
+ * melee, and it carries no Special) hold from that moment.
+ *
  * `Prosperitocracy.Loadout <1|2|3>` plays one of your class's three loadouts, and what that loadout
  * carries comes with it — the armour and the guns. A class owns three (Design/loadout.md) and there is
  * no picker yet, so this is the only way to reach the second and the third; it is one call to the door
@@ -592,6 +597,128 @@ namespace ProsperitocracyDevArmorColor
 		TEXT("customizer will make, so the change shows on the body the moment you press enter. No ")
 		TEXT("arguments list the regions and their colours."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleArmorColorCommand));
+}
+
+/**
+ * The class half of the sandbox: which class you are playing.
+ *
+ * A class is what a character plays FROM — its three loadouts, its palette, and its own access rules
+ * (the Reclaimer's Primary is its melee, and it carries no Special) — and with no picker yet this is
+ * the only way to be the Reclaimer at all. It is one call to the door a class is chosen through
+ * (SelectClass), the same call the picker will make, so switching from here cannot dress a body
+ * differently from the way the picker will: the class's first loadout is played and the body is dressed
+ * from it, this character's own copies are made from the class's three, and the class ASSET is never
+ * written.
+ */
+namespace ProsperitocracyDevClass
+{
+	/** One class as you type it, and the class asset that IS that class. */
+	struct FClassEntry
+	{
+		const TCHAR* Name;
+		const TCHAR* ClassPath;
+	};
+
+	/** The two classes we have. */
+	const FClassEntry Classes[] =
+	{
+		{ TEXT("Anchor"),    TEXT("/Game/Classes/DA_Class_Anchor.DA_Class_Anchor")       },
+		{ TEXT("Reclaimer"), TEXT("/Game/Classes/DA_Class_Reclaimer.DA_Class_Reclaimer") },
+	};
+
+	/** Say something in the log and on screen, as the CLASS sandbox. LineIndex = which on-screen slot. */
+	void Report(const FString& Message, int32 LineIndex = 0)
+	{
+		ProsperitocracyDev::Report(TEXT("DevClass"), /*OnScreenKey=*/ 0x9009 + LineIndex, Message);
+	}
+
+	/** The character's loadout component — the thing that knows which class is being played. */
+	UProsperitocracyLoadoutComponent* FindLoadout(UWorld* World)
+	{
+		if (!World)
+		{
+			return nullptr;
+		}
+
+		const APlayerController* PlayerController = World->GetFirstPlayerController();
+		APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
+		return Pawn ? Pawn->FindComponentByClass<UProsperitocracyLoadoutComponent>() : nullptr;
+	}
+
+	/** The two classes, their slots and which one is being played — one line per on-screen slot. */
+	void ListClasses(const UProsperitocracyLoadoutComponent* LoadoutComponent)
+	{
+		int32 Line = 0;
+		Report(TEXT("Prosperitocracy.Class <Anchor|Reclaimer> — the classes we have:"), Line++);
+
+		const UProsperitocracyClass* Playing = LoadoutComponent ? LoadoutComponent->GetClass() : nullptr;
+
+		for (const FClassEntry& Entry : Classes)
+		{
+			const UProsperitocracyClass* Class = LoadObject<UProsperitocracyClass>(nullptr, Entry.ClassPath);
+			const FString Slots = Class ? Class->UsableSlots.ToStringSimple() : FString(TEXT("CLASS MISSING"));
+
+			Report(FString::Printf(TEXT("  %-10s %s%s"), Entry.Name, *Slots,
+				(Class && Class == Playing) ? TEXT("   <- playing") : TEXT("")), Line++);
+		}
+	}
+
+	void HandleClassCommand(const TArray<FString>& Args, UWorld* World)
+	{
+		UProsperitocracyLoadoutComponent* LoadoutComponent = FindLoadout(World);
+
+		// No argument: say which classes there are, and which one is being played.
+		if (Args.Num() < 1 || Args[0].IsEmpty())
+		{
+			ListClasses(LoadoutComponent);
+			return;
+		}
+
+		if (!LoadoutComponent)
+		{
+			Report(TEXT("no character to change — this only works while the game is running (PIE)."));
+			return;
+		}
+
+		const FClassEntry* Wanted = nullptr;
+		for (const FClassEntry& Entry : Classes)
+		{
+			if (Args[0].Equals(Entry.Name, ESearchCase::IgnoreCase))
+			{
+				Wanted = &Entry;
+				break;
+			}
+		}
+
+		if (!Wanted)
+		{
+			Report(FString::Printf(TEXT("'%s' is not one of our classes."), *Args[0]));
+			ListClasses(LoadoutComponent);
+			return;
+		}
+
+		UProsperitocracyClass* Class = LoadObject<UProsperitocracyClass>(nullptr, Wanted->ClassPath);
+		if (!Class)
+		{
+			Report(FString::Printf(TEXT("could not load %s"), Wanted->ClassPath));
+			return;
+		}
+
+		// The ONE door a class is chosen through: that class's three loadouts are what this character
+		// now plays, this character's own copies are made from them, and the first of the three is
+		// played and dressed on the spot. Nothing here decides what a class carries.
+		LoadoutComponent->SelectClass(Class);
+		Report(FString::Printf(TEXT("now playing the %s — its loadout 1 of three."), *Class->DisplayName.ToString()));
+	}
+
+	// A plain console command like the others, so it needs no cheat manager, no PlayerController
+	// subclass and no exec routing — type it in the Output Log's Cmd box during PIE.
+	static FAutoConsoleCommandWithWorldAndArgs ClassCommand(
+		TEXT("Prosperitocracy.Class"),
+		TEXT("Play as one of our classes by name — Anchor or Reclaimer. It goes in through the same door ")
+		TEXT("a class is chosen through, so that class's own rules (the Reclaimer's Primary is its melee, ")
+		TEXT("and it carries no Special) hold from that moment. No argument lists them."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleClassCommand));
 }
 
 /**

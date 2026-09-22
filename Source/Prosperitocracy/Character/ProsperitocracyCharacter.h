@@ -81,6 +81,80 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
 	bool MeleeWithGunInHand();
+
+	/**
+	 * One attack, as the BODY owns it: the line it goes along, how far it is worth, and how long it lasts.
+	 *
+	 * Called by the thing that swings, with the thing's own two numbers — a blade hands over its Range and
+	 * the length of its OWN piece of the combo — and from that moment the attack is the body's: the body
+	 * faces the line, travels it, and refuses its own movement input until the clock runs out. Nothing
+	 * else moves this body while it is live, and the thing that swung never touches the body's speed, its
+	 * velocity or its facing.
+	 *
+	 * Beginning an attack while one is live REPLACES it — the newest line and clock win — which is what a
+	 * press that passes through a recovery into the next attack means.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
+	void BeginAttack(const FVector& LineDirection, float DistanceCm, float Seconds);
+
+	/** End a live attack now. A live attack ends itself when its clock runs out; this is for a cut short. */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
+	void EndAttack();
+
+	/**
+	 * Whether an attack is live on this body — the question the movement gate asks.
+	 *
+	 * True for the whole of every attack, the third one included (it is a dash over its whole animation),
+	 * and false in a recovery: an attack refuses the player's own movement, and a recovery is where the
+	 * player gets it back.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Character")
+	bool IsSwingLocked() const { return bAttackLive; }
+
+	/**
+	 * Whether the thing in this body's hands is a RANGED weapon — a gun.
+	 *
+	 * The project's own test, not a new vocabulary: a gun is a weapon with a fire mode, and a melee is a
+	 * weapon without one (Design/weapons.md). Everything that must look or behave differently for a melee
+	 * — the upper body's pose above all — can ask THIS one question, instead of asking a weapon's name,
+	 * which is what the template's rifle/pistol flags do and why a sword inherited a rifle's pose.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Character")
+	bool IsHoldingRangedWeapon() const;
+
+	/**
+	 * Whether the thing in this body's hands is a MELEE — the other half of the same question, asked once
+	 * so nothing has to negate it in its head.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Character")
+	bool IsHoldingMeleeWeapon() const;
+
+protected:
+	/** True between an attack beginning and its own clock running out. Runtime only. */
+	UPROPERTY(Transient)
+	bool bAttackLive = false;
+
+	/** The direction the live attack travels and faces, taken once when it began and then held. Flat, always. */
+	FVector AttackLine = FVector::ZeroVector;
+
+	/** Where the body was when the attack began — what its number is measured from — and what it is worth. */
+	FVector AttackStartLocation = FVector::ZeroVector;
+	float AttackDistanceCm = 0.0f;
+
+	/** The attack's own clock: how long it lasts, and how far into it the body is. */
+	float AttackSeconds = 0.0f;
+	float AttackElapsed = 0.0f;
+
+	/** What `bUseControllerRotationYaw` was before the attack took the facing over, so it goes back. */
+	bool bControllerYawBeforeAttack = true;
+
+	/** One frame of a live attack: the body is placed along its line and turned to face it. */
+	void TickAttack(float DeltaSeconds);
+
+	/** This body's own tick, which is where a live attack is driven. */
+	virtual void Tick(float DeltaSeconds) override;
+
+public:
 	/**
 	 * How far into aiming down sights we are: 0 = hipfire, 1 = fully aiming.
 	 *

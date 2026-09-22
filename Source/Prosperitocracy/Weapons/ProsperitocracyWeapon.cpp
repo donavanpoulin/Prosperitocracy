@@ -35,6 +35,13 @@ AProsperitocracyWeapon::AProsperitocracyWeapon()
 	PrimaryActorTick.bCanEverTick = true;
 }
 
+bool AProsperitocracyWeapon::IsHeldInRig() const
+{
+	// The rig decides which weapon is out; this thing only asks. The same answer a shot is sent along.
+	const AProsperitocracyCharacter* Character = Cast<AProsperitocracyCharacter>(OwningPawn.Get());
+	return Character && Character->GetGunInHand() == this;
+}
+
 void AProsperitocracyWeapon::BeginPlay()
 {
 	Super::BeginPlay();

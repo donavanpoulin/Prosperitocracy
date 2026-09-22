@@ -32,13 +32,9 @@ namespace ProsperitocracyBashHandling
 	 */
 	constexpr float DamagePerPound = 20.0f;
 
-	/**
-	 * The swing's thickness: the radius, in cm, of the sphere swept along the reach.
-	 *
-	 * Universal — every bash is the same 45 cm ball, whatever the gun and whatever the reach. How
-	 * FAR it reaches is the ability's Range stat; this is only the shape of the swing.
-	 */
-	constexpr float SwingRadius = 45.0f;
+	// The SHAPE of the swing is not here: how thick a swing is has nothing to do with what is swinging,
+	// so it is one constant for every melee in the project (ProsperitocracyMeleeHandling::SwingRadius,
+	// Weapons/ProsperitocracyWeapon.h).
 }
 
 /**

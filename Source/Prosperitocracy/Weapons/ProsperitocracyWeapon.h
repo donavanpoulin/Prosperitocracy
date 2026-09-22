@@ -73,6 +73,24 @@ namespace ProsperitocracyWeaponHandling
 }
 
 /**
+ * The melee's own shape: ONE constant, the same swing for everything that swings.
+ *
+ * How FAR a swing reaches belongs to the thing swinging — that is its Range stat. How THICK the swing
+ * is has nothing to do with which thing it is: a blade and a gun's bash sweep the same ball, so this is
+ * one universal constant and never a per-thing number. All values [TUNE].
+ */
+namespace ProsperitocracyMeleeHandling
+{
+	/**
+	 * The swing's thickness: the radius, in cm, of the sphere swept along the reach.
+	 *
+	 * Universal — every melee swing is the same 45 cm ball, whatever the thing and whatever its reach.
+	 * This is only the shape of the swing; the distance is the Range stat.
+	 */
+	constexpr float SwingRadius = 45.0f;
+}
+
+/**
  * AProsperitocracyWeapon
  *
  * The NUMBERS and the DAMAGE of one gun. Nothing visual.
@@ -261,6 +279,17 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	/**
+	 * Whether the RIG says this thing is the one being held — asked of the body, never assumed.
+	 *
+	 * A READ, and deliberately the only thing this class knows about where it sits. Where a weapon SITS
+	 * belongs to the rig: the character blueprint's own equip path is what moves the channel between the
+	 * hand and the body, socket by socket, and it is what animates and sounds the move. A weapon that
+	 * moved its own channel would be a second writer of the same socket — which is exactly how the pistol
+	 * came to be un-equippable — so this class asks where it is and never moves itself.
+	 */
+	bool IsHeldInRig() const;
 
 	/**
 	 * Which slot of its owner's loadout this gun is. Handed over by the loadout, along with the

@@ -6,6 +6,7 @@
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "Classes/ProsperitocracyClass.h"
+#include "Components/ChildActorComponent.h"
 #include "GameFramework/Pawn.h"
 #include "ProsperitocracyLogChannels.h"
 #include "ProsperitocracyGameplayTags.h"
@@ -25,15 +26,103 @@ void UProsperitocracyLoadoutComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// This character plays on its OWN COPY of every loadout it can play — never on the asset a class
-	// ships with. A class's three loadouts ARE the defaults the game ships (Design/loadout.md), so the
+	// This character plays on its OWN COPY of every loadout it can play, never on the asset a class
+	// ships with — and there is one place those copies are made, because a class chosen IN PLAY makes
+	// the same ones (MakePlayingCopies).
+	MakePlayingCopies();
+
+	// And the rig is told what those loadouts carry, so it builds the weapons this body actually plays
+	// with rather than the two the template assumes (see ApplyRigBodies).
+	ApplyRigBodies();
+}
+
+void UProsperitocracyLoadoutComponent::ApplyRigBodies()
+{
+	AActor* Owner = GetOwner();
+	UProsperitocracyLoadout* Playing = GetLoadout();
+	if (!Owner || !Playing)
+	{
+		return;
+	}
+
+	// The rig's two channels, and the slot each one carries. A channel is found by the name the template
+	// gave its component: this is the rig's own vocabulary, and there are exactly two of them.
+	struct FRigChannel
+	{
+		const TCHAR* ComponentName;
+		FGameplayTag Slot;
+		const FProsperitocracyWeaponSlot* Entry;
+	};
+	const FRigChannel Channels[] =
+	{
+		{ TEXT("RifleChild"),  ProsperitocracyGameplayTags::Weapon_Slot_Primary,   &Playing->Primary   },
+		{ TEXT("PistolChild"), ProsperitocracyGameplayTags::Weapon_Slot_Secondary, &Playing->Secondary },
+	};
+
+	TArray<UChildActorComponent*> RigBodies;
+	Owner->GetComponents(RigBodies);
+
+	for (const FRigChannel& Channel : Channels)
+	{
+		UChildActorComponent* RigBody = nullptr;
+		for (UChildActorComponent* Candidate : RigBodies)
+		{
+			if (Candidate && Candidate->GetFName() == FName(Channel.ComponentName))
+			{
+				RigBody = Candidate;
+				break;
+			}
+		}
+
+		if (!RigBody)
+		{
+			continue;
+		}
+
+		// What this channel spawns: the slot's body, or NOTHING when the slot names nothing — a loadout
+		// that carries no secondary has no second weapon, and an empty slot is a real state, not a gap.
+		UClass* Body = Channel.Entry ? Channel.Entry->BodyClass.LoadSynchronous() : nullptr;
+		if (RigBody->GetChildActorClass() != Body)
+		{
+			RigBody->SetChildActorClass(Body);
+
+			UE_LOG(LogProsperitocracy, Log,
+				TEXT("[Loadout] rig channel %s now carries %s for the %s slot"),
+				Channel.ComponentName, *GetNameSafe(Body), *Channel.Slot.ToString());
+		}
+
+		// A slot's store belongs to the WEAPON in it — the block, not the channel: it is given up only
+		// when the weapon itself changes, never because a channel was re-set to the same thing. Keyed on
+		// the block for exactly that reason: the rig is re-dressed whenever anything about the body
+		// changes, and a store that went with every re-dress would empty a gun that never changed hands.
+		UProsperitocracyStatTable* Block = Channel.Entry ? Channel.Entry->StatBlock.LoadSynchronous() : nullptr;
+		const TWeakObjectPtr<UProsperitocracyStatTable>* Filled = AmmoFilledFromBlock.Find(Channel.Slot);
+		if (!Filled || Filled->Get() != Block)
+		{
+			AmmoBySlot.Remove(Channel.Slot);
+			AmmoFilledFromBlock.Add(Channel.Slot, Block);
+
+			UE_LOG(LogProsperitocracy, Log,
+				TEXT("[Loadout] %s slot now holds %s — its ammo starts fresh from that weapon's own numbers"),
+				*Channel.Slot.ToString(), *GetNameSafe(Block));
+		}
+	}
+}
+
+void UProsperitocracyLoadoutComponent::MakePlayingCopies()
+{
+	// A class's three loadouts ARE the defaults the game ships (Design/loadout.md), so this character's
 	// copy is the only thing anything in play is allowed to change: the shipped default is never
 	// written, a switch comes back to the copy with your changes still in it, and a save will hold the
 	// copy when there is one.
 	//
-	// One copy per loadout, made once, under the index it is played at. Index 0 is also where a
-	// class-less character's single loadout lands: a character has a class or it does not, so the two
-	// never meet.
+	// One copy per loadout, under the index it is played at. Index 0 is also where a class-less
+	// character's single loadout lands: a character has a class or it does not, so the two never meet.
+	//
+	// What is in the map already belongs to the class being left — a copy of another class's loadout is
+	// not a thing this character plays — so this REPLACES it rather than adding to it.
+	PlayingCopies.Reset();
+
 	UProsperitocracyLoadout* Sources[3] = { nullptr, nullptr, nullptr };
 	if (Class)
 	{
@@ -115,6 +204,11 @@ UProsperitocracyLoadout* UProsperitocracyLoadoutComponent::GetLoadout() const
 
 void UProsperitocracyLoadoutComponent::Redress()
 {
+	// The RIG first: what each of its channels carries has to be right before anything is dressed into
+	// them — the dress below is what gives a gun its numbers, and the gun it must dress is the one this
+	// loadout actually carries, not whatever the template left in the rig.
+	ApplyRigBodies();
+
 	// The armour, through the one door a body is dressed through: the loadout decides what the body is
 	// wearing — a weave it names is worn, and a loadout that names none is a bare body.
 	if (AActor* Owner = GetOwner())
@@ -169,6 +263,39 @@ bool UProsperitocracyLoadoutComponent::SelectLoadout(int32 Index)
 	// The loadout being played is now that index's COPY — the one made when the character came up, with
 	// whatever has been changed in it since — and what it carries comes with it, through the same dress
 	// a change made in play goes through.
+	Redress();
+
+	return true;
+}
+
+bool UProsperitocracyLoadoutComponent::SelectClass(UProsperitocracyClass* InClass)
+{
+	// A character plays AS a class, so a null is a caller's bug: nothing changes and it says so.
+	if (!InClass)
+	{
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("%s on %s: no class was given, so nothing changed — a character plays as a class."),
+			*GetName(), *GetNameSafe(GetOwner()));
+		return false;
+	}
+
+	// Already playing it: nothing to re-copy, and asking again must never throw away the changes made
+	// in play — the copy IS the thing those changes live in.
+	if (InClass == Class)
+	{
+		return true;
+	}
+
+	Class = InClass;
+
+	// The new class brings its OWN three loadouts, copied fresh — the copies of the class just left are
+	// dropped, because another class's loadout is not a thing this character plays. The class ASSET is
+	// still never written: what is played is this character's copy, made the same way as at spawn.
+	MakePlayingCopies();
+
+	// A class arrives playing its FIRST loadout, exactly as a character coming up does, and what that
+	// loadout carries comes with it through the same dress every other change goes through.
+	SelectedLoadout = 0;
 	Redress();
 
 	return true;

@@ -7,9 +7,12 @@
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyStatusComponent.h"
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "ProsperitocracyGameplayTags.h"
+#include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStat.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
+#include "Stats/ProsperitocracyStatTable.h"
 #include "Weapons/ProsperitocracyWeapon.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyCharacter)
@@ -34,6 +37,11 @@ AProsperitocracyCharacter::AProsperitocracyCharacter()
 	// that every body that can carry a status — this one and the damage targets — carries the same
 	// component, and a status applied to either goes through the same code.
 	Statuses = CreateDefaultSubobject<UProsperitocracyStatusComponent>(TEXT("Statuses"));
+
+	// A live attack is driven per frame (see Tick), so this body has to tick. Asked for here rather than
+	// left to whichever blueprint happens to have it on: the attack's own clock is C++'s job, and an
+	// attack that never ticks is an attack that never happens.
+	PrimaryActorTick.bCanEverTick = true;
 }
 
 AActor* AProsperitocracyCharacter::GetGunInHand_Implementation() const
@@ -68,6 +76,140 @@ bool AProsperitocracyCharacter::MeleeWithGunInHand()
 	}
 
 	return AbilitySystemComponent->TryActivateAbilityByInputTag(ProsperitocracyGameplayTags::InputTag_Bash);
+}
+
+void AProsperitocracyCharacter::BeginAttack(const FVector& LineDirection, float DistanceCm, float Seconds)
+{
+	// The line is FLAT: an attack goes along the ground the player is standing on, whatever the camera was
+	// doing with its pitch. It is taken once, here, and held for the whole attack — which is what keeps an
+	// attack going straight while the player is still free to look wherever they like for the next one.
+	AttackLine = LineDirection.GetSafeNormal2D();
+
+	// No line to go along, nothing the attack is worth, or no time to take: that is not an attack, and the
+	// honest answer is that there is none — not a state nobody can see.
+	if (AttackLine.IsNearlyZero() || DistanceCm <= 0.0f || Seconds <= 0.0f)
+	{
+		EndAttack();
+		return;
+	}
+
+	// Whether one was already live, because the facing below is taken from the controller only ONCE — a
+	// press that passes through a recovery into the next attack REPLACES this state, and the yaw this body
+	// normally uses must not be saved on top of a yaw the attack already took.
+	const bool bWasLive = bAttackLive;
+
+	// Where the body is now is what its number is measured from, and the attack's own length is its clock.
+	AttackStartLocation = GetActorLocation();
+	AttackDistanceCm = DistanceCm;
+	AttackSeconds = Seconds;
+	AttackElapsed = 0.0f;
+	bAttackLive = true;
+
+	// The FACING belongs to the attack for as long as it lasts. This body's yaw is normally the controller's
+	// (bUseControllerRotationYaw), so that is what steps aside for the window and what comes back at the end
+	// — which is why the body returns to the player's look by itself, with nothing to remember to do.
+	if (!bWasLive)
+	{
+		bControllerYawBeforeAttack = bUseControllerRotationYaw;
+		bUseControllerRotationYaw = false;
+	}
+
+	// Said out loud, with its numbers: an attack nobody can see and an attack that is not happening look
+	// exactly the same in the world, and only one of them is a bug.
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Body] attack — %.0f cm over %.2fs along %s"),
+		AttackDistanceCm, AttackSeconds, *AttackLine.ToCompactString());
+}
+
+void AProsperitocracyCharacter::EndAttack()
+{
+	if (!bAttackLive)
+	{
+		return;
+	}
+
+	// The attack is worth its NUMBER, not its clock: whatever the frame rate managed on the way, the body
+	// finishes exactly the distance it was given, along its own line. This is the last thing an attack
+	// does, so the number the player reads is where the body ends up.
+	const FVector EndLocation = AttackStartLocation + AttackLine * AttackDistanceCm;
+
+	bAttackLive = false;
+
+	// The facing goes back to the controller's, which is what turns this body the rest of the time. The
+	// player's own movement is his again for the same reason nothing here has to hand it back: the gate
+	// that refuses it simply stops being told that an attack is live (see IsSwingLocked).
+	bUseControllerRotationYaw = bControllerYawBeforeAttack;
+
+	SetActorLocation(EndLocation, /*bSweep=*/ true);
+
+	// MEASURED, not asserted: what the world actually allowed the body, in the stat's own unit, next to
+	// what the attack was worth. A number that comes out short is the world having a say (a wall) — never
+	// the clock, which cannot fall behind by construction.
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Body] attack done — moved %.0f cm of the %.0f cm it was worth"),
+		FVector::Dist2D(AttackStartLocation, GetActorLocation()), AttackDistanceCm);
+}
+
+void AProsperitocracyCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	// A live attack is this body's own state and is driven here, in ONE place: the line, the distance, the
+	// facing and the clock. Nothing else moves this body while it is live.
+	if (bAttackLive)
+	{
+		TickAttack(DeltaSeconds);
+	}
+}
+
+void AProsperitocracyCharacter::TickAttack(float DeltaSeconds)
+{
+	AttackElapsed += DeltaSeconds;
+
+	// WHERE the body is comes off the attack's own clock and never off a speed the world can slow down:
+	// the number is the authority, and the frames only decide how finely it is spread. The height is not
+	// the attack's business — an attack travels the ground, and jumping or falling stays the world's.
+	const float Progress = FMath::Clamp(AttackElapsed / AttackSeconds, 0.0f, 1.0f);
+	FVector Target = AttackStartLocation + AttackLine * (AttackDistanceCm * Progress);
+	Target.Z = GetActorLocation().Z;
+
+	// Swept, so a wall still has a say: being stopped by the world is not the same as falling short.
+	SetActorLocation(Target, /*bSweep=*/ true);
+
+	// The body's movement is the attack's and nothing else's while it is live: no leftover velocity of the
+	// player's, no friction eating the number, nothing left to fight the placement above. The walk, the run,
+	// the crouch and the shot's push are untouched by this — they are simply not what is moving the body.
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		Movement->Velocity = FVector::ZeroVector;
+	}
+
+	// ...and the body FACES its line for the whole of the attack — not the camera, not the way it happened
+	// to be walking — which is the other half of what an attack is: it goes that way and it looks that way
+	// until it is over. At the end the controller's yaw takes the body back (see EndAttack), so the return
+	// to the player's look is a natural consequence and not a snap.
+	SetActorRotation(FRotator(0.0f, AttackLine.Rotation().Yaw, 0.0f));
+
+	if (AttackElapsed >= AttackSeconds)
+	{
+		EndAttack();
+	}
+}
+
+bool AProsperitocracyCharacter::IsHoldingRangedWeapon() const
+{
+	// The weapon's own block answers, by the project's own rule: a gun is a weapon with a fire mode, and
+	// a melee is a weapon without one. Nothing here names a weapon or reads a class.
+	const AProsperitocracyWeapon* Weapon = GetGunWeaponInHand();
+	const UProsperitocracyStatTable* Block = Weapon ? Weapon->GetStatBlock() : nullptr;
+	return Block && Block->GetFireMode().IsValid();
+}
+
+bool AProsperitocracyCharacter::IsHoldingMeleeWeapon() const
+{
+	// The same question, answered once: a melee is a thing in hand with no fire mode. Note it is NOT the
+	// negation of "ranged" — an EMPTY hand is neither, and a pose that must tell those apart needs both.
+	const AProsperitocracyWeapon* Weapon = GetGunWeaponInHand();
+	const UProsperitocracyStatTable* Block = Weapon ? Weapon->GetStatBlock() : nullptr;
+	return Block && !Block->GetFireMode().IsValid();
 }
 
 float AProsperitocracyCharacter::GetAimingAlpha_Implementation() const

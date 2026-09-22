@@ -97,7 +97,7 @@ void UProsperitocracyGameplayAbility_Bash::ActivateAbility(const FGameplayAbilit
 		AvatarPawn->GetAttachedActors(AttachedActors);
 		Params.AddIgnoredActors(AttachedActors);
 
-		const FCollisionShape Swing = FCollisionShape::MakeSphere(ProsperitocracyBashHandling::SwingRadius);
+		const FCollisionShape Swing = FCollisionShape::MakeSphere(ProsperitocracyMeleeHandling::SwingRadius);
 
 		FHitResult Hit;
 		if (World->SweepSingleByChannel(Hit, SwingStart, SwingEnd, FQuat::Identity, ECC_Visibility, Swing, Params) && Hit.bBlockingHit)

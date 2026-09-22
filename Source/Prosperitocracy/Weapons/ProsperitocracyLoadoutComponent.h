@@ -121,6 +121,26 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Loadout")
 	bool SelectLoadout(int32 Index);
 
+	/**
+	 * Play as a class: the class's three loadouts become what the character plays, its first is played,
+	 * and the body is dressed from it through the same Redress a loadout switch runs.
+	 *
+	 * A character plays AS a class — there is no playing as nothing, so a null class is refused and
+	 * nothing changes. Nothing about the class's ASSET is written: what this character plays is its own
+	 * copy, made here, exactly as at spawn.
+	 *
+	 * Asking for the class already being played changes nothing, so changes made in play are never
+	 * thrown away by asking again. Asking for a DIFFERENT class re-copies from that class's shipped
+	 * three — the copies of the class just left are dropped, because another class's loadout is not a
+	 * thing this character plays.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Loadout")
+	bool SelectClass(UProsperitocracyClass* InClass);
+
+	/** The class this character plays as. Empty only before something has set it. */
+	UFUNCTION(BlueprintPure, Category = "Loadout")
+	UProsperitocracyClass* GetClass() const { return Class; }
+
 	//~ Changing what you take in, IN PLAY — the doors a gun, a weave and a colour go through ---------
 	//
 	// Nothing about a character is set by reaching into the body: a gun, a weave and a colour are
@@ -235,6 +255,32 @@ private:
 	UProsperitocracyLoadout* ResolveLoadoutSource(int32 Index) const;
 
 	/**
+	 * This character's own copy of every loadout it can play, made from the class's three — or from the
+	 * one loadout a class-less character was authored with, at index 0.
+	 *
+	 * One place, because two acts make these copies: the character coming up, and a class being chosen
+	 * in play. A class switch that made its copies its own way could dress a body from a loadout that
+	 * was never the shipped default or the player's own copy — which is the whole thing this protects.
+	 * It REPLACES whatever is in the map: what is in there belongs to the class being left.
+	 */
+	void MakePlayingCopies();
+
+	/**
+	 * The rig's own weapon bodies, taken from the loadout being played.
+	 *
+	 * The template's rig holds a gun in each of its two channels and knows nothing about slots: it builds
+	 * a rifle and a pistol onto every body, whatever that body carries. But a LOADOUT is what says which
+	 * weapon each slot holds, so what each channel SPAWNS is that loadout's answer — the same "what do I
+	 * carry" a gun asks — and a slot that names nothing has nothing spawned for it.
+	 *
+	 * That is what makes the primary channel THE PRIMARY SLOT: a class whose primary is its melee brings
+	 * its melee out on the primary and never a rifle it does not carry, and the rig's own equip keys then
+	 * bring up whatever that slot holds. Set the rig's bodies any other way and a body plays with a
+	 * weapon its loadout does not carry.
+	 */
+	void ApplyRigBodies();
+
+	/**
 	 * Dress the body from the loadout being played: the armour, then the guns in hand.
 	 *
 	 * ONE act, so a switch and a change made in play cannot dress a body or a gun differently — and so
@@ -246,6 +292,15 @@ private:
 	/** One entry per slot this carrier has fired or reloaded, keyed by the slot's tag. */
 	UPROPERTY(Transient)
 	TMap<FGameplayTag, FProsperitocracyWeaponAmmo> AmmoBySlot;
+
+	/**
+	 * Which weapon each slot's store was filled for, by the slot's tag.
+	 *
+	 * A store belongs to the WEAPON in that slot, so this is what tells "the same weapon, dressed again"
+	 * apart from "a different weapon now" — the rig is re-dressed whenever anything about the body
+	 * changes, and a store that went with every dress would empty a gun that never changed hands.
+	 */
+	TMap<FGameplayTag, TWeakObjectPtr<UProsperitocracyStatTable>> AmmoFilledFromBlock;
 
 	/**
 	 * The gun actors this carrier has dressed, by slot.
