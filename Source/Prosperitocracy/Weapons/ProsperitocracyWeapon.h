@@ -73,6 +73,28 @@ namespace ProsperitocracyWeaponHandling
 }
 
 /**
+ * The STANCE a weapon asks the body to hold while it is out.
+ *
+ * A rifle is held like a rifle and a pistol like a pistol wherever they sit, and a melee asks for
+ * nothing at all — so this belongs to the WEAPON. It used to be the hand's: the equip chain set
+ * "is a rifle equipped?" for whichever hand it was bringing out, which is why a sword came out
+ * holding a rifle's stance.
+ *
+ * The numbers ARE the animation's own enum values, deliberately, so the value crosses into the
+ * blueprint that holds what the animation reads without a translation table in between. The one
+ * coupling to remember: this enum and the animation's `Animation_State` must agree by value.
+ */
+UENUM(BlueprintType)
+enum class EProsperitocracyStance : uint8
+{
+	/** Nothing of its own — the body goes on running the anims it was already running. A melee. */
+	None = 0		UMETA(DisplayName = "None"),
+	Unarmed = 4		UMETA(DisplayName = "Unarmed"),
+	Pistol = 5		UMETA(DisplayName = "Pistol"),
+	Rifle = 6		UMETA(DisplayName = "Rifle"),
+};
+
+/**
  * AProsperitocracyWeapon
  *
  * The NUMBERS and the DAMAGE of one gun. Nothing visual.
@@ -161,6 +183,17 @@ public:
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Weapon")
 	bool bDrawnWithItsOwnAnimation = true;
+
+	/**
+	 * What the body should hold while this thing is out.
+	 *
+	 * Named by the WEAPON, for the same reason as everything else here: a rifle asks for a rifle's
+	 * hold and a pistol a pistol's, and a melee asks for NOTHING — the body keeps the anims it was
+	 * already running. It cannot depend on which hand the thing came out of, which is exactly what it
+	 * used to do.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Weapon")
+	EProsperitocracyStance Stance = EProsperitocracyStance::None;
 
 	/**
 	 * The draw THIS weapon plays as it comes out of its socket and into the hand.

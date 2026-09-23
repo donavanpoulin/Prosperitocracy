@@ -67,7 +67,15 @@ public:
 	AActor* GetGunInHand() const;
 	virtual AActor* GetGunInHand_Implementation() const;
 
-	/** The gun in hand, resolved to our weapon type, or null when there is none. */
+	/**
+	 * The gun in hand, resolved to our weapon type, or null when there is none.
+	 *
+	 * BlueprintPure so a graph can ASK which weapon is up and then talk to it, without casting a hand
+	 * to a weapon class first. Every action belongs to the weapon that is HELD — a reload especially:
+	 * the template wired its reload to one hand's channel, so the other hand could never reload at
+	 * all, and a weapon's own job should never depend on which hand it happens to be in.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
 	AProsperitocracyWeapon* GetGunWeaponInHand() const;
 
 	/**
@@ -81,6 +89,20 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
 	bool MeleeWithGunInHand();
+
+	/**
+	 * Reload whatever this body is holding — the one door the rig's reload action needs.
+	 *
+	 * The body asks the thing in its hand and knows nothing else, exactly as it does for the melee:
+	 * a gun swaps its magazine, and a thing with no magazine does nothing at all because its answer
+	 * is nothing. The template wired its reload to ONE hand's channel (the rifle's), so the other
+	 * hand could never reload in its life — and a weapon's own job must never depend on which hand it
+	 * happens to be sitting in.
+	 *
+	 * False when there is nothing in hand: a key with nothing behind it does nothing.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	bool ReloadTheWeaponInHand();
 
 	/**
 	 * Bring whatever a slot carries OUT, or put it away. THE one door, and what happens is the
@@ -99,23 +121,38 @@ public:
 	bool SetSlotOut(FGameplayTag Slot, bool bOut);
 
 	/**
-	 * One attack, as the BODY owns it: the line it goes along, how far it is worth, and how long it
-	 * lasts.
+	 * The body has been told which stance to hold: the thing that came out declared it.
 	 *
-	 * The thing that swings hands over its own two numbers — a blade gives its Range and the length
-	 * of its OWN piece of the combo — and from that moment the attack is the body's: the body faces
-	 * the line, travels it, and refuses its own movement until the clock runs out. Nothing else moves
-	 * this body while it is live, and the thing that swung never touches the body's speed, its
-	 * velocity or its facing.
+	 * A BlueprintImplementableEvent because the stance the ANIMATION reads is a blueprint value on this
+	 * body, and code cannot write it directly. So the weapon's answer crosses into the blueprint HERE,
+	 * once, and the body's own blueprint keeps the value its animation reads. The stance is the
+	 * weapon's to name and the body's to hold — this is the one place the two halves meet.
+	 */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Prosperitocracy|Weapon")
+	void OnStanceChosen(EProsperitocracyStance Stance);
+
+	/**
+	 * One attack, as the BODY owns it: the line it goes along, how far it is worth, how long the
+	 * TRAVEL takes, and how long the ATTACK lasts.
+	 *
+	 * Two times, deliberately, because they are two different things: the TRAVEL is the dash, and the
+	 * attack is the window the player's own movement is refused for. A swing covers its Range EARLY —
+	 * by the moment the blade bites — so the dash and the cut land together and the body then holds
+	 * its ground for the rest of the swing instead of drifting through it.
+	 *
+	 * The thing that swings hands all of it over and then holds nothing: the line, the distance and
+	 * the two times. From that moment the attack is the body's — it faces the line, travels it, and
+	 * refuses its own movement until the attack's clock runs out — and the thing that swung never
+	 * touches the body's speed, its velocity or its facing.
 	 *
 	 * The DISTANCE is the authority, not the clock: the body is placed along its line off its own
 	 * clock, so the frame rate cannot shorten the number it was given.
 	 *
-	 * Beginning an attack while one is live REPLACES it — the newest line and clock win — which is
+	 * Beginning an attack while one is live REPLACES it — the newest line and clocks win — which is
 	 * what a press that passes through a recovery into the next attack means.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
-	void BeginAttack(const FVector& LineDirection, float DistanceCm, float Seconds);
+	void BeginAttack(const FVector& LineDirection, float DistanceCm, float TravelSeconds, float Seconds);
 
 	/** End a live attack now. A live attack ends itself when its clock runs out; this is a cut short. */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
@@ -237,6 +274,15 @@ protected:
 	/** The attack's own clock: how long it lasts, and how far into it the body is. */
 	float AttackSeconds = 0.0f;
 	float AttackElapsed = 0.0f;
+
+	/**
+	 * How long the TRAVEL takes — the dash itself, which is shorter than the attack.
+	 *
+	 * The attack's clock above is how long the player's movement is refused for; this is how long the
+	 * body takes to cover its Range. They were one number, which spread the dash thin across the whole
+	 * swing; the dash belongs at the front of it, arriving as the blade does.
+	 */
+	float AttackTravelSeconds = 0.0f;
 
 	/** True between an attack beginning and its own clock running out. Runtime only. */
 	bool bAttackLive = false;

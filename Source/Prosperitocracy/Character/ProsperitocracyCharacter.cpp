@@ -79,6 +79,21 @@ bool AProsperitocracyCharacter::MeleeWithGunInHand()
 	return AbilitySystemComponent->TryActivateAbilityByInputTag(ProsperitocracyGameplayTags::InputTag_Bash);
 }
 
+bool AProsperitocracyCharacter::ReloadTheWeaponInHand()
+{
+	// The thing in hand answers for itself, and the body knows nothing else about it — not what it is,
+	// not whether it has a magazine. A gun reloads; a melee's answer is nothing, because it has no
+	// magazine to swap and never will.
+	AProsperitocracyWeapon* Weapon = GetGunWeaponInHand();
+	if (!Weapon)
+	{
+		return false;
+	}
+
+	Weapon->ReloadAction();
+	return true;
+}
+
 bool AProsperitocracyCharacter::SetSlotOut(FGameplayTag Slot, bool bOut)
 {
 	// WHICH channel carries that slot, asked of the things themselves: a weapon knows the slot the
@@ -117,6 +132,14 @@ bool AProsperitocracyCharacter::SetSlotOut(FGameplayTag Slot, bool bOut)
 	if (USkeletalMeshComponent* Body = GetMesh())
 	{
 		Channel->AttachToComponent(Body, FAttachmentTransformRules::SnapToTargetIncludingScale, Socket);
+
+		// The two facts that settle a weapon sitting at the body's feet instead of in its hand: whether
+		// the socket the WEAPON named is on this mesh at all, and where the channel actually ended up.
+		// An attach to a socket that is not there does not fail — it quietly lands at the parent's
+		// origin, which is between the legs, and says nothing.
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Body] socket %s: %s — the channel now sits at '%s'"),
+			*Socket.ToString(), Body->DoesSocketExist(Socket) ? TEXT("found") : TEXT("NOT FOUND"),
+			*Channel->GetAttachSocketName().ToString());
 	}
 
 	// And whether coming out or going away PLAYS anything is the weapon's answer too. A gun plays its
@@ -128,6 +151,15 @@ bool AProsperitocracyCharacter::SetSlotOut(FGameplayTag Slot, bool bOut)
 		PlayAnimMontage(Montage);
 	}
 
+	// AND THE STANCE, on the same terms as every other answer here: the thing that came out names what
+	// the body should hold. A rifle names a rifle's hold, a pistol a pistol's, and a melee names
+	// NOTHING — the body goes on running the anims it was already running, which is what a sword wants.
+	// Putting it away puts the body back to bare, which is what the old chain's unequip did too.
+	//
+	// It crosses into the blueprint because the stance the ANIMATION reads is a blueprint value on this
+	// body: the weapon decides, the body holds, and this call is the one place the two meet.
+	OnStanceChosen(bOut ? Weapon->Stance : EProsperitocracyStance::Unarmed);
+
 	// Said out loud, because "the stick is at my feet" and "the stick is in my hand" are the same
 	// silence in a log that says nothing: what was found, which socket it was sent to, and what it was
 	// asked to play.
@@ -138,7 +170,7 @@ bool AProsperitocracyCharacter::SetSlotOut(FGameplayTag Slot, bool bOut)
 	return true;
 }
 
-void AProsperitocracyCharacter::BeginAttack(const FVector& LineDirection, float DistanceCm, float Seconds)
+void AProsperitocracyCharacter::BeginAttack(const FVector& LineDirection, float DistanceCm, float TravelSeconds, float Seconds)
 {
 	// The line is FLAT: an attack goes along the ground the player is standing on, whatever the camera
 	// was doing with its pitch. It is taken once, here, and held for the whole attack — which is what
@@ -163,6 +195,11 @@ void AProsperitocracyCharacter::BeginAttack(const FVector& LineDirection, float 
 	AttackStartLocation = GetActorLocation();
 	AttackDistanceCm = DistanceCm;
 	AttackSeconds = Seconds;
+
+	// The DASH is its own length, and never longer than the attack it lives in: a thing that handed
+	// over no travel time at all travels for the whole attack, which is the old behaviour and the
+	// honest reading of "you told me nothing".
+	AttackTravelSeconds = (TravelSeconds > 0.0f) ? FMath::Min(TravelSeconds, Seconds) : Seconds;
 	AttackElapsed = 0.0f;
 	bAttackLive = true;
 
@@ -183,8 +220,8 @@ void AProsperitocracyCharacter::BeginAttack(const FVector& LineDirection, float 
 
 	// Said out loud, with its numbers: an attack nobody can see and an attack that is not happening
 	// look exactly the same in the world, and only one of them is a bug.
-	UE_LOG(LogProsperitocracy, Log, TEXT("[Body] attack — %.0f cm over %.2fs along %s"),
-		AttackDistanceCm, AttackSeconds, *AttackLine.ToCompactString());
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Body] attack — %.0f cm over %.2fs of a %.2fs attack along %s"),
+		AttackDistanceCm, AttackTravelSeconds, AttackSeconds, *AttackLine.ToCompactString());
 }
 
 void AProsperitocracyCharacter::EndAttack()
@@ -298,7 +335,11 @@ void AProsperitocracyCharacter::TickAttack(float DeltaSeconds)
 	// WHERE the body is comes off the attack's own clock and never off a speed the world can slow down:
 	// the number is the authority, and the frames only decide how finely it is spread. The height is not
 	// the attack's business — an attack travels the ground, and jumping or falling stays the world's.
-	const float Progress = FMath::Clamp(AttackElapsed / AttackSeconds, 0.0f, 1.0f);
+	//
+	// The dash runs to its OWN length and stops there: once it has covered its Range the body holds
+	// that ground for the rest of the attack, which is what puts the cut at the end of the dash
+	// instead of at the end of the swing.
+	const float Progress = FMath::Clamp(AttackElapsed / FMath::Max(AttackTravelSeconds, KINDA_SMALL_NUMBER), 0.0f, 1.0f);
 	FVector Target = AttackStartLocation + AttackLine * (AttackDistanceCm * Progress);
 	Target.Z = GetActorLocation().Z;
 
