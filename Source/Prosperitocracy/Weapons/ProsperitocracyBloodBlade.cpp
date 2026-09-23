@@ -5,10 +5,12 @@
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
+#include "AbilitySystem/Attributes/ProsperitocracyHealthSet.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/ProsperitocracyCharacter.h"
 #include "CollisionQueryParams.h"
+#include "Components/ChildActorComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
@@ -16,6 +18,7 @@
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStat.h"
 #include "Stats/ProsperitocracyStatTable.h"
+#include "Weapons/ProsperitocracyLoadoutComponent.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyBloodBlade)
 
@@ -212,6 +215,14 @@ bool AProsperitocracyBloodBlade::PlayOrAdvanceCombo()
 		}
 	}
 
+	// THE SWING COSTS BLOOD, and it is paid BEFORE the move that is running is stood down: a pool that
+	// cannot cover it means the press was never an attack at all — nothing spent, nothing swung, and
+	// whatever is playing keeps playing.
+	if (!SpendBlood(GetBloodCostPerUse()))
+	{
+		return false;
+	}
+
 	// A NEW ATTACK TAKES THE STAGE, so the MOVE THAT WAS ALREADY GOING ENDS FIRST — the one the right
 	// button runs is an ability, and the blade ends it by the name its own slot holds. Nothing of it
 	// keeps running underneath this: not its clock, not its window, not its sweep, not its facing.
@@ -394,6 +405,11 @@ void AProsperitocracyBloodBlade::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// THE POOL BLEEDS WHILE THE BLADE IS OUT, and that happens whether or not anything is being swung —
+	// so it comes before the combo's own tick, which only runs while a move is live. Standing here
+	// holding the sword is what costs you.
+	BleedThePool(DeltaSeconds);
+
 	if (!bSwinging)
 	{
 		return;
@@ -509,6 +525,233 @@ float AProsperitocracyBloodBlade::GetTrueAverageAttackRate() const
 	return Total > KINDA_SMALL_NUMBER
 		? static_cast<float>(ProsperitocracyBladeCombo::NumAttacks()) / Total
 		: 0.0f;
+}
+
+//~ The blood pool -----------------------------------------------------------------------------------
+//
+// The pool is how a blade that is LANDING ITS HITS pays for itself and a blade that is standing still
+// starves: every use takes blood, holding the thing bleeds it away, and real damage dealt puts it back.
+
+FProsperitocracyWeaponAmmo* AProsperitocracyBloodBlade::GetTheBloodStore()
+{
+	// One store per slot, on the carrier, exactly where a gun's magazine lives — and for the same
+	// reason: the rig rebuilds weapon actors, so a pool kept on this actor would come back full every
+	// time. No Capacity is asked for (a sword carries no spare magazine), so the round fields of the
+	// store are never used for blood.
+	return OwnerLoadout ? &OwnerLoadout->GetOrCreateAmmoForSlot(Slot, FMath::RoundToInt(GetMaxBlood()), 0) : nullptr;
+}
+
+float AProsperitocracyBloodBlade::GetMaxBlood() const
+{
+	// How big the pool is: this blade's own MagSize row, read FINAL — so "magsize upgrades" is exactly
+	// what it sounds like for a sword. Nothing else says how much blood there is.
+	return FMath::Max(0.0f, GetWeaponStat(EProsperitocracyStat::MagSize));
+}
+
+float AProsperitocracyBloodBlade::GetBlood()
+{
+	FProsperitocracyWeaponAmmo* Store = GetTheBloodStore();
+	if (!Store)
+	{
+		return 0.0f;
+	}
+
+	// The first ask is what fills it: a blade comes out with a full pool, and nothing else fills it but
+	// the damage its body deals.
+	if (!bBloodSeeded)
+	{
+		Store->Blood = GetMaxBlood();
+		bBloodSeeded = true;
+	}
+
+	return Store->Blood;
+}
+
+void AProsperitocracyBloodBlade::AddBlood(float Amount)
+{
+	if (Amount <= 0.0f)
+	{
+		return;
+	}
+
+	FProsperitocracyWeaponAmmo* Store = GetTheBloodStore();
+	if (!Store)
+	{
+		return;
+	}
+
+	// Capped at the pool's own size: a pool is never overfilled, exactly as a magazine never holds more
+	// rounds than it is worth.
+	Store->Blood = FMath::Clamp(GetBlood() + Amount, 0.0f, GetMaxBlood());
+}
+
+float AProsperitocracyBloodBlade::GetBloodDrainPerSecond() const
+{
+	return FMath::Max(0.0f, GetWeaponStat(EProsperitocracyStat::BloodDrain));
+}
+
+float AProsperitocracyBloodBlade::GetBloodCostPerUse() const
+{
+	return FMath::Max(0.0f, GetWeaponStat(EProsperitocracyStat::BloodCost));
+}
+
+void AProsperitocracyBloodBlade::BleedThePool(float DeltaSeconds)
+{
+	const float Drain = GetBloodDrainPerSecond();
+	if (Drain <= 0.0f || DeltaSeconds <= 0.0f || !IsInHand())
+	{
+		return;
+	}
+
+	FProsperitocracyWeaponAmmo* Store = GetTheBloodStore();
+	if (!Store)
+	{
+		return;
+	}
+
+	// A RATE, taken every frame: the pool goes down smoothly rather than in units, which is what the
+	// bar is drawn from. A stowed blade costs nothing — carrying it is free, holding it is not.
+	const float Pool = GetBlood();
+	const float Taken = Drain * DeltaSeconds;
+
+	if (Pool >= Taken)
+	{
+		Store->Blood = Pool - Taken;
+		return;
+	}
+
+	// AND WHEN THE POOL RUNS OUT THE BLEED KEEPS RUNNING: with the blood mode on it comes off the BODY,
+	// because the mode is a promise that the sword is fed one way or the other. With it off, an empty
+	// pool is simply empty and nothing further is owed.
+	Store->Blood = 0.0f;
+	if (bBloodMode)
+	{
+		DrainTheBody(Taken - Pool);
+	}
+}
+
+void AProsperitocracyBloodBlade::ReloadAction_Implementation()
+{
+	// Only the blade in the player's hand answers the key: a stowed blade is not what it is about.
+	if (!IsInHand())
+	{
+		return;
+	}
+
+	// THE BLOOD MODE. Blood is what a sword "reloads", and this key is the clean one to say it on: the
+	// key asks the thing in hand, a gun's own answer owns its magazine swap AND its own reload
+	// animation, so a sword's answer is the whole of what the press does — and the melee key is left
+	// free for the sword's parry.
+	SetBloodMode(!bBloodMode);
+}
+
+void AProsperitocracyBloodBlade::SetBloodMode(bool bOn)
+{
+	bBloodMode = bOn;
+
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Blade] %s: blood mode %s — the pool pays first and the body pays the rest"),
+		*GetName(), bBloodMode ? TEXT("ON") : TEXT("OFF"));
+}
+
+bool AProsperitocracyBloodBlade::DrainTheBody(float Amount)
+{
+	if (Amount <= 0.0f)
+	{
+		return false;
+	}
+
+	AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(OwningPawn.Get());
+	UAbilitySystemComponent* AbilitySystemComponent = Body ? Body->GetAbilitySystemComponent() : nullptr;
+	UProsperitocracyHealthSet* HealthSet = AbilitySystemComponent
+		? const_cast<UProsperitocracyHealthSet*>(AbilitySystemComponent->GetSet<UProsperitocracyHealthSet>()) : nullptr;
+
+	if (!AbilitySystemComponent || !HealthSet)
+	{
+		// Nothing to take it out of — a body with no health of its own. Said out loud rather than
+		// silently: the sword asked for blood and the body had none to give.
+		UE_LOG(LogProsperitocracy, Warning, TEXT("[Blade] %s: the pool is dry and the body has no health set to pay from."), *GetName());
+		return false;
+	}
+
+	// Written straight onto Health: this is a COST, not an attack — nothing struck the body, so there is
+	// no line, no damage type and no gate to ask, and it never becomes contested. The health set clamps
+	// it the way it clamps anything else, so this can bottom a body out.
+	const float HealthBefore = HealthSet->GetHealth();
+	const float NewHealth = FMath::Max(0.0f, HealthBefore - Amount);
+	AbilitySystemComponent->SetNumericAttributeBase(UProsperitocracyHealthSet::GetHealthAttribute(), NewHealth);
+
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Blade] %s: the pool is dry — %.1f taken out of the body (health %.1f -> %.1f)"),
+		*GetName(), Amount, HealthBefore, NewHealth);
+
+	return true;
+}
+
+bool AProsperitocracyBloodBlade::SpendBlood(float Cost)
+{
+	if (Cost <= 0.0f)
+	{
+		return true;
+	}
+
+	FProsperitocracyWeaponAmmo* Store = GetTheBloodStore();
+	if (!Store)
+	{
+		return false;
+	}
+
+	const float Pool = GetBlood();
+	if (Pool < Cost)
+	{
+		// THE BLOOD MODE is the one thing that answers a short pool: what blood there is goes in and the
+		// BODY pays the rest — nothing is refused while the mode is on, which is the whole of what the
+		// toggle buys. With it off, the pool pays for the whole thing or the thing does not happen at
+		// all, said out loud, because a swing that does nothing and a swing that is broken look the same
+		// from the outside.
+		if (bBloodMode)
+		{
+			const float Shortfall = Cost - Pool;
+			Store->Blood = 0.0f;
+			DrainTheBody(Shortfall);
+			return true;
+		}
+
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Blade] %s: not enough blood — the use needs %.1f and the pool holds %.1f"),
+			*GetName(), Cost, Pool);
+		return false;
+	}
+
+	Store->Blood = Pool - Cost;
+	return true;
+}
+
+void AProsperitocracyBloodBlade::NotifyDamageDealt(AActor* Dealer, float DamageDealt)
+{
+	if (!Dealer || DamageDealt <= 0.0f)
+	{
+		return;
+	}
+
+	AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(Dealer);
+	if (!Body)
+	{
+		return;
+	}
+
+	// The blade this body CARRIES — not merely the thing in its hand — so a kill with the secondaries
+	// feeds the pack exactly as a sword kill does (Design/classes/reclaimer.md: anything that dies to
+	// him refuels it). It is found by asking each channel's weapon what it is: the same walk the equip
+	// path and the dress use, so no list of component names is kept anywhere.
+	TArray<UChildActorComponent*> Channels;
+	Body->GetComponents(Channels);
+
+	for (UChildActorComponent* Channel : Channels)
+	{
+		if (AProsperitocracyBloodBlade* Blade = Channel ? Cast<AProsperitocracyBloodBlade>(Channel->GetChildActor()) : nullptr)
+		{
+			Blade->AddBlood(DamageDealt * ProsperitocracyBladeHandling::BloodFromDamageDealt);
+			return;
+		}
+	}
 }
 
 void AProsperitocracyBloodBlade::PrimaryAction_Implementation()

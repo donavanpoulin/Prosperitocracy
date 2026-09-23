@@ -44,6 +44,20 @@ void UProsperitocracyGameplayAbility_Bash::ActivateAbility(const FGameplayAbilit
 	// The bash is the GUN's bash, and it is only worth anything with its own numbers: no gun in hand,
 	// or no stat block (no reach, no Penetration), means nothing swings.
 	const AProsperitocracyWeapon* Gun = Character ? Character->GetGunWeaponInHand() : nullptr;
+
+	// AND THE THING IN HAND HAS TO BE A GUN. A bash is a FIREARM's melee — the hit you get with a gun in
+	// your hands — so a melee in hand has no bash at all: it has its own moves, and its own key answers
+	// (the blade runs its right-click ability and toggles the blood mode on the melee key). The test is
+	// the project's own — a gun is a weapon with a fire mode — so nothing here names a weapon type, and
+	// a sword can never reach a rifle's swing through this ability.
+	//
+	// Quietly, because a melee in hand is not a fault: it is a sword doing what a sword does.
+	if (Gun && !Gun->HasAFireMode())
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, /*bReplicateEndAbility=*/ true, /*bWasCancelled=*/ false);
+		return;
+	}
+
 	if (!Gun || !AvatarPawn || !StatBlock || !StatHost)
 	{
 		if (!bLoggedMissingSetup)

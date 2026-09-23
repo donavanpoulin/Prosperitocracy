@@ -136,4 +136,20 @@ enum class EProsperitocracyStat : uint8
 	// It lives on the part's OWN GAS home with the part's resists, so a perk moves it exactly like any
 	// other stat and a part's armour is never authored on an actor.
 	Armor				UMETA(DisplayName = "Armor"),
+
+	// --- What a thing that drinks BLOOD costs to use (Design/classes/reclaimer.md) ---
+
+	// pool per second — the slow bleed a thing takes out of the blood WHILE IT IS OUT. A rate, so the
+	// pool is eaten smoothly rather than in units: nothing about it steps.
+	//
+	// A row and not a constant, for the same reason Accuracy and Pellets are rows: it is a number a
+	// THING carries, and presence is scope — a thing with a drain bleeds, a thing without one does not.
+	// No perks target it (as none target Accuracy), which is not what makes something a row.
+	BloodDrain			UMETA(DisplayName = "Blood Drain"),
+	// pool per USE — what one use of this thing takes out of the blood: one swing, one ability.
+	//
+	// Read by the thing being used, so a blade's own swing and each of its abilities carry their own
+	// cost without anything branching on which is which. The pool itself is not a row: a magazine-size
+	// number says how big it is (`MagSize`) and the amount left is runtime, exactly like a gun's ammo.
+	BloodCost			UMETA(DisplayName = "Blood Cost"),
 };

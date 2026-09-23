@@ -225,6 +225,31 @@ public:
 	virtual void StandDownForANewMove();
 
 	/**
+	 * Pay BLOOD for one use of this thing.
+	 *
+	 * True when it was paid and the use may happen. A thing with no blood owes nothing and answers true
+	 * without doing anything, which is what lets a weapon's own ability ask the thing in the hand to
+	 * pay for it WITHOUT knowing what it is holding: the blade takes it out of its pool (and says no
+	 * when the pool cannot cover it), and a gun never touches blood at all.
+	 */
+	virtual bool SpendBlood(float Cost);
+
+	/**
+	 * This thing's MELEE action — what the melee key means when this is the weapon in the hand.
+	 *
+	 * **The default answer is the BASH, because a bash is a GUN's melee** — the hit you get with a
+	 * firearm in your hands, which is the template's own key and the ability every gun already runs.
+	 * A weapon with NO fire mode is not a gun and gets no default: a blade answers this for itself (the
+	 * blood-mode toggle), and a thing that answers nothing does nothing.
+	 *
+	 * Declared here for the same reason as every other door: the key asks the thing in the hand, and
+	 * the very same key can therefore mean two things without anything branching on what is held.
+	 */
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	void MeleeAction();
+	virtual void MeleeAction_Implementation();
+
+	/**
 	 * Whether this thing comes out with a DRAW of its own and a STANCE of its own.
 	 *
 	 * A gun says YES: it has an equip animation and a sound, and while it is out the body holds the

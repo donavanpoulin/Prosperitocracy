@@ -33,6 +33,17 @@ namespace ProsperitocracyBladeHandling
 
 	/** Range's own unit is meters (Design/stats.md); a body is placed, and a swing is sized, in cm. */
 	constexpr float CentimetersPerMeter = 100.0f;
+
+	/**
+	 * How much of the damage this sword deals comes back as BLOOD: a sixth.
+	 *
+	 * One fixed formula with one universal constant, like contested health's own eighth — not a row,
+	 * not a perk target, and never tuned per thing. It is what makes a blade that is landing its hits
+	 * self-feeding and a blade that is standing still starve: the same number read out of a different
+	 * pool, which is the whole of the class's rhythm. His number: an eighth could not keep up with the
+	 * costs (25 a swing, 5 a second while it is out), so the recovery is a sixth.
+	 */
+	constexpr float BloodFromDamageDealt = 1.0f / 6.0f;
 }
 
 /**
@@ -103,6 +114,71 @@ public:
 	 * it never has to know what it is taking over from.
 	 */
 	virtual void StandDownForANewMove() override;
+
+	/**
+	 * Take this blade's own share of the damage its body just DEALT, back into the pool.
+	 *
+	 * THE ONE DOOR for blood coming back, called from the one place damage becomes real — the same
+	 * place contested health is told — so the number it is handed is the FINAL damage: the pen gate
+	 * and the resists and the falloff are all already inside it, and it is the same number that came
+	 * off the target. Any source, any weapon, a teammate caught in it included.
+	 *
+	 * The BODY is what is credited, so it is the blade this body CARRIES that fills — a kill with the
+	 * secondaries feeds the pack exactly as a sword kill does.
+	 */
+	static void NotifyDamageDealt(AActor* Dealer, float DamageDealt);
+
+	/**
+	 * What is left in this blade's blood.
+	 *
+	 * The pool is the blade's MagSize row — how much it holds — and what is LEFT of it is runtime, kept
+	 * in its own slot's store on the carrier (the store is what outlives the weapon actor the rig
+	 * rebuilds). A float, because the pool is spent as a rate.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Blade")
+	float GetBlood();
+
+	/** How big this blade's pool is: its own MagSize row, read FINAL. */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Blade")
+	float GetMaxBlood() const;
+
+	/** Put blood back in the pool, capped at how big it is. A pool is never overfilled. */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Blade")
+	void AddBlood(float Amount);
+
+	/**
+	 * Pay this blade's own use cost out of the pool.
+	 *
+	 * TRUE when the blood was there and is now spent, FALSE when the pool cannot cover it — and a
+	 * refusal is the whole answer: the swing does not happen and nothing is spent. What a refused
+	 * swing behaves like with the blood-mode toggle ON is that toggle's business, not this call's.
+	 */
+	virtual bool SpendBlood(float Cost) override;
+
+	/**
+	 * The RELOAD key, as a sword reads it: turn the **blood mode** on and off.
+	 *
+	 * It is the same key a gun reloads on, and this is the cleanest of every key a sword could take:
+	 * the key already asks the thing in hand (`ReloadTheWeaponInHand`), the gun's own answer carries
+	 * its own magazine swap AND its own reload animation, and a sword's answer is therefore the whole
+	 * of what happens — nothing gun-side is sitting downstream waiting to play. Blood is what a sword
+	 * reloads; that is the thematic of it, and it leaves the melee key free.
+	 *
+	 * OFF is how a blade comes out — the mode is a choice the player makes, not a state he is put in.
+	 */
+	virtual void ReloadAction_Implementation() override;
+
+	/**
+	 * Whether the blood mode is on: the pool pays first, and the BODY pays whatever the pool cannot.
+	 *
+	 * OFF is how a blade comes out — the mode is a choice the player makes, not a state he is put in.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Blade")
+	bool IsBloodModeOn() const { return bBloodMode; }
+
+	/** Turn the blood mode on or off, and say so out loud: a mode nobody can see is a bug. */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Blade")
+	void SetBloodMode(bool bOn);
 
 	/** Whether this blade's combo is running right now. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Blade")
@@ -289,4 +365,34 @@ private:
 
 	/** Everyone this swing has already been through, so one swing cuts a body once. */
 	TArray<TWeakObjectPtr<AActor>> CutThisSwing;
+
+	/** The slot store this blade's blood lives in, or null while the blade is on no carrier. */
+	FProsperitocracyWeaponAmmo* GetTheBloodStore();
+
+	/** Whether the pool has been filled from the block's own MagSize yet. */
+	bool bBloodSeeded = false;
+
+	/** Whether the blood mode is on. Off until the player asks for it, and never on its own. */
+	bool bBloodMode = false;
+
+	/**
+	 * Take this much out of the BODY instead of the pool — the whole of what the blood mode buys.
+	 *
+	 * Written straight onto the body's Health, because it is not damage from anyone: nothing struck it,
+	 * so there is no line, no type and no gate to ask, and it never becomes contested. The health set
+	 * clamps it the same way it clamps anything else, so this can bottom the body out and kill it.
+	 */
+	bool DrainTheBody(float Amount);
+
+	/** What the pool loses per second while this blade is out — its own BloodDrain row, read FINAL. */
+	float GetBloodDrainPerSecond() const;
+
+	/** What ONE use of this blade costs — its own BloodCost row, read FINAL. */
+	float GetBloodCostPerUse() const;
+
+	/**
+	 * The pool bleeding while the blade is OUT: a rate taken off it every frame, so nothing about it
+	 * steps. A stowed blade costs nothing — carrying it is free, HOLDING it is not.
+	 */
+	void BleedThePool(float DeltaSeconds);
 };

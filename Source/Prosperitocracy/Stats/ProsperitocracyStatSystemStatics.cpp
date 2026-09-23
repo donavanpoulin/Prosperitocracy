@@ -74,6 +74,11 @@ FGameplayAttribute UProsperitocracyStatSystemStatics::GetAttributeForStat(EProsp
 		// The pen gate's threshold, on the enemy PART's own GAS home beside its resists
 		// (Design/damage.md). Enemy parts only: a player carries no armour and answers with resists.
 		{ EProsperitocracyStat::Armor, UProsperitocracyThingStatSet::GetArmorAttribute() },
+		// What a thing that drinks blood costs to use — the slow bleed while it is out and what one
+		// use of it takes, both on the thing's own GAS home like every other thing stat
+		// (Design/classes/reclaimer.md).
+		{ EProsperitocracyStat::BloodDrain, UProsperitocracyThingStatSet::GetBloodDrainAttribute() },
+		{ EProsperitocracyStat::BloodCost, UProsperitocracyThingStatSet::GetBloodCostAttribute() },
 	};
 
 	if (const FGameplayAttribute* Found = Registry.Find(Stat))

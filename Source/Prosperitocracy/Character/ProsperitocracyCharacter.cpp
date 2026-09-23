@@ -65,6 +65,21 @@ AProsperitocracyWeapon* AProsperitocracyCharacter::GetGunWeaponInHand() const
 
 bool AProsperitocracyCharacter::MeleeWithGunInHand()
 {
+	// THE MELEE KEY ASKS THE THING IN HAND, exactly as the fire, the reload and the second button do:
+	// a gun answers with the bash, a blade with its blood-mode toggle, and the body never learns which
+	// of them it asked.
+	AProsperitocracyWeapon* Weapon = GetGunWeaponInHand();
+	if (!Weapon)
+	{
+		return false;
+	}
+
+	Weapon->MeleeAction();
+	return true;
+}
+
+bool AProsperitocracyCharacter::RunTheBash()
+{
 	// The bash is an ABILITY (UProsperitocracyGameplayAbility_Bash): this body does not swing anything
 	// itself, it asks the character's ability system to run the bash — and the bash owns the swing, its
 	// reach (its Range stat) and its damage. Nothing in hand is the ability's own business: it refuses
@@ -134,6 +149,15 @@ bool AProsperitocracyCharacter::IsTheWeaponInHandAiming() const
 	// the key that asked it.
 	const AProsperitocracyWeapon* Weapon = GetGunWeaponInHand();
 	return Weapon && Weapon->IsAiming();
+}
+
+bool AProsperitocracyCharacter::IsTheWeaponInHandAGun() const
+{
+	// A gun is a weapon with a FIRE MODE and nothing else is — the project's own test (Design/weapons.md)
+	// — so a melee answers false and the graph's gun-side chain stays shut for it. Asked of the thing in
+	// the hand, never inferred from which hand it came out of.
+	const AProsperitocracyWeapon* Weapon = GetGunWeaponInHand();
+	return Weapon && Weapon->HasAFireMode();
 }
 
 bool AProsperitocracyCharacter::SetSlotOut(FGameplayTag Slot, bool bOut)

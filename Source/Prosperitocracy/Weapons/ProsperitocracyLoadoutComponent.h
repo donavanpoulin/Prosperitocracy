@@ -35,6 +35,19 @@ struct FProsperitocracyWeaponAmmo
 	/** Rounds in the spare magazines this slot carries. */
 	UPROPERTY(BlueprintReadOnly, Category = "Ammo")
 	int32 Spare = 0;
+
+	/**
+	 * The BLOOD this slot is holding, for a thing whose "ammo" is a pool rather than rounds.
+	 *
+	 * A FLOAT, because blood is spent as a RATE — the idle bleed comes off it every frame — and a pool
+	 * that could only be spent in whole units would step. It lives HERE, in the slot's store, for the
+	 * same reason a gun's magazine does: the store is what outlives the weapon actor the rig rebuilds.
+	 *
+	 * How big the pool is comes off the thing's own `MagSize` row; this is only what is left in it. A
+	 * gun never touches it (presence is scope), and a melee never swaps it — nothing reloads blood.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Ammo")
+	float Blood = 0.0f;
 };
 
 /**

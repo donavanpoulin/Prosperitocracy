@@ -10,6 +10,7 @@
 #include "ProsperitocracyGameplayTags.h"
 #include "Engine/World.h"
 #include "ProsperitocracyLogChannels.h"
+#include "Weapons/ProsperitocracyBloodBlade.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyDamageExecution)
 
@@ -168,6 +169,12 @@ void UProsperitocracyDamageExecution::Execute_Implementation(const FGameplayEffe
 		// teammate included: the game does not discriminate.
 		UProsperitocracyGameplayAbility_ContestedHealth::NotifyDamageTaken(HitActor, TotalDamage);
 		UProsperitocracyGameplayAbility_ContestedHealth::NotifyDamageDealt(Spec.GetContext().GetInstigator(), TotalDamage);
+
+		// And the BLOOD — the second thing that follows real damage, told in the same breath and handed
+		// the same number: the blade this body carries drinks a share of what it took off a target,
+		// whichever weapon did the taking. Inside `TotalDamage` are the pen gate, the resists and the
+		// falloff, because it is the number that actually came off the target.
+		AProsperitocracyBloodBlade::NotifyDamageDealt(Spec.GetContext().GetInstigator(), TotalDamage);
 	}
 #endif // #if WITH_SERVER_CODE
 }

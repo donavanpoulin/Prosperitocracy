@@ -64,6 +64,9 @@ public:
 	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, TrimColor1);
 	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, TrimColor2);
 	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, TrimColor3);
+	// --- What a thing that DRINKS BLOOD costs to use (Design/classes/reclaimer.md) ---
+	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, BloodDrain);
+	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, BloodCost);
 	// --- Receiver side: the pen gate's threshold, on an enemy part (Design/damage.md) ---
 	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, Armor);
 
@@ -223,6 +226,21 @@ private:
 	// OWN GAS home, so it is read FINAL like every other stat and a perk can move it.
 	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_Armor, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
 	FGameplayAttributeData Armor;
+
+	// pool per second — the slow bleed a thing takes out of the blood WHILE IT IS OUT: a rate, so the
+	// pool is eaten smoothly rather than in units. A thing with a drain bleeds; a thing without one
+	// simply does not (presence is scope), and no perk targets it — which is not what makes it a row.
+	//
+	// No RepNotify on either of these: nothing LISTENS to them. They are read where they are spent.
+	UPROPERTY(BlueprintReadOnly, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
+	FGameplayAttributeData BloodDrain;
+
+	// pool per USE — what one use of this thing takes out of the blood: one swing, one ability. Read by
+	// the thing being used, so a blade's swing and each of its abilities carry their own cost with
+	// nothing branching on which is which. The pool's SIZE is its own MagSize row; only what is left of
+	// it is runtime, and that lives in the carrier's ammo store.
+	UPROPERTY(BlueprintReadOnly, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
+	FGameplayAttributeData BloodCost;
 };
 
 #undef UE_API

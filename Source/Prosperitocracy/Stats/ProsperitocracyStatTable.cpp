@@ -39,6 +39,13 @@ void UProsperitocracyStatTable::BuildCanonicalStats(TArray<FProsperitocracyStatT
 	// thing stat set reads at base 0.
 	Add(EProsperitocracyStat::Armor, 0.0f);
 
+	// --- What a thing that drinks blood costs to use (Design/classes/reclaimer.md) ---
+
+	// The bleed while a thing is OUT, in pool per second, and what ONE use of it takes. Default 0 both
+	// ways: a thing that says nothing about blood bleeds none and costs none — presence is scope.
+	Add(EProsperitocracyStat::BloodDrain, 0.0f);
+	Add(EProsperitocracyStat::BloodCost, 0.0f);
+
 	// --- Character stats ---
 	Add(EProsperitocracyStat::Health, 0.0f);
 	Add(EProsperitocracyStat::MoveSpeed, 0.0f);

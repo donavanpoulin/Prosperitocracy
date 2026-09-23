@@ -234,11 +234,6 @@ bool UProsperitocracyGameplayAbility_BladeDash::StartTheDash(AProsperitocracyCha
 		return false;
 	}
 
-	// AND ONLY NOW DOES THE MOVE THAT WAS GOING STAND DOWN. This is the order that matters: the check
-	// comes FIRST, so a press during the COMBO's attack interrupts nothing at all — the combo only ever
-	// gives way inside its own RECOVERY, which is exactly where the player is allowed to choose.
-	Blade->StandDownForANewMove();
-
 	// THE COOLDOWN, asked before anything is spent, and its answer is a refusal rather than a silence.
 	UWorld* World = GetWorld();
 	if (World && World->GetTimeSeconds() < ReadyAt)
@@ -247,6 +242,21 @@ bool UProsperitocracyGameplayAbility_BladeDash::StartTheDash(AProsperitocracyCha
 			*GetPathName(), FMath::Max(0.0f, ReadyAt - World->GetTimeSeconds()), GetCooldownSeconds());
 		return false;
 	}
+
+	// AND THE BLOOD: this ability's own use cost, out of the pool the thing in hand carries. Its own
+	// BloodCost row, read FINAL through this ability's GAS home — so a sword ability pays for itself out
+	// of the sword, and a thing with no pool (a gun) pays nothing at all. Paid BEFORE the move that is
+	// running is stood down, so a dash that cannot be paid for interrupts nothing.
+	if (!Blade->SpendBlood(GetStatFinalValue(EProsperitocracyStat::BloodCost)))
+	{
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Dash] %s: not enough blood to dash."), *GetPathName());
+		return false;
+	}
+
+	// AND ONLY NOW DOES THE MOVE THAT WAS GOING STAND DOWN. This is the order that matters: the checks
+	// come FIRST, so a press during the COMBO's attack interrupts nothing at all — the combo only ever
+	// gives way inside its own RECOVERY, which is exactly where the player is allowed to choose.
+	Blade->StandDownForANewMove();
 
 	if (!Blade->GetDamageEffectClass())
 	{

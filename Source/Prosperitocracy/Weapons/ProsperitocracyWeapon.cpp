@@ -89,6 +89,28 @@ void AProsperitocracyWeapon::StandDownForANewMove()
 	// combo ends, because the body cannot wear two animations at once.
 }
 
+bool AProsperitocracyWeapon::SpendBlood(float Cost)
+{
+	// A thing with no blood owes none: true, and nothing taken. Only a thing whose whole use lives on
+	// a pool answers this with real work (the blade), and a cost of nothing is free everywhere.
+	return true;
+}
+
+void AProsperitocracyWeapon::MeleeAction_Implementation()
+{
+	// THE DEFAULT IS THE BASH: a gun's melee is the bash ability, and the body's own door is what runs
+	// it. The test is the project's own — a gun is a weapon with a fire mode — so a melee gets no
+	// default here and answers for itself, and nothing outside this weapon has to know which of the
+	// two the player is holding.
+	if (HasAFireMode())
+	{
+		if (AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(OwningPawn.Get()))
+		{
+			Body->RunTheBash();
+		}
+	}
+}
+
 void AProsperitocracyWeapon::BeginPlay()
 {
 	Super::BeginPlay();

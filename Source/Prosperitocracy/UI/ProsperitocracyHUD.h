@@ -8,6 +8,7 @@
 #include "ProsperitocracyHUD.generated.h"
 
 class UProsperitocracyHealthSet;
+class AProsperitocracyBloodBlade;
 
 /**
  * AProsperitocracyHUD
@@ -56,7 +57,45 @@ public:
 	 */
 	static constexpr uint32 HealthColorHex = 0xB3001C;
 
+	//~ The BLOOD bar — the sword's own pool, and only a body carrying a blade has one.
+	//
+	// The health bar's own size turned on its side, in the bottom RIGHT corner so the two never crowd
+	// each other: the same 20% of the screen long, the same 10 pixels thin, the same margins mirrored.
+	// It reads like the health bar does — what you are HOLDING is drawn and the rest is left alone.
+	static constexpr float BloodBarThicknessPixels = 10.0f;
+	static constexpr float BloodBarLengthShareOfScreen = 0.2f;
+	static constexpr float BloodBarRightMarginPixels = 40.0f;
+	static constexpr float BloodBarBottomMarginPixels = 70.0f;
+
+	/**
+	 * The blood's colour: a DARKER red than the health's crimson, because it is blood rather than health.
+	 * The whole mode is three reds with one order to them — the blood lightest, the mode's background
+	 * between, and the mode's border darkest.
+	 */
+	static constexpr uint32 BloodColorHex = 0x8C0014;
+
+	/** The panel behind the bar while the blood mode is ON: a dark red between the blood and the border. */
+	static constexpr uint32 BloodModeBackdropHex = 0x3A0008;
+
+	/** And the border in the blood mode: the darkest of the three, so the bar reads as a lit panel. */
+	static constexpr uint32 BloodModeBorderHex = 0x140002;
+
+	/**
+	 * How fast the bar chases the real number, so it FALLS and RISES smoothly instead of stepping from
+	 * one frame's value to the next. `[TUNE]`.
+	 */
+	static constexpr float BloodBarSmoothingRate = 8.0f;
+
 protected:
 	/** The health set of the body this HUD is showing, or null when there is none to show. */
 	const UProsperitocracyHealthSet* GetOwningHealthSet() const;
+
+	/** The blade this body carries, or null when it carries none — no blade, no blood bar. */
+	AProsperitocracyBloodBlade* FindOwningBloodBlade() const;
+
+	/**
+	 * What the bar is DRAWN at (0–1), chasing the real pool. Kept on the HUD because it is a fact about
+	 * the picture and not about the game: the pool itself never moves smoothly, and should not.
+	 */
+	float SmoothedBloodFraction = 1.0f;
 };

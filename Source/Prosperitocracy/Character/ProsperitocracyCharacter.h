@@ -79,16 +79,28 @@ public:
 	AProsperitocracyWeapon* GetGunWeaponInHand() const;
 
 	/**
-	 * The player's melee: run the bash ability. False when there is nothing in hand, when the ability
-	 * system is missing, or when the ability would not activate (mid-swing, for instance).
+	 * The MELEE KEY, as this body reads it: ask the thing in hand what that key means to it.
 	 *
-	 * The one door the rig's melee action needs. The bash is an ability with its own stat block
-	 * (UProsperitocracyGameplayAbility_Bash), so the body needs to know nothing about it — not which
-	 * gun is in hand, not how far the swing reaches, not what it is worth. It makes one call per swing,
-	 * whatever is held, and there is no cast to a gun type anywhere in the graph.
+	 * A gun answers with the bash (its own melee); a blade answers with its blood-mode toggle; a thing
+	 * with neither answers with nothing. The body asks and learns nothing — the same door shape as the
+	 * fire, the reload and the second button, so ONE key can mean two things without a single branch on
+	 * what is held.
+	 *
+	 * False when there is nothing in hand: a key with nothing behind it does nothing.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
 	bool MeleeWithGunInHand();
+
+	/**
+	 * Run the bash ability — the melee every GUN has.
+	 *
+	 * The answer a gun's own melee action gives, and the only thing that knows the ability's tag: the
+	 * bash is addressed by its own input tag (the grant carries it), so nothing here knows what the
+	 * ability is or where it was granted. False when the ability system is missing or the bash would
+	 * not activate (mid-swing, for instance).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	bool RunTheBash();
 
 	/**
 	 * Reload whatever this body is holding — the one door the rig's reload action needs.
@@ -139,6 +151,18 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
 	bool IsTheWeaponInHandAiming() const;
+
+	/**
+	 * Whether this body is holding a GUN — a weapon with a fire mode — which is the project's own test
+	 * and the one question the melee key's own chain needs.
+	 *
+	 * It is the GATE the template's melee chain is behind, and it is asked of the thing in the hand
+	 * rather than of anything the graph could guess: the gun-side of that chain (the swing's animation,
+	 * its lock) belongs to a GUN, and a sword in hand must not reach any of it. False for a melee, and
+	 * false for nothing in hand.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	bool IsTheWeaponInHandAGun() const;
 
 	/**
 	 * Bring whatever a slot carries OUT, or put it away. THE one door, and what happens is the
