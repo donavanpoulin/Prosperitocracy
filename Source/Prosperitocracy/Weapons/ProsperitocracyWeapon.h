@@ -117,6 +117,94 @@ public:
 	bool ApplyLoadoutEntry(const FGameplayTag& InSlot, UProsperitocracyStatTable* InStatBlock, TSubclassOf<UGameplayEffect> InDamageEffectClass, UProsperitocracyLoadoutComponent* InOwnerLoadout, APawn* InOwningPawn = nullptr);
 
 	/**
+	 * This thing's PRIMARY ACTION — what a press means when this is the weapon in the hand.
+	 *
+	 * THE PRESS BELONGS TO THE WEAPON, and never to the character's graph. The input asks the thing
+	 * in the hand to do its own job and then forgets about it: a gun runs its own fire graph, a melee
+	 * runs its own swing, and neither the graph nor the body knows which it is holding.
+	 *
+	 * That is why this is declared HERE, on the base every weapon shares, and not left as a custom
+	 * event on one gun's blueprint: a graph that has to cast the hand to a specific weapon before it
+	 * can do anything has to be told what every weapon in the game is — which is exactly how a sword
+	 * came to be unusable unless it was dressed up as a rifle.
+	 *
+	 * BlueprintNativeEvent because both kinds of implementation are real: the gun's is a blueprint
+	 * graph it already has, and a melee's is code. The C++ default does nothing, which is the honest
+	 * answer for a thing with no primary action.
+	 */
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	void PrimaryAction();
+	virtual void PrimaryAction_Implementation();
+
+	/**
+	 * This thing's RELOAD action, on the same terms as the primary one.
+	 *
+	 * A gun swaps a magazine; a melee has no reload at all and its default says so by doing nothing.
+	 */
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	void ReloadAction();
+	virtual void ReloadAction_Implementation();
+
+	/**
+	 * Whether this thing comes out with a DRAW of its own and a STANCE of its own.
+	 *
+	 * A gun says YES: it has an equip animation and a sound, and while it is out the body holds the
+	 * stance that goes with it — so the rig plays its draw and tells the body which stance it is.
+	 *
+	 * A melee says NO: it is simply in the hand. It appears there, it follows the hand, and the body
+	 * keeps the anims it already runs with. There is no draw to play and no stance to take.
+	 *
+	 * The WEAPON states this about itself, and that is the whole point of it living here: neither the
+	 * rig, nor the input, nor the body has to know which of the two it is holding — the rig asks the
+	 * thing it is bringing out, and does what it is told. Without this, the hand a weapon sits in is
+	 * what decided its draw and its stance, which is exactly how a sword came to be a rifle.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Weapon")
+	bool bDrawnWithItsOwnAnimation = true;
+
+	/**
+	 * The draw THIS weapon plays as it comes out of its socket and into the hand.
+	 *
+	 * Empty is a real answer, and for a melee it is the true one: there is no draw, because there is
+	 * nothing to draw — a sword is simply in the hand. The character's key press used to name a
+	 * montage for the hand it was bringing out, which is why every weapon after the first came out to
+	 * the first one's animation.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Weapon")
+	TObjectPtr<UAnimMontage> DrawMontage;
+
+	/**
+	 * The animation THIS weapon plays as it goes away again.
+	 *
+	 * The other half of the draw, and the weapon's answer for the same reason: a gun has a holster of
+	 * its own, and a melee has none — it simply leaves the hand. Empty is a real answer.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Weapon")
+	TObjectPtr<UAnimMontage> StowMontage;
+
+	/**
+	 * Where this weapon sits while it is OUT, and where it sits while it is away.
+	 *
+	 * Both are the WEAPON's own answers, because a socket is part of what a weapon is: a rifle is
+	 * held where a rifle is held and a pistol where a pistol is. While these lived in the character's
+	 * key press, they were the first weapon's sockets, worn by everything that came after it.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Weapon")
+	FName HandSocket;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Weapon")
+	FName AwaySocket;
+
+	/**
+	 * Which slot of its carrier's loadout this weapon fills.
+	 *
+	 * Handed over by the loadout when it was dressed, and empty until then. It is how a weapon in the
+	 * world says where it belongs without anyone holding a list of which component is which hand.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	FGameplayTag GetSlotTag() const { return Slot; }
+
+	/**
 	 * Make sure this gun has its numbers, and return whether it does.
 	 *
 	 * Called on BeginPlay AND on first use, because a gun spawned by a child actor component is NOT in
@@ -261,6 +349,18 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	/**
+	 * Whether the RIG says this thing is the one being held — asked of the body, never assumed.
+	 *
+	 * A READ, and deliberately the only thing this class knows about where it sits. Where a weapon
+	 * SITS belongs to the rig: the character blueprint's own equip path is what moves a channel
+	 * between the hand and the body, socket by socket, and it is what animates and sounds the move.
+	 * A weapon that moved its own channel would be a second writer of the same socket — which is
+	 * exactly how the pistol came to be un-equippable — so this class asks where it is and never
+	 * moves itself.
+	 */
+	bool IsHeldInRig() const;
 
 	/**
 	 * Which slot of its owner's loadout this gun is. Handed over by the loadout, along with the

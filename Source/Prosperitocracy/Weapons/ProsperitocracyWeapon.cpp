@@ -35,6 +35,26 @@ AProsperitocracyWeapon::AProsperitocracyWeapon()
 	PrimaryActorTick.bCanEverTick = true;
 }
 
+bool AProsperitocracyWeapon::IsHeldInRig() const
+{
+	// The rig decides which weapon is out; this thing only asks. The same answer a shot is sent along.
+	const AProsperitocracyCharacter* Character = Cast<AProsperitocracyCharacter>(OwningPawn.Get());
+	return Character && Character->GetGunInHand() == this;
+}
+
+void AProsperitocracyWeapon::PrimaryAction_Implementation()
+{
+	// Nothing. A thing with no primary action has none, and saying so here is what lets the input
+	// ask ANY weapon to do its job without being told what that weapon is. A gun's blueprint and a
+	// melee's class each answer this for themselves; this is the answer for a thing that does not.
+}
+
+void AProsperitocracyWeapon::ReloadAction_Implementation()
+{
+	// A thing with no magazine has nothing to swap. A melee never reloads — not "reloads instantly",
+	// never reloads.
+}
+
 void AProsperitocracyWeapon::BeginPlay()
 {
 	Super::BeginPlay();
