@@ -214,6 +214,17 @@ public:
 	bool HasAFireMode() const;
 
 	/**
+	 * Another move is about to take the stage on this weapon's owner: stand down.
+	 *
+	 * A body wears ONE move at a time, so whatever this weapon had running has to end when something
+	 * else starts — a blade's combo when an ability takes over, and nothing at all for a gun, which
+	 * holds no move of its own. It is declared HERE so the thing that is starting does not have to
+	 * know WHAT it is taking over from: it asks the thing in the hand, exactly as every other door in
+	 * the weapon does.
+	 */
+	virtual void StandDownForANewMove();
+
+	/**
 	 * Whether this thing comes out with a DRAW of its own and a STANCE of its own.
 	 *
 	 * A gun says YES: it has an equip animation and a sound, and while it is out the body holds the

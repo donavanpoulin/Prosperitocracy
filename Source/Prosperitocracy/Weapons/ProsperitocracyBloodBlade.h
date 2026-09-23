@@ -91,6 +91,19 @@ public:
 	 */
 	virtual void SecondaryAction_Implementation() override;
 
+	/**
+	 * Something else is taking the stage on this body: the combo stands down.
+	 *
+	 * A body wears ONE move at a time — two of our montages play in the SAME slot, so a move started
+	 * without the last one ending does not replace it, it blends with it — and the body's own picture
+	 * door is what swaps the animation. This is the other half: the combo's own state ends, so no
+	 * press is an attack any more, nothing goes on biting, and no window is left open behind it.
+	 *
+	 * The thing that is starting asks for this through the weapon in hand (`StandDownForANewMove`), so
+	 * it never has to know what it is taking over from.
+	 */
+	virtual void StandDownForANewMove() override;
+
 	/** Whether this blade's combo is running right now. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Blade")
 	bool IsSwinging() const { return bSwinging; }
@@ -182,6 +195,15 @@ private:
 
 	/** The numbers half: the line, the distance and the time, handed to the BODY and then let go. */
 	void BeginTheBodyAttack(int32 AttackIndex);
+
+	/**
+	 * End whatever the RIGHT button's ability is running, if it is running.
+	 *
+	 * The blade knows which ability its own slot names, and a move started by the left button ends it
+	 * by name — the ability's own EndAbility stops its clock, its window, its sweep and its facing, so
+	 * nothing of it keeps working underneath the combo.
+	 */
+	void EndTheOtherMove();
 
 	/**
 	 * One sweep of the swing, at the moment it is made.

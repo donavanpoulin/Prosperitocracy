@@ -75,7 +75,7 @@ private:
 	 * that does nothing: no body, no blade in hand, no block (so no Range, no Cooldown, no numbers),
 	 * an attack already live, or the cooldown still running.
 	 */
-	bool StartTheDash(AProsperitocracyCharacter* Body, const AProsperitocracyWeapon* Blade);
+	bool StartTheDash(AProsperitocracyCharacter* Body, AProsperitocracyWeapon* Blade);
 
 	/** One step of the move's own clock: the cut, the window, and the recovery's picture. */
 	void DashStep();

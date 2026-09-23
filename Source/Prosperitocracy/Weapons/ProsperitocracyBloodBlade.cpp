@@ -199,13 +199,37 @@ bool AProsperitocracyBloodBlade::PlayOrAdvanceCombo()
 		return true;
 	}
 
+	// AN ATTACK THE PLAYER HAS COMMITTED TO IS NEVER OVERWRITTEN — EITHER MOVE'S. The body is the one
+	// authority on that: it holds the attack, and it is LOCKED for the whole of one, whichever move
+	// started it. So a press inside the DASH's own attack does nothing at all, and the only place the
+	// combo takes over is the dash's RECOVERY — where the body is unlocked and the player is choosing.
+	if (const AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(OwningPawn.Get()))
+	{
+		if (Body->IsSwingLocked())
+		{
+			UE_LOG(LogProsperitocracy, Verbose, TEXT("[Blade] %s: an attack is live — nothing happens"), *GetName());
+			return false;
+		}
+	}
+
+	// A NEW ATTACK TAKES THE STAGE, so the MOVE THAT WAS ALREADY GOING ENDS FIRST — the one the right
+	// button runs is an ability, and the blade ends it by the name its own slot holds. Nothing of it
+	// keeps running underneath this: not its clock, not its window, not its sweep, not its facing.
+	EndTheOtherMove();
+
 	if (!bSwinging)
 	{
-		// NOTHING IS LIVE, so the combo starts at its FIRST attack.
-		const float Length = Anim->Montage_Play(ComboMontage, GetComboPlayRate(), EMontagePlayReturnType::MontageLength,
-			/*InTimeToStartMontageAt=*/ 0.0f, /*bStopAllMontages=*/ false);
-		Anim->Montage_JumpToSection(FName(ProsperitocracyBladeCombo::Attacks[0]), ComboMontage);
+		// NOTHING IS LIVE, so the combo starts at its FIRST attack, and its picture goes on through the
+		// BODY's own door: the body takes the last move's picture off with its own blend-out first, so
+		// two of our animations can never blend into a pose that is half of each.
 		AttackIndex = 0;
+
+		if (AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(OwningPawn.Get()))
+		{
+			Body->BeginMovePicture(ComboMontage, FName(ProsperitocracyBladeCombo::Attacks[0]), GetComboPlayRate());
+		}
+
+		const float Length = ComboMontage ? ComboMontage->GetPlayLength() : 0.0f;
 
 		// The combo's own numbers, said out loud once per start: what each attack is worth in the
 		// world at its base speed, and the Rate number the row SHOULD hold for base to mean base.
@@ -232,12 +256,12 @@ bool AProsperitocracyBloodBlade::PlayOrAdvanceCombo()
 		// recovery and kept the combo going gets the attack, not a restart.
 		AttackIndex = (CurrentAttack + 1) % ProsperitocracyBladeCombo::NumAttacks();
 
-		if (!Anim->Montage_IsPlaying(ComboMontage))
+		// The next attack's picture, through the body's door — the same file, so this is a jump within
+		// the montage already playing, and nothing else is left blending beside it.
+		if (AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(OwningPawn.Get()))
 		{
-			Anim->Montage_Play(ComboMontage, GetComboPlayRate(), EMontagePlayReturnType::MontageLength,
-				/*InTimeToStartMontageAt=*/ 0.0f, /*bStopAllMontages=*/ false);
+			Body->BeginMovePicture(ComboMontage, FName(ProsperitocracyBladeCombo::Attacks[AttackIndex]), GetComboPlayRate());
 		}
-		Anim->Montage_JumpToSection(FName(ProsperitocracyBladeCombo::Attacks[AttackIndex]), ComboMontage);
 
 		UE_LOG(LogProsperitocracy, Log, TEXT("[Blade] %s: the window is open — straight to %s"),
 			*GetName(), ProsperitocracyBladeCombo::Attacks[AttackIndex]);
@@ -540,4 +564,43 @@ void AProsperitocracyBloodBlade::SecondaryAction_Implementation()
 	}
 
 	const_cast<UProsperitocracyAbilitySystemComponent*>(AbilitySystemComponent)->TryActivateAbilityByClass(SecondaryAbility);
+}
+
+void AProsperitocracyBloodBlade::StandDownForANewMove()
+{
+	// THE COMBO IS OVER: something else is taking the stage on this body. The picture is the body's to
+	// swap (see BeginMovePicture) and the facing is taken by the move that is starting, so all this
+	// owes is its own state — no press is an attack any more, nothing goes on biting, and the window
+	// behind it closes.
+	if (bSwinging)
+	{
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Blade] %s: another move is starting — the combo stands down"), *GetName());
+		EndTheCombo();
+	}
+}
+
+void AProsperitocracyBloodBlade::EndTheOtherMove()
+{
+	if (!SecondaryAbility)
+	{
+		return;
+	}
+
+	UProsperitocracyAbilitySystemComponent* AbilitySystemComponent = Cast<UProsperitocracyAbilitySystemComponent>(
+		UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(OwningPawn.Get()));
+	if (!AbilitySystemComponent)
+	{
+		return;
+	}
+
+	// Cancelling it IS ending the move: the ability's own EndAbility stops its clock, drops its window
+	// and lets the facing go — so a move the player is no longer in never keeps working beneath him.
+	if (const FGameplayAbilitySpec* Spec = AbilitySystemComponent->FindAbilitySpecFromClass(SecondaryAbility))
+	{
+		if (Spec->IsActive())
+		{
+			UE_LOG(LogProsperitocracy, Log, TEXT("[Blade] %s: the right-click move is standing down for the combo"), *GetName());
+			AbilitySystemComponent->CancelAbilityHandle(Spec->Handle);
+		}
+	}
 }

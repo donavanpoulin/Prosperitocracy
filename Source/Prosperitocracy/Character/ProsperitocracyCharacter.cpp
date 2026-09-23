@@ -6,8 +6,11 @@
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyStatusComponent.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "Components/ChildActorComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "ProsperitocracyGameplayTags.h"
@@ -261,6 +264,44 @@ void AProsperitocracyCharacter::BeginAttack(const FVector& LineDirection, float 
 	// look exactly the same in the world, and only one of them is a bug.
 	UE_LOG(LogProsperitocracy, Log, TEXT("[Body] attack — %.0f cm over %.2fs of a %.2fs attack along %s"),
 		AttackDistanceCm, AttackTravelSeconds, AttackSeconds, *AttackLine.ToCompactString());
+}
+
+void AProsperitocracyCharacter::BeginMovePicture(UAnimMontage* Montage, FName Section, float PlayRate)
+{
+	if (!Montage)
+	{
+		return;
+	}
+
+	const USkeletalMeshComponent* Body = GetMesh();
+	UAnimInstance* Anim = Body ? Body->GetAnimInstance() : nullptr;
+	if (!Anim)
+	{
+		return;
+	}
+
+	// THE LAST MOVE'S PICTURE COMES OFF FIRST, and with ITS OWN blend-out: two of our montages play in
+	// the same slot, so a second one started without this would BLEND with the first instead of
+	// replacing it — half of each clip, which reads as the animation itself being wrong.
+	if (const UAnimMontage* Last = MovePicture.Get())
+	{
+		if (Last != Montage && Anim->Montage_IsPlaying(Last))
+		{
+			Anim->Montage_StopWithBlendOut(Last->GetBlendOutArgs(), Last);
+		}
+	}
+
+	// And the new one comes on with its OWN blend-in, at the rate the move the player reads says.
+	if (!Anim->Montage_IsPlaying(Montage))
+	{
+		Anim->Montage_Play(Montage, PlayRate, EMontagePlayReturnType::MontageLength,
+			/*InTimeToStartMontageAt=*/ 0.0f, /*bStopAllMontages=*/ false);
+	}
+
+	Anim->Montage_JumpToSection(Section, Montage);
+
+	// This is the picture this body is wearing now, so the NEXT move knows what to take off.
+	MovePicture = Montage;
 }
 
 void AProsperitocracyCharacter::EndAttack()

@@ -82,6 +82,13 @@ bool AProsperitocracyWeapon::HasAFireMode() const
 	return StatBlockAsset && StatBlockAsset->GetFireMode().IsValid();
 }
 
+void AProsperitocracyWeapon::StandDownForANewMove()
+{
+	// Nothing. A gun holds no move of its own — its fire is a shot, and its aim is a state — so there
+	// is nothing here to end. A weapon that DOES hold a move answers this for itself: the blade's
+	// combo ends, because the body cannot wear two animations at once.
+}
+
 void AProsperitocracyWeapon::BeginPlay()
 {
 	Super::BeginPlay();

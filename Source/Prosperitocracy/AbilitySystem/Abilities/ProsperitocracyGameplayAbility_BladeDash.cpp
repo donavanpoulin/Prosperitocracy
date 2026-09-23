@@ -187,7 +187,7 @@ void UProsperitocracyGameplayAbility_BladeDash::ActivateAbility(const FGameplayA
 
 	AActor* Avatar = ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr;
 	AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(Avatar);
-	const AProsperitocracyWeapon* Blade = Body ? Body->GetGunWeaponInHand() : nullptr;
+	AProsperitocracyWeapon* Blade = Body ? Body->GetGunWeaponInHand() : nullptr;
 
 	if (!Body || !Blade || !StatBlock)
 	{
@@ -217,7 +217,7 @@ void UProsperitocracyGameplayAbility_BladeDash::ActivateAbility(const FGameplayA
 	}
 }
 
-bool UProsperitocracyGameplayAbility_BladeDash::StartTheDash(AProsperitocracyCharacter* Body, const AProsperitocracyWeapon* Blade)
+bool UProsperitocracyGameplayAbility_BladeDash::StartTheDash(AProsperitocracyCharacter* Body, AProsperitocracyWeapon* Blade)
 {
 	if (!Body || !Blade || bDashing)
 	{
@@ -233,6 +233,11 @@ bool UProsperitocracyGameplayAbility_BladeDash::StartTheDash(AProsperitocracyCha
 		UE_LOG(LogProsperitocracy, Verbose, TEXT("[Dash] %s: an attack is live — nothing happens"), *GetPathName());
 		return false;
 	}
+
+	// AND ONLY NOW DOES THE MOVE THAT WAS GOING STAND DOWN. This is the order that matters: the check
+	// comes FIRST, so a press during the COMBO's attack interrupts nothing at all — the combo only ever
+	// gives way inside its own RECOVERY, which is exactly where the player is allowed to choose.
+	Blade->StandDownForANewMove();
 
 	// THE COOLDOWN, asked before anything is spent, and its answer is a refusal rather than a silence.
 	UWorld* World = GetWorld();
@@ -268,20 +273,16 @@ bool UProsperitocracyGameplayAbility_BladeDash::StartTheDash(AProsperitocracyCha
 	CutThisDash.Reset();
 	bDashing = true;
 
-	// The picture, at the rate the player reads off Rate. The montage carries its own blend-in, so
-	// coming out of the combo's recovery into this is the animation's business and never a hard cut.
-	if (UAnimInstance* Anim = GetBodyAnimInstance())
+	// The picture, through the BODY's own door: it takes the last move's picture off with ITS OWN
+	// blend-out first, so a dash coming out of a combo is a handover — never two clips blended in one
+	// slot, which reads to the player as the animation itself being wrong.
+	if (DashMontage)
 	{
-		if (DashMontage)
-		{
-			Anim->Montage_Play(DashMontage, GetPlayRate(), EMontagePlayReturnType::MontageLength,
-				/*InTimeToStartMontageAt=*/ 0.0f, /*bStopAllMontages=*/ false);
-			Anim->Montage_JumpToSection(FName(ProsperitocracyBladeDash::Attack), DashMontage);
-		}
-		else
-		{
-			UE_LOG(LogProsperitocracy, Warning, TEXT("[Dash] %s: the dash has no montage set — it runs with no picture at all."), *GetPathName());
-		}
+		Body->BeginMovePicture(DashMontage, FName(ProsperitocracyBladeDash::Attack), GetPlayRate());
+	}
+	else
+	{
+		UE_LOG(LogProsperitocracy, Warning, TEXT("[Dash] %s: the dash has no montage set — it runs with no picture at all."), *GetPathName());
 	}
 
 	// THE BODY'S HALF, handed over and then let go: the line, the distance in the unit a body is moved

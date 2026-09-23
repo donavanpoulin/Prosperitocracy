@@ -190,6 +190,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
 	void BeginAttack(const FVector& LineDirection, float DistanceCm, float TravelSeconds, float Seconds);
 
+	/**
+	 * Put ONE move's picture on this body, taking off whatever the last move put there.
+	 *
+	 * THE BODY OWNS THE STAGE, and this is why it has to: a body can only wear one move's animation at
+	 * a time, and two of our montages play in the SAME slot — so a second move started without the
+	 * first one's picture being taken off does not replace it, it BLENDS with it, and the pose the
+	 * player sees is half of each clip. That is a thing that looks like the animation itself is wrong.
+	 *
+	 * The move being left behind is stopped with ITS OWN blend-out — the animation says how it leaves,
+	 * and never a zero-second cut — and the new one comes on with its own blend-in, so a handover
+	 * reads as a transition rather than a snap. A section is asked for BY NAME, so moving Rate cannot
+	 * move a window that was never in seconds.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
+	void BeginMovePicture(UAnimMontage* Montage, FName Section, float PlayRate);
+
 	/** End a live attack now. A live attack ends itself when its clock runs out; this is a cut short. */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
 	void EndAttack();
@@ -322,6 +338,15 @@ protected:
 
 	/** True between an attack beginning and its own clock running out. Runtime only. */
 	bool bAttackLive = false;
+
+	/**
+	 * The montage the live move last put on this body — the picture this body is wearing.
+	 *
+	 * Held so the NEXT move can take it off with its own blend-out rather than leaving two animations
+	 * blending in one slot, which reads to the player as the animation itself being broken. Weak, so a
+	 * montage going away is never held alive by this.
+	 */
+	TWeakObjectPtr<UAnimMontage> MovePicture;
 
 	/**
 	 * True while the FACING belongs to the attack — from the press, through the attack, and through
