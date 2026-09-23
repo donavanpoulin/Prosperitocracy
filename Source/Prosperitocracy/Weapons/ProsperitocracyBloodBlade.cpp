@@ -5,7 +5,11 @@
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
+#include "AbilitySystem/ProsperitocracyDamageStatics.h"
+#include "AbilitySystem/ProsperitocracyGameplayEffectContext.h"
+#include "AbilitySystem/ProsperitocracyStatHostActor.h"
 #include "AbilitySystem/Attributes/ProsperitocracyHealthSet.h"
+#include "ProsperitocracyGameplayTags.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/ProsperitocracyCharacter.h"
@@ -661,9 +665,10 @@ bool AProsperitocracyBloodBlade::DrainTheBody(float Amount)
 	}
 
 	AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(OwningPawn.Get());
-	UAbilitySystemComponent* AbilitySystemComponent = Body ? Body->GetAbilitySystemComponent() : nullptr;
-	UProsperitocracyHealthSet* HealthSet = AbilitySystemComponent
-		? const_cast<UProsperitocracyHealthSet*>(AbilitySystemComponent->GetSet<UProsperitocracyHealthSet>()) : nullptr;
+	UProsperitocracyAbilitySystemComponent* AbilitySystemComponent = Body
+		? Cast<UProsperitocracyAbilitySystemComponent>(Body->GetAbilitySystemComponent()) : nullptr;
+	const UProsperitocracyHealthSet* HealthSet = AbilitySystemComponent
+		? AbilitySystemComponent->GetSet<UProsperitocracyHealthSet>() : nullptr;
 
 	if (!AbilitySystemComponent || !HealthSet)
 	{
@@ -673,15 +678,58 @@ bool AProsperitocracyBloodBlade::DrainTheBody(float Amount)
 		return false;
 	}
 
-	// Written straight onto Health: this is a COST, not an attack — nothing struck the body, so there is
-	// no line, no damage type and no gate to ask, and it never becomes contested. The health set clamps
-	// it the way it clamps anything else, so this can bottom a body out.
-	const float HealthBefore = HealthSet->GetHealth();
-	const float NewHealth = FMath::Max(0.0f, HealthBefore - Amount);
-	AbilitySystemComponent->SetNumericAttributeBase(UProsperitocracyHealthSet::GetHealthAttribute(), NewHealth);
+	// THE PRICE IS REAL DAMAGE, and that is the whole reason it goes through here instead of being written
+	// onto Health. Every other thing in this game that takes health off a player TELLS contested health
+	// what it took, at the one place damage becomes real — and this was the one that did not, so the
+	// sword's price was the only damage in the game that left nothing winnable behind it. Now it does:
+	// what the body pays becomes CONTESTED, and the Reclaimer wins it back with the same damage-dealt
+	// recovery every other hit feeds. Overspending stops being a flat tax and becomes the fight it should be.
+	//
+	// It carries the SWORD'S OWN TYPE, and a line IS its type — there is no untyped damage here. Piercing,
+	// with NO PEN, which is exactly right against a player: a pen is meaningless on a body with no armour,
+	// so a line carrying none reaches the body ITSELF and is answered by the body's own Piercing Resist.
+	// That is the accepted catch of routing it through the one pipeline — a weave or a perk built against
+	// Piercing makes the sword cheaper to run, which is a real Reclaimer advantage.
+	//
+	// AND THE CONTEXT IS BUILT BY HAND WITH NOBODY AS ITS INSTIGATOR. Deliberately, and this is the one
+	// thing that must not be got wrong: the ability system's own MakeEffectContext stamps the body as the
+	// instigator, and the pipeline credits the instigator with winning health back AND credits the body's
+	// blade with refilling its pool. A self-inflicted cost credited to yourself would hand back an eighth
+	// of the health it took and a sixth of the blood it spent — cancelling the cost outright. Nobody dealt
+	// this damage, so nobody is paid for it.
+	if (!GetDamageEffectClass())
+	{
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("[Blade] %s: the pool is dry and there is no damage effect to charge the body with — the cost is NOT taken. This is a bug, not a missing feature."),
+			*GetName());
+		return false;
+	}
 
-	UE_LOG(LogProsperitocracy, Log, TEXT("[Blade] %s: the pool is dry — %.1f taken out of the body (health %.1f -> %.1f)"),
-		*GetName(), Amount, HealthBefore, NewHealth);
+	FGameplayEffectContextHandle Context = FGameplayEffectContextHandle(
+		new FProsperitocracyGameplayEffectContext(/*InInstigator=*/ nullptr, /*InEffectCauser=*/ nullptr));
+
+	FProsperitocracyGameplayEffectContext* TypedContext = FProsperitocracyGameplayEffectContext::ExtractEffectContext(Context);
+	if (!TypedContext)
+	{
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("[Blade] %s: the effect context is not ours, so the cost could not be charged. Check AbilitySystemGlobalsClassName in DefaultGame.ini."),
+			*GetName());
+		return false;
+	}
+
+	// This blade is the source, exactly as it is for a swing, so the one evaluator answers the falloff and
+	// the line below is the damage. There is no hit result because nothing was struck — the body is being
+	// charged by the thing it is holding.
+	TypedContext->SetAbilitySource(StatHost, 1.0f);
+	TypedContext->AddDamageLine(ProsperitocracyGameplayTags::Damage_Type_Piercing, /*InPenTier=*/ 0, Amount);
+
+	// And then the ONE applier every hit in the game travels — the same pen-gate → resist path, the damage
+	// onto Health, and the two halves of contested health told at the one place damage becomes real.
+	UProsperitocracyDamageStatics::ApplyDamageEffectToHit(Context, Body, AbilitySystemComponent, GetDamageEffectClass());
+
+	UE_LOG(LogProsperitocracy, Log,
+		TEXT("[Blade] %s: the pool is dry — the body is charged %.1f Piercing with no pen, so its own resist answers it and what it takes becomes contested"),
+		*GetName(), Amount);
 
 	return true;
 }

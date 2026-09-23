@@ -373,9 +373,18 @@ private:
 	/**
 	 * Take this much out of the BODY instead of the pool — the whole of what the blood mode buys.
 	 *
-	 * Written straight onto the body's Health, because it is not damage from anyone: nothing struck it,
-	 * so there is no line, no type and no gate to ask, and it never becomes contested. The health set
-	 * clamps it the same way it clamps anything else, so this can bottom the body out and kill it.
+	 * IT IS REAL DAMAGE, through the ONE pipeline, as the SWORD'S OWN TYPE (Piercing) with NO PEN — so the
+	 * body's own resist answers it, and, the whole point of it: what the body pays becomes **CONTESTED**,
+	 * exactly as any other hit's damage does, and can be won back by dealing damage. The sword's price stops
+	 * being the one thing in the game that took health and left nothing winnable behind it.
+	 *
+	 * NOBODY IS THE INSTIGATOR of that damage, deliberately: the pipeline credits the instigator with
+	 * winning health back and credits that body's blade with refilling its pool, so a self-inflicted cost
+	 * credited to yourself would hand back an eighth of the health and a sixth of the blood and cancel
+	 * itself out.
+	 *
+	 * The health set clamps it the same way it clamps anything else, so this can bottom the body out and
+	 * kill it: contested health is not a shield and never saves anyone from a lethal blow.
 	 */
 	bool DrainTheBody(float Amount);
 

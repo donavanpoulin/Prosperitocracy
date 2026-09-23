@@ -62,7 +62,9 @@ public:
 
 	/**
 	 * THE ONE DOOR for the recovery, called by the damage pipeline: this body just DEALT this much, so a
-	 * flat quarter of it wins health back, capped at what is still contested.
+	 * flat **eighth** of it wins health back (see ShareOfDamageDealtRecovered — the words in this file and
+	 * in the damage execution said "a quarter" for a while, and the constant never did), capped at what is
+	 * still contested.
 	 */
 	static void NotifyDamageDealt(AActor* DamageDealer, float DamageDealt);
 

@@ -164,9 +164,10 @@ void UProsperitocracyDamageExecution::Execute_Implementation(const FGameplayEffe
 
 		// And the two halves of contested health, at the one place damage becomes real
 		// (Design/combat.md): what the TARGET just took becomes ITS contested pool — already lost, on the
-		// clock, and winnable back — and the body that DEALT it wins a flat quarter of what it dealt back
-		// as health. Credited to the INSTIGATOR, so whoever pulled the trigger is who it counts for,
-		// teammate included: the game does not discriminate.
+		// clock, and winnable back — and the body that DEALT it wins a flat EIGHTH of what it dealt back
+		// as health (ShareOfDamageDealtRecovered; the words here said "a quarter" for a while and the
+		// constant never did). Credited to the INSTIGATOR, so whoever pulled the trigger is who it counts
+		// for, teammate included: the game does not discriminate.
 		UProsperitocracyGameplayAbility_ContestedHealth::NotifyDamageTaken(HitActor, TotalDamage);
 		UProsperitocracyGameplayAbility_ContestedHealth::NotifyDamageDealt(Spec.GetContext().GetInstigator(), TotalDamage);
 
