@@ -192,9 +192,9 @@ UAnimInstance* UProsperitocracyGameplayAbility_HeavyCombo::GetBodyAnimInstance()
 
 bool UProsperitocracyGameplayAbility_HeavyCombo::HasMovementInput() const
 {
-	// MOVEMENT INPUT, not speed: the rule is about the player asking the body to move, so a body being
-	// pushed around by something else keeps its recovery and a player holding a key against a wall does
-	// not.
+	// MOVEMENT INPUT, not speed: the question is whether the player is ASKING the body to move, so a body
+	// being pushed around by something else is not a man walking, and a player holding a key against a wall
+	// is. The same read the left-button combo makes for the same rule.
 	const APawn* Pawn = Cast<APawn>(RunningOn.Get());
 	return Pawn && !Pawn->GetLastMovementInputVector().IsNearlyZero();
 }
@@ -316,6 +316,9 @@ bool UProsperitocracyGameplayAbility_HeavyCombo::StartTheHeavyCombo(AProsperitoc
 	bRunning = true;
 	CurrentSlice = INDEX_NONE;
 
+	// A NEW RUN, and the button is DOWN — that press is what started it — so nothing is latched away yet.
+	bButtonCameUp = false;
+
 	++HeavyCount;
 
 	// The move's own numbers, said out loud once per use: each slice's attack and recovery in the world
@@ -369,13 +372,21 @@ void UProsperitocracyGameplayAbility_HeavyCombo::BeginTheSlice(int32 Slice, APro
 	// still cuts where he is looking when each slice lands.
 	AttackLine = Body->GetControlRotation().Vector().GetSafeNormal2D();
 
-	// THE BODY'S HALF, handed over and then let go: the line, the distance in the unit a body is moved in,
-	// and TWO times — the dash and the attack — because they are not the same thing. The body covers its
-	// Range over the part of the attack up to the BITE, so the dash and the blade land together, and its
-	// own movement is refused for the whole attack.
+	// THE BODY'S HALF, handed over and then let go. The body takes TWO times, and they are not the same:
+	//
+	//   - the DASH is the first half of the ATTACK, so the body covers its Range by the moment the blade
+	//     bites and holds that ground for the rest of the swing;
+	//   - the LOCK is the WHOLE BEAT — the attack AND the recovery behind it — so while the key is down
+	//     nothing he does with his legs interrupts the chain and the animation plays whole.
+	//
+	// The lock is the BEAT and not the attack, and that is the root of the whole difference: with the lock
+	// on the attack, the recovery behind it is a gap of unlocked time he can walk out of mid-chain — which
+	// is precisely what the left-button combo wants and precisely what this one must not have. It is handed
+	// back the instant he lets go (see ComboStep), and only from then on is the recovery his own time.
 	const float TheDash = AttackSeconds * ProsperitocracyBladeHeavyCombo::BiteStartsAtFraction;
+	const float TheBeat = AttackSeconds + GetRecoverySeconds(Slice);
 
-	Body->BeginAttack(AttackLine, GetRangeCm(), TheDash, AttackSeconds);
+	Body->BeginAttack(AttackLine, GetRangeCm(), TheDash, TheBeat);
 }
 
 void UProsperitocracyGameplayAbility_HeavyCombo::ComboStep()
@@ -388,6 +399,33 @@ void UProsperitocracyGameplayAbility_HeavyCombo::ComboStep()
 
 	UAnimInstance* Anim = GetBodyAnimInstance();
 	const bool bPlaying = Anim && HeavyComboMontage && Anim->Montage_IsPlaying(HeavyComboMontage);
+
+	// THE BUTTON'S STATE IS LATCHED, NEVER SAMPLED — and this is the whole of what "you must HOLD it"
+	// means. The question is asked of EVERY step and the answer is remembered, so the moment the button
+	// comes up anywhere in the run, the run is SPENT: no later step can carry the chain on, whatever the
+	// button is doing by then.
+	//
+	// Sampling it only when a beat's window ran out is what made taps play the whole thing: a tap that
+	// happened to land on that one boundary carried the chain, so the move was being driven by PRESSES —
+	// which is the left-button combo's rule, and not this one's.
+	if (!IsTheButtonStillDown())
+	{
+		if (!bButtonCameUp)
+		{
+			// LETTING GO HANDS HIS LEGS BACK, and it is the other half of the lock being the whole beat.
+			// While the key is down he is committed — his own movement is refused right through the recovery,
+			// so nothing he does with his legs can walk the chain apart. The instant it comes up, this beat's
+			// recovery is HIS OWN TIME again: his legs are his, and if he walks, the recovery stands down
+			// into the walk (see the drop below). That is the one case in this whole move where anything
+			// gives way to movement, and it cannot happen while the key is still holding.
+			if (AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(RunningOn.Get()))
+			{
+				Body->ReleaseMovementLock();
+			}
+		}
+
+		bButtonCameUp = true;
+	}
 
 	const bool bInRecovery = bPlaying
 		&& Anim->Montage_GetCurrentSection(HeavyComboMontage) == FName(ProsperitocracyBladeHeavyCombo::Recoveries[CurrentSlice]);
@@ -409,23 +447,32 @@ void UProsperitocracyGameplayAbility_HeavyCombo::ComboStep()
 		AttackElapsed += StepSeconds;
 	}
 
-	// The picture's rate follows whichever half of the slice is playing: the attack at the rate the player
+	// The picture's rate follows whichever half of the beat is playing: the attack at the rate the player
 	// reads, and the recovery always at its own.
 	if (bPlaying)
 	{
 		Anim->Montage_SetPlayRate(HeavyComboMontage, bInRecovery ? 1.0f : GetPlayRate());
+	}
 
-		// A RECOVERY IS THE PLAYER'S OWN TIME: moving drops its PICTURE, with the blend the montage itself
-		// declares — never a zero-second cut — and it never drops the slice. The chain is a clock, so a man
-		// holding the button and walking still gets his next slice on time; only the picture goes.
-		if (bInRecovery && !bPictureDropped && HasMovementInput())
-		{
-			Anim->Montage_StopWithBlendOut(HeavyComboMontage->GetBlendOutArgs(), HeavyComboMontage);
-			ReleaseTheBodyFacing();
-			bPictureDropped = true;
+	// A RECOVERY'S PICTURE IS DROPPED IN EXACTLY ONE CASE, and this is the only difference there is
+	// between this move and the left-button combo: the key is UP **and** he is asking to move.
+	//
+	//   - HOLDING: nothing he does with his legs takes the beat away. The key being down IS "keep going",
+	//     so a direction held through a recovery does not cancel it — the recovery plays, whole, and the
+	//     move carries on to the next beat.
+	//   - LET GO **AND** WALKING: that is a man who has left the move, and the recovery stands down into
+	//     his walk — with the montage's OWN blend-out, never a zero cut.
+	//   - LET GO AND STANDING STILL: the recovery still plays. Letting go ends the RUN, never the beat.
+	//
+	// The left-button combo has no key to be still holding — a PRESS is what says keep going — so there,
+	// walking out of a recovery is simply how that combo is left. That is the whole of the difference.
+	if (bPlaying && bInRecovery && !bPictureDropped && !IsTheButtonStillDown() && HasMovementInput())
+	{
+		Anim->Montage_StopWithBlendOut(HeavyComboMontage->GetBlendOutArgs(), HeavyComboMontage);
+		ReleaseTheBodyFacing();
+		bPictureDropped = true;
 
-			UE_LOG(LogProsperitocracy, Log, TEXT("[Heavy] %s: the player moved — the recovery's picture is dropped, and the chain goes on"), *GetPathName());
-		}
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Heavy] %s: he let go and walked — the beat stands down into the walk"), *GetPathName());
 	}
 
 	// THE SLICE'S TAIL. When the attack's clock is out the window opens — ONCE — for that recovery's OWN
@@ -446,25 +493,28 @@ void UProsperitocracyGameplayAbility_HeavyCombo::ComboStep()
 		{
 			// THE SLICE IS OVER, and there are exactly two things it can mean.
 			//
-			// The button is STILL DOWN: the next slice begins — that is the whole of what holding is, and
-			// it is why nothing has to press anything.
+			// THE RUN IS NOT SPENT: the next slice begins. That is the whole of what holding is — the key
+			// has stayed down for the entire run so far, and it is why nothing has to press anything.
 			//
-			// The button is UP: the move is over. This is what letting go means, and it is why letting go
-			// during an attack is not a cancel — the attack he committed to finishes, the recovery behind
-			// it plays out, and only then does the move end. Letting go in a recovery means the same thing,
-			// because the slice always finishes itself.
+			// THE RUN IS SPENT (the button came up at some point, see the latch above): the move is over.
+			// This is what letting go means, and it is why letting go during an attack is not a cancel —
+			// the attack he committed to finishes, the recovery behind it plays out, and only then does
+			// the move end. Letting go in a recovery means the same thing, because the slice always
+			// finishes itself. A press arriving after this does NOT revive the run: it is a new run, at
+			// the cooldown's mercy, and this one is done.
 			const int32 NextSlice = CurrentSlice + 1;
-			if (IsTheButtonStillDown() && NextSlice < ProsperitocracyBladeHeavyCombo::NumSlices())
+			if (!bButtonCameUp && NextSlice < ProsperitocracyBladeHeavyCombo::NumSlices())
 			{
 				BeginTheSlice(NextSlice, Cast<AProsperitocracyCharacter>(RunningOn.Get()));
 			}
 			else
 			{
-				// The last slice always ends it: `a` through `d` is the whole move, so holding the button
-				// past the end does nothing at all rather than looping — the cooldown is what gates the
-				// next one.
-				UE_LOG(LogProsperitocracy, Log, TEXT("[Heavy] %s: the chain is done — %s"),
-					*GetPathName(), IsTheButtonStillDown() ? TEXT("the last slice") : TEXT("the button came up"));
+				// How far the run got, said out loud, because a chain that stopped early and a chain that
+				// finished look exactly the same in a log that only says "it ended" — and the difference
+				// is the whole question of whether the hold worked.
+				UE_LOG(LogProsperitocracy, Log, TEXT("[Heavy] %s: the chain is done after %d of %d slices — %s"),
+					*GetPathName(), NextSlice, ProsperitocracyBladeHeavyCombo::NumSlices(),
+					bButtonCameUp ? TEXT("the button came up") : TEXT("the last slice"));
 				EndTheMove();
 			}
 		}
@@ -477,6 +527,19 @@ void UProsperitocracyGameplayAbility_HeavyCombo::EndTheMove()
 	bRunning = false;
 
 	StopTheStepClock();
+
+	// THE MOVE TAKES ITS OWN PICTURE OFF. A run that is let go in slice `a` used to stop its own state
+	// while its ANIMATION carried on to the end of the montage — swings going on with nothing behind them,
+	// which reads as the move never having ended. The body is told here, through its own door, and the
+	// animation leaves with its OWN blend-out rather than a cut.
+	//
+	// It happens HERE and not in EndAbility, because EndAbility ALSO runs when a new move takes the stage
+	// (the left-button combo cancelling this one) — and there the new move's own BeginMovePicture does the
+	// handover, so taking the picture off here would kill the picture the new move has just put on.
+	if (AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(RunningOn.Get()))
+	{
+		Body->EndMovePicture();
+	}
 
 	// The facing the move has been holding is let go, so the body turns back to where the player is
 	// looking instead of snapping to it.

@@ -328,6 +328,35 @@ void AProsperitocracyCharacter::BeginMovePicture(UAnimMontage* Montage, FName Se
 	MovePicture = Montage;
 }
 
+void AProsperitocracyCharacter::EndMovePicture()
+{
+	UAnimMontage* Last = MovePicture.Get();
+
+	// Nothing to take off. A move that never put a picture on this body owes nothing here — and a move
+	// that has already been taken over has had its picture swapped, so this is not its business.
+	if (!Last)
+	{
+		return;
+	}
+
+	const USkeletalMeshComponent* Body = GetMesh();
+	UAnimInstance* Anim = Body ? Body->GetAnimInstance() : nullptr;
+
+	// THE MONTAGE'S OWN BLEND-OUT, never a zero cut. The animation says how it leaves, exactly as it does
+	// when the player walks out of a recovery; a cut here is the snap that reads as the move breaking
+	// rather than the move ending.
+	if (Anim && Anim->Montage_IsPlaying(Last))
+	{
+		Anim->Montage_StopWithBlendOut(Last->GetBlendOutArgs(), Last);
+	}
+
+	// And this body is wearing nothing again, so the next move has nothing to take off — and a re-dress
+	// cannot stop an animation that is no longer there.
+	MovePicture = nullptr;
+
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Body] the move's picture is taken off — %s"), *GetNameSafe(Last));
+}
+
 void AProsperitocracyCharacter::EndAttack()
 {
 	if (!bAttackLive)
@@ -367,6 +396,32 @@ void AProsperitocracyCharacter::ReleaseFacing()
 	// arrived at the look (see TickFacingTurn). That delay is the whole difference between a turn and a
 	// snap — hand the yaw back now and a body looking ninety degrees away jumps.
 	bTurningToLook = true;
+}
+
+void AProsperitocracyCharacter::ReleaseMovementLock()
+{
+	// Nothing to let go of: no live attack is refusing anything, so his legs are already his own.
+	if (!bAttackLive)
+	{
+		return;
+	}
+
+	// HIS OWN MOVEMENT IS HIS AGAIN, from this frame on: the attack stops driving him and stops refusing his
+	// input — the same switch that would have run out on its own when the attack's clock did.
+	bAttackLive = false;
+
+	// AND THE DISTANCE IS DELIBERATELY NOT SNAPPED. This is not the attack ENDING, it is the attack letting
+	// go of him: the ground he has already covered is the ground he keeps, and the line and the facing are
+	// left exactly where they are. (EndAttack is the other thing — it finishes the distance the attack was
+	// worth, which is right for an attack that is over and wrong for one that is merely letting go.)
+	//
+	// Said out loud, because "he stopped early" and "he never started" look the same in a log that says
+	// nothing, and the number is what tells them apart.
+	const float MovedCm = FVector::Dist2D(AttackStartLocation, GetActorLocation());
+
+	UE_LOG(LogProsperitocracy, Log,
+		TEXT("[Body] the attack let go of him — %.0f cm covered of the %.0f cm it was worth, and his legs are his own again"),
+		MovedCm, AttackDistanceCm);
 }
 
 void AProsperitocracyCharacter::FinishFacingTurn()

@@ -19,30 +19,53 @@ struct FGameplayEventData;
 struct FHitResult;
 
 /**
- * The blade's HEAVY combo: the same move the left button makes, HELD instead of pressed.
+ * The blade's HEAVY combo: ONE move, split into beats, and HELD instead of pressed.
  *
- * It is the combo's own shape, four times over: the body covers its Range over the first half of each
- * slice and holds that ground while the blade bites through the second half, each enemy is cut once per
- * slice, and every slice has a recovery behind it that the player's own legs can walk out of. What is
- * different is the INPUT and nothing else — the left button is a press per attack, and this is a HOLD
- * that walks the whole chain for him:
+ * This is NOT the left-button combo with a different key, and the difference is the whole reason this file
+ * exists separately. The left-button combo is a series of swings, each with its own real recovery — a gap
+ * of the player's own time between one swing and the next, which he is free to walk out of, and walking out
+ * of it is a legitimate end to the combo. THIS move is one continuous attack chopped into sections, and the
+ * sections are its BEATS: each one is where the body travels and where the blade bites, and the recovery
+ * behind it is the rest of that same motion, not a gap between two moves.
  *
- *   - HELD: the whole thing plays, `a` through `d`, each slice running its attack and its recovery
- *     before the next one begins. Nothing is asked of the player but the button.
- *   - RELEASED: the slice he is in FINISHES — its attack, and the recovery behind it — and then the
- *     move is over. Letting go in the wind-up does not cut the swing he committed to, and letting go in
- *     the recovery still plays that recovery out.
+ * THE ROOT OF EVERYTHING DIFFERENT ABOUT IT IS ONE LENGTH: how long the body refuses the player's own
+ * movement. The left-button combo hands over the ATTACK, so the recovery behind each swing is a gap of
+ * unlocked time he can walk out of — which is right for that combo, because its recoveries ARE his own time
+ * and walking out of one is how it is left. THIS move hands over the WHOLE BEAT while the key is down, so he
+ * is committed from the first swing of a beat to the last moment of the recovery behind it and nothing he
+ * does with his legs can walk the chain apart. The moment the key comes up the lock is handed back
+ * (`ReleaseMovementLock`), and from then on that recovery is his own time — which is where walking out of it
+ * becomes possible.
  *
- * FOUR slices, not three, and its OWN section names: the asset says `a`, `b`, `c`, `d` with `a_rec`,
- * `b_rec`, `c_rec`, `d_rec` behind them — which is NOT the naming style of either move that came
- * before it (the left-button combo is `a`, `rec_a`, `b`, ... and the dash is `dash`, `dash_rec`). So
- * this file names its own sections and reads them BY NAME off the montage, never by seconds, which is
- * what keeps a re-timed montage from moving anything but the speed.
+ * From that one length every other rule follows:
  *
- * Its numbers are its own, every one of them, on its own block — Range, Rate, its damage, its
- * Penetration, its Cooldown and its blood cost — so the blade's rows stay the left-button combo's and
- * nothing else's. ONE Range row is all the shape it has, read exactly as the combo reads it: it carries
- * the body, it is how far the swing reaches, and it is how wide the swing is.
+ *   1. WHILE THE KEY IS DOWN NOTHING CANCELS A RECOVERY — he cannot move at all, so there is nothing to
+ *      cancel it with. The recovery plays whole and the move carries on to the next beat. Let go and stand
+ *      still and the recovery still plays too: letting go ends the RUN, never the beat, which is also why an
+ *      attack he has committed to is never cut mid-swing.
+ *   2. A RECOVERY'S PICTURE IS DROPPED IN EXACTLY ONE CASE — the key is UP and he is asking to move. That is
+ *      the only case in the whole move where anything gives way to his legs.
+ *   3. HELD, IT WALKS THE BEATS ITSELF. `a` through `d`, each beat running its attack and the recovery
+ *      behind it before the next one begins; nothing is asked of the player but the button.
+ *
+ * AND THAT LEAVES THE INPUT AS THE ONLY OUTWARD DIFFERENCE: this advances while the key is HELD where the
+ * left-button combo advances on a PRESS. Everything else — the bite, the travel landing with the cut, each
+ * recovery playing at its own speed, the window as TIME, each enemy cut once per swing — is the same move.
+ *
+ * Letting go ends the RUN, never the beat: the beat he is in finishes — its attack, and the recovery behind
+ * it — and then the move is over. That is why letting go is never a cancel: an attack he committed to is
+ * never overwritten mid-swing, which is the same rule every other move in the game obeys.
+ *
+ * FOUR beats, not three, and its OWN section names: the asset says `a`, `b`, `c`, `d` with `a_rec`, `b_rec`,
+ * `c_rec`, `d_rec` behind them — which is NOT the naming style of either move that came before it (the
+ * left-button combo is `a`, `rec_a`, `b`, ... and the dash is `dash`, `dash_rec`). So this file names its
+ * own sections and reads them BY NAME off the montage, never by seconds, which is what keeps a re-timed
+ * montage from moving anything but the speed.
+ *
+ * Its numbers are its own, every one of them, on its own block — Range, Rate, its damage, its Penetration,
+ * its Cooldown and its blood cost — so the blade's rows stay the left-button combo's and nothing else's.
+ * ONE Range row is all the shape it has, read exactly as the combo reads it: it carries the body, it is how
+ * far the swing reaches, and it is how wide the swing is.
  */
 UCLASS()
 class UProsperitocracyGameplayAbility_HeavyCombo : public UProsperitocracyGameplayAbility
@@ -143,7 +166,10 @@ private:
 	 */
 	bool IsTheButtonStillDown() const;
 
-	/** Whether the player is asking the body to move this frame. */
+	/**
+	 * Whether the player is asking the body to move this frame — the other half of the one condition that
+	 * drops a recovery's picture.
+	 */
 	bool HasMovementInput() const;
 
 	/** Tell the body the move is over, so the facing it has been holding is let go and it turns back. */
@@ -182,6 +208,18 @@ private:
 	 */
 	bool bWindowOpened = false;
 
+	/**
+	 * Whether the button has come UP at any point since this run started.
+	 *
+	 * THE RUN IS SPENT THE MOMENT THE BUTTON COMES UP, and this is what remembers it. The button's state
+	 * is LATCHED rather than sampled: reading it only at a slice's own boundary would let a tap that
+	 * happens to land on that boundary carry the chain on, and a chain carried by taps is a PRESS driving
+	 * the move — which is the left-button combo, not this one. This move is a HOLD: the only thing that
+	 * carries it on is a key that has stayed down, so one release anywhere in the run ends it at the
+	 * slice it is in — and no later press can resurrect it, because the run it belonged to is over.
+	 */
+	bool bButtonCameUp = false;
+
 	/** The world time this ability's Cooldown has run out at. Started on the press. */
 	float ReadyAt = 0.0f;
 
@@ -192,7 +230,12 @@ private:
 	FTimerHandle StepTimerHandle;
 	TWeakObjectPtr<AActor> RunningOn;
 
-	/** Whether this slice's recovery picture has already been dropped, so it is dropped once. */
+	/**
+	 * Whether this beat's recovery picture has already been dropped, so it is dropped once.
+	 *
+	 * Needed because a montage still counts as playing while it blends out: without this the drop would
+	 * re-fire on every step of the blend.
+	 */
 	bool bPictureDropped = false;
 
 	/** Everyone this slice has already been through, so one slice cuts a body once. */

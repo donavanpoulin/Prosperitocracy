@@ -230,6 +230,25 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
 	void BeginMovePicture(UAnimMontage* Montage, FName Section, float PlayRate);
 
+	/**
+	 * Take THIS body's move picture off, because the move that put it there has ended.
+	 *
+	 * The other half of `BeginMovePicture`, and it exists because a move can end WITHOUT another one
+	 * starting: a hold that is let go, a combo whose window runs out. Until this existed, nothing took the
+	 * picture off in that case — the move's own state stopped (no more bites, no window, no facing) while
+	 * its ANIMATION went on playing to the end of the clip, which reads to the player as the move carrying
+	 * on after it has clearly ended. That is the mismatch this closes.
+	 *
+	 * The animation says how it leaves — the same rule as everywhere else: the montage's OWN blend-out, a
+	 * quarter of a second on ours, and never a zero cut that jumps the body into locomotion.
+	 *
+	 * It is deliberately NOT called when a new move takes the stage: in that case the NEW move's own
+	 * `BeginMovePicture` does the handover, and stopping the picture here would kill the picture the new
+	 * move has just put on.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
+	void EndMovePicture();
+
 	/** End a live attack now. A live attack ends itself when its clock runs out; this is a cut short. */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
 	void EndAttack();
@@ -247,6 +266,24 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
 	void ReleaseFacing();
+
+	/**
+	 * Let the PLAYER'S OWN MOVEMENT go — the attack stops refusing his input, right now, without ending.
+	 *
+	 * The other half of what an attack holds: an attack is handed a line, a distance and two times, and one
+	 * of those times (`Seconds`) is how long HIS movement is refused for. This ends that refusal early.
+	 *
+	 * It exists for a move whose LOCK is longer than its swing — the heavy combo holds the player for the
+	 * whole BEAT while its key is down, so that nothing he does with his legs interrupts the chain, and the
+	 * moment he lets go the recovery is his own time again, which is exactly where walking out of it
+	 * becomes possible. A move that hands over the attack alone has no use for it.
+	 *
+	 * What it does NOT do: it does not end the attack, it does not snap the body to the distance it was
+	 * worth, and it does not touch the facing. He keeps the ground he has already covered, and the swing
+	 * keeps its line. It is a hand-over, not a write — the thing that swung never moves the body itself.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
+	void ReleaseMovementLock();
 
 	/**
 	 * Whether an attack is live on this body.
