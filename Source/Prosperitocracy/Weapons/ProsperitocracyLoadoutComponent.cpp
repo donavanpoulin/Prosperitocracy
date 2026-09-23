@@ -7,6 +7,7 @@
 #include "Character/ProsperitocracyCharacter.h"
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "Classes/ProsperitocracyClass.h"
+#include "Components/ChildActorComponent.h"
 #include "GameFramework/Pawn.h"
 #include "ProsperitocracyLogChannels.h"
 #include "ProsperitocracyGameplayTags.h"
@@ -165,6 +166,55 @@ void UProsperitocracyLoadoutComponent::Redress()
 	// the channels exactly the way spawn does. Which component is a channel is the blueprint's
 	// business; WHICH BODY belongs in it is the loadout's, and this is the only place that says so.
 	NotifyBodyDressed();
+
+	// ...and then whatever the rig has JUST PUT IN A CHANNEL gets its numbers, through the SAME door.
+	//
+	// This is the half that was missing. The dress above covers the weapons this component has a
+	// record of — guns it dressed earlier — but the RIG is what builds what a loadout carries, so a
+	// weapon that appears in a channel because the loadout names it there has never been through the
+	// door at all. It stood in the world, in a hand, UNDRESSED: no slot, no stat block, no Range and
+	// no damage. A gun never showed the gap because a gun had been dressed once already by the path
+	// that built it; a melee was built by nothing but the rig, so it had nothing — and a swing whose
+	// Range reads as zero is refused before it starts (see AProsperitocracyCharacter::BeginAttack),
+	// which is a thing that does nothing at all rather than a thing that misbehaves.
+	//
+	// The channels are read HERE, after the dress has set them, and the weapons are COLLECTED before
+	// any of them is dressed: dressing one records it, and a map is not something to walk while it is
+	// being written.
+	if (AActor* Owner = GetOwner())
+	{
+		TArray<UChildActorComponent*> Channels;
+		Owner->GetComponents(Channels);
+
+		TArray<AProsperitocracyWeapon*> InTheChannels;
+		for (UChildActorComponent* Channel : Channels)
+		{
+			if (AProsperitocracyWeapon* Weapon = Channel ? Cast<AProsperitocracyWeapon>(Channel->GetChildActor()) : nullptr)
+			{
+				InTheChannels.Add(Weapon);
+			}
+		}
+
+		for (AProsperitocracyWeapon* Weapon : InTheChannels)
+		{
+			// Already dressed, and still the same weapon standing there: leave it exactly as it is.
+			// A re-dress must never empty a magazine that never changed hands.
+			bool bAlreadyDressed = false;
+			for (const TPair<FGameplayTag, TWeakObjectPtr<AProsperitocracyWeapon>>& Dressed : DressedGunsBySlot)
+			{
+				if (Dressed.Value.Get() == Weapon)
+				{
+					bAlreadyDressed = true;
+					break;
+				}
+			}
+
+			if (!bAlreadyDressed)
+			{
+				DressGun(Weapon);
+			}
+		}
+	}
 }
 
 void UProsperitocracyLoadoutComponent::NotifyBodyDressed()
@@ -259,6 +309,31 @@ bool UProsperitocracyLoadoutComponent::DoesSlotCarryWeapon(FGameplayTag Slot) co
 	// The same answer the body class gives, asked as a yes or no: a slot with no entry, or an entry
 	// that names no body, carries nothing — and a key with nothing behind it must do nothing at all.
 	return Entry && !Entry->BodyClass.IsNull();
+}
+
+bool UProsperitocracyLoadoutComponent::DoesSlotDrawWithItsOwnAnimation(FGameplayTag Slot) const
+{
+	const FProsperitocracyWeaponSlot* Entry = GetEntryForSlot(Slot);
+
+	// Nothing carried there has no draw to play and no stance to take.
+	if (!Entry || Entry->BodyClass.IsNull())
+	{
+		return false;
+	}
+
+	// The WEAPON answers, off its own default object — the same soft-class load the body class is
+	// read with above, so no extra load is made and nothing is ever spawned to ask this. A thing that
+	// is not a weapon at all has no draw either, which is why a failed cast reads as NO rather than
+	// as an error: an answer of "no" is a true answer here, and the rig does the honest thing with it.
+	if (const UClass* Body = Entry->BodyClass.LoadSynchronous())
+	{
+		if (const AProsperitocracyWeapon* Defaults = Cast<AProsperitocracyWeapon>(Body->GetDefaultObject()))
+		{
+			return Defaults->bDrawnWithItsOwnAnimation;
+		}
+	}
+
+	return false;
 }
 
 FGameplayTag UProsperitocracyLoadoutComponent::GetPrimarySlotTag() const

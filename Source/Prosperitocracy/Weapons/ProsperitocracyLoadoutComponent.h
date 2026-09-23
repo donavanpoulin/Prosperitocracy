@@ -204,6 +204,23 @@ public:
 	bool DoesSlotCarryWeapon(FGameplayTag Slot) const;
 
 	/**
+	 * Whether the weapon a slot carries comes out with a DRAW of its own and a STANCE of its own.
+	 *
+	 * The rig's equip chain plays a draw and names a stance, and it does that for a HAND — so the
+	 * hand, and not the weapon, used to decide both, which is exactly how a sword came out wearing a
+	 * rifle's draw and holding a rifle's stance. This is the question that puts the decision back on
+	 * the weapon: it asks the thing that is about to come out, and the thing answers for itself
+	 * (see `AProsperitocracyWeapon::bDrawnWithItsOwnAnimation`).
+	 *
+	 * A gun says yes, so the rig plays its draw and tells the body which stance it is. A melee says
+	 * no, and the rig then brings it out with no draw at all and leaves the body's stance alone.
+	 *
+	 * False for a slot with nothing in it: nothing carried has nothing to draw.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Loadout")
+	bool DoesSlotDrawWithItsOwnAnimation(FGameplayTag Slot) const;
+
+	/**
 	 * The tag of a hand channel's slot, in the project's own vocabulary (`Prosperitocracy.Weapon.Slot.*`).
 	 *
 	 * Handed over rather than typed into a graph: a slot's name lives in ONE place, so a blueprint wire

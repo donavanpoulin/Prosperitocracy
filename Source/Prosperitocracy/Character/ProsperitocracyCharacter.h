@@ -81,6 +81,68 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
 	bool MeleeWithGunInHand();
+
+	/**
+	 * Bring whatever a slot carries OUT, or put it away. THE one door, and what happens is the
+	 * WEAPON's.
+	 *
+	 * This is the whole of equipping, and it is deliberately this small. Which thing is in the slot
+	 * is the loadout's answer; where that thing SITS is the weapon's own answer (its own sockets);
+	 * and whether stepping out plays anything is the weapon's answer too (its own draw). So a rifle
+	 * comes out to a rifle's socket playing a rifle's draw, and a sword comes out to its socket
+	 * playing NOTHING — because it has nothing to play, and nobody here has to know which of the two
+	 * it is holding.
+	 *
+	 * False when the slot carries nothing: a key with nothing behind it does nothing at all.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	bool SetSlotOut(FGameplayTag Slot, bool bOut);
+
+	/**
+	 * One attack, as the BODY owns it: the line it goes along, how far it is worth, and how long it
+	 * lasts.
+	 *
+	 * The thing that swings hands over its own two numbers — a blade gives its Range and the length
+	 * of its OWN piece of the combo — and from that moment the attack is the body's: the body faces
+	 * the line, travels it, and refuses its own movement until the clock runs out. Nothing else moves
+	 * this body while it is live, and the thing that swung never touches the body's speed, its
+	 * velocity or its facing.
+	 *
+	 * The DISTANCE is the authority, not the clock: the body is placed along its line off its own
+	 * clock, so the frame rate cannot shorten the number it was given.
+	 *
+	 * Beginning an attack while one is live REPLACES it — the newest line and clock win — which is
+	 * what a press that passes through a recovery into the next attack means.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
+	void BeginAttack(const FVector& LineDirection, float DistanceCm, float Seconds);
+
+	/** End a live attack now. A live attack ends itself when its clock runs out; this is a cut short. */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
+	void EndAttack();
+
+	/**
+	 * Let the FACING go.
+	 *
+	 * The facing is the attack's from the press until the thing that swung says the combo is over —
+	 * it ran out, or the player moved out of the recovery behind it. This is that word, and from here
+	 * the body TURNS back to where the player is looking at its own rate: a turn, never a snap.
+	 *
+	 * The combo's own running is the SWORD's business (a body cannot see a montage) and the turn is
+	 * the BODY's, because the facing is the body's — so this is the one thing that crosses between
+	 * them, and it is one call with no numbers in it.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Attack")
+	void ReleaseFacing();
+
+	/**
+	 * Whether an attack is live on this body.
+	 *
+	 * True for the whole of every attack and false in a recovery: an attack refuses the player's own
+	 * movement, and a recovery is where he gets it back.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Attack")
+	bool IsSwingLocked() const { return bAttackLive; }
 	/**
 	 * How far into aiming down sights we are: 0 = hipfire, 1 = fully aiming.
 	 *
@@ -159,4 +221,51 @@ protected:
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Prosperitocracy|Status")
 	TObjectPtr<UProsperitocracyStatusComponent> Statuses;
+
+	/**
+	 * The direction a live attack travels and faces, taken once when it began and then held.
+	 * FLAT, always: an attack goes along the ground the player is standing on, whatever the camera
+	 * was doing with its pitch — which is what keeps an attack straight while he is still free to
+	 * turn and look wherever he likes for the next one.
+	 */
+	FVector AttackLine = FVector::ZeroVector;
+
+	/** Where the body was when the attack began — what its number is measured from — and what it is worth. */
+	FVector AttackStartLocation = FVector::ZeroVector;
+	float AttackDistanceCm = 0.0f;
+
+	/** The attack's own clock: how long it lasts, and how far into it the body is. */
+	float AttackSeconds = 0.0f;
+	float AttackElapsed = 0.0f;
+
+	/** True between an attack beginning and its own clock running out. Runtime only. */
+	bool bAttackLive = false;
+
+	/**
+	 * True while the FACING belongs to the attack — from the press, through the attack, and through
+	 * the recovery behind it.
+	 *
+	 * It outlives `bAttackLive` ON PURPOSE, and that is the whole of the feel: an attack stops
+	 * TRAVELLING when its clock is out, and the body goes on facing its line while the recovery
+	 * plays, so the turn back to the player's look only begins once the combo is actually over.
+	 */
+	bool bFacingHeld = false;
+
+	/** True while the body is turning back to where the player is looking, after the facing was let go. */
+	bool bTurningToLook = false;
+
+	/** What `bUseControllerRotationYaw` was before the attack took the facing over, so it goes back. */
+	bool bControllerYawBeforeFacing = true;
+
+	/** One frame of a live attack: the body is placed along its line and turned to face it. */
+	void TickAttack(float DeltaSeconds);
+
+	/** One frame of the turn back to the player's look. A turn, never a snap. */
+	void TickFacingTurn(float DeltaSeconds);
+
+	/** The facing is the controller's again, from here on. */
+	void FinishFacingTurn();
+
+	/** This body's own tick, which is where a live attack and the turn behind it are driven. */
+	virtual void Tick(float DeltaSeconds) override;
 };

@@ -7,7 +7,11 @@
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyStatusComponent.h"
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
+#include "Components/ChildActorComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/Controller.h"
 #include "ProsperitocracyGameplayTags.h"
+#include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStat.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
 #include "Weapons/ProsperitocracyWeapon.h"
@@ -34,6 +38,11 @@ AProsperitocracyCharacter::AProsperitocracyCharacter()
 	// that every body that can carry a status — this one and the damage targets — carries the same
 	// component, and a status applied to either goes through the same code.
 	Statuses = CreateDefaultSubobject<UProsperitocracyStatusComponent>(TEXT("Statuses"));
+
+	// A live attack is driven per frame (see Tick), so this body has to tick. Asked for here rather
+	// than left to whichever blueprint happens to have it switched on: the attack's own clock is
+	// C++'s job, and an attack that never ticks is an attack that never happens.
+	PrimaryActorTick.bCanEverTick = true;
 }
 
 AActor* AProsperitocracyCharacter::GetGunInHand_Implementation() const
@@ -68,6 +77,251 @@ bool AProsperitocracyCharacter::MeleeWithGunInHand()
 	}
 
 	return AbilitySystemComponent->TryActivateAbilityByInputTag(ProsperitocracyGameplayTags::InputTag_Bash);
+}
+
+bool AProsperitocracyCharacter::SetSlotOut(FGameplayTag Slot, bool bOut)
+{
+	// WHICH channel carries that slot, asked of the things themselves: a weapon knows the slot the
+	// loadout handed it when it was dressed, so a channel is found by asking and not by a list of
+	// component names kept here — a list like that is a second place that has to agree with the rig,
+	// and the rig belongs to the blueprint.
+	UChildActorComponent* Channel = nullptr;
+	AProsperitocracyWeapon* Weapon = nullptr;
+
+	TArray<UChildActorComponent*> Channels;
+	GetComponents(Channels);
+	for (UChildActorComponent* Candidate : Channels)
+	{
+		AProsperitocracyWeapon* InIt = Candidate ? Cast<AProsperitocracyWeapon>(Candidate->GetChildActor()) : nullptr;
+		if (InIt && InIt->GetSlotTag() == Slot)
+		{
+			Channel = Candidate;
+			Weapon = InIt;
+			break;
+		}
+	}
+
+	if (!Channel || !Weapon)
+	{
+		// Nothing in that slot, so there is nothing to bring out and nothing to animate. A key with
+		// nothing behind it does nothing at all.
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Body] slot %s: nothing carries it — no key to answer"),
+			*Slot.ToString());
+		return false;
+	}
+
+	// WHERE it sits is the WEAPON's answer: its own socket, on the body's own mesh. The body does not
+	// pick the socket and neither does the key press — a rifle is held where a rifle is held and a
+	// sword where a sword is, and each of them says so for itself.
+	const FName Socket = bOut ? Weapon->HandSocket : Weapon->AwaySocket;
+	if (USkeletalMeshComponent* Body = GetMesh())
+	{
+		Channel->AttachToComponent(Body, FAttachmentTransformRules::SnapToTargetIncludingScale, Socket);
+	}
+
+	// And whether coming out or going away PLAYS anything is the weapon's answer too. A gun plays its
+	// own draw and its own holster; a melee has neither and plays nothing, so it simply appears in the
+	// hand and simply leaves it. The body's animation is the body's business — all this does is ask
+	// for the montage the weapon says is its own.
+	if (UAnimMontage* Montage = bOut ? Weapon->DrawMontage : Weapon->StowMontage)
+	{
+		PlayAnimMontage(Montage);
+	}
+
+	// Said out loud, because "the stick is at my feet" and "the stick is in my hand" are the same
+	// silence in a log that says nothing: what was found, which socket it was sent to, and what it was
+	// asked to play.
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Body] slot %s %s — %s at socket %s (draw %s, stow %s)"),
+		*Slot.ToString(), bOut ? TEXT("out") : TEXT("away"), *GetNameSafe(Weapon), *Socket.ToString(),
+		*GetNameSafe(Weapon->DrawMontage), *GetNameSafe(Weapon->StowMontage));
+
+	return true;
+}
+
+void AProsperitocracyCharacter::BeginAttack(const FVector& LineDirection, float DistanceCm, float Seconds)
+{
+	// The line is FLAT: an attack goes along the ground the player is standing on, whatever the camera
+	// was doing with its pitch. It is taken once, here, and held for the whole attack — which is what
+	// keeps an attack straight while he is still free to look wherever he likes for the next one.
+	AttackLine = LineDirection.GetSafeNormal2D();
+
+	// No line to go along, nothing the attack is worth, or no time to take: that is not an attack, and
+	// the honest answer is that there is none — not a state nobody can see.
+	if (AttackLine.IsNearlyZero() || DistanceCm <= 0.0f || Seconds <= 0.0f)
+	{
+		EndAttack();
+		return;
+	}
+
+	// Whether this body already OWES its yaw to something: the facing was the last attack's, or the
+	// turn back from it is still under way. The yaw is taken from the controller only ONCE, so a press
+	// that passes through a recovery into the next attack must not save the value this body already
+	// set — saving it there would save "off", and the controller would never get the body back.
+	const bool bTheBodyAlreadyOwesItsYaw = bFacingHeld || bTurningToLook;
+
+	// Where the body is now is what its number is measured from, and the attack's own length is its clock.
+	AttackStartLocation = GetActorLocation();
+	AttackDistanceCm = DistanceCm;
+	AttackSeconds = Seconds;
+	AttackElapsed = 0.0f;
+	bAttackLive = true;
+
+	// The FACING belongs to the attack. This body's yaw is normally the controller's
+	// (bUseControllerRotationYaw), so that is what steps aside for the window and what comes back at
+	// the end of the turn that follows it (see ReleaseFacing, TickFacingTurn).
+	if (!bTheBodyAlreadyOwesItsYaw)
+	{
+		bControllerYawBeforeFacing = bUseControllerRotationYaw;
+		bUseControllerRotationYaw = false;
+	}
+
+	bFacingHeld = true;
+
+	// A live attack always wins over a turn that was under way: the newest line and clock are the ones
+	// that count, which is what a press through a recovery into the next attack means.
+	bTurningToLook = false;
+
+	// Said out loud, with its numbers: an attack nobody can see and an attack that is not happening
+	// look exactly the same in the world, and only one of them is a bug.
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Body] attack — %.0f cm over %.2fs along %s"),
+		AttackDistanceCm, AttackSeconds, *AttackLine.ToCompactString());
+}
+
+void AProsperitocracyCharacter::EndAttack()
+{
+	if (!bAttackLive)
+	{
+		return;
+	}
+
+	// MEASURED before the last snap, not asserted: what the world actually let the body move, in the
+	// stat's own unit, next to what the attack was worth. A short number is the world having a say (a
+	// wall) — never the clock, which cannot fall behind by construction.
+	const float MovedCm = FVector::Dist2D(AttackStartLocation, GetActorLocation());
+
+	bAttackLive = false;
+
+	// The attack is worth its NUMBER, not its clock: whatever the frame rate managed on the way, the
+	// body finishes exactly the distance it was given, along its own line.
+	SetActorLocation(AttackStartLocation + AttackLine * AttackDistanceCm, /*bSweep=*/ true);
+
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Body] attack done — moved %.0f cm of the %.0f cm it was worth"),
+		MovedCm, AttackDistanceCm);
+
+	// The FACING is deliberately NOT let go here. The attack has stopped TRAVELLING; the recovery behind
+	// it is still the attack's as far as where this body is looking, and the thing that swung is the one
+	// that knows when the combo is actually over (see ReleaseFacing).
+}
+
+void AProsperitocracyCharacter::ReleaseFacing()
+{
+	if (!bFacingHeld)
+	{
+		return;
+	}
+
+	bFacingHeld = false;
+
+	// The TURN begins here; the controller does not get this body's yaw back until the body has actually
+	// arrived at the look (see TickFacingTurn). That delay is the whole difference between a turn and a
+	// snap — hand the yaw back now and a body looking ninety degrees away jumps.
+	bTurningToLook = true;
+}
+
+void AProsperitocracyCharacter::FinishFacingTurn()
+{
+	bTurningToLook = false;
+	bUseControllerRotationYaw = bControllerYawBeforeFacing;
+}
+
+void AProsperitocracyCharacter::TickFacingTurn(float DeltaSeconds)
+{
+	// Named for what it is rather than `Controller`: APawn already has a member by that name, and a
+	// local shadowing it hides the body's own controller from every read in this function.
+	const AController* OwningController = GetController();
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+
+	// Nothing to turn towards, or no rate on this body to turn at: the honest answer is to hand the
+	// facing straight back rather than invent a number to turn it by.
+	const float TurnRate = Movement ? Movement->RotationRate.Yaw : 0.0f;
+	if (!OwningController || TurnRate <= 0.0f)
+	{
+		FinishFacingTurn();
+		return;
+	}
+
+	// The body turns to where the player is looking at the rate it ALREADY turns at — the movement
+	// component's own yaw rate, the number this body is configured with — so the look can be right round
+	// behind him and the body walks its way round instead of snapping to it.
+	const float TargetYaw = OwningController->GetControlRotation().Yaw;
+	const float NewYaw = FMath::FixedTurn(GetActorRotation().Yaw, TargetYaw, TurnRate * DeltaSeconds);
+	SetActorRotation(FRotator(0.0f, NewYaw, 0.0f));
+
+	// Arrived. From here the controller's yaw IS this body's yaw, which is what turns it the rest of the
+	// time — so the turn hands over to nothing at all, and there is no snap at either end of it.
+	if (FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(NewYaw, TargetYaw), 0.1f))
+	{
+		FinishFacingTurn();
+	}
+}
+
+void AProsperitocracyCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (bAttackLive)
+	{
+		// A live attack is this body's own state and is driven here, in ONE place: the line, the
+		// distance, the facing and the clock. Nothing else moves this body while it is live.
+		TickAttack(DeltaSeconds);
+		return;
+	}
+
+	if (bFacingHeld)
+	{
+		// The attack's clock is out but the combo is NOT over — a recovery is playing — so the body goes
+		// on facing its line while the player's legs are his own again. Only the travel stopped.
+		SetActorRotation(FRotator(0.0f, AttackLine.Rotation().Yaw, 0.0f));
+		return;
+	}
+
+	if (bTurningToLook)
+	{
+		TickFacingTurn(DeltaSeconds);
+	}
+}
+
+void AProsperitocracyCharacter::TickAttack(float DeltaSeconds)
+{
+	AttackElapsed += DeltaSeconds;
+
+	// WHERE the body is comes off the attack's own clock and never off a speed the world can slow down:
+	// the number is the authority, and the frames only decide how finely it is spread. The height is not
+	// the attack's business — an attack travels the ground, and jumping or falling stays the world's.
+	const float Progress = FMath::Clamp(AttackElapsed / AttackSeconds, 0.0f, 1.0f);
+	FVector Target = AttackStartLocation + AttackLine * (AttackDistanceCm * Progress);
+	Target.Z = GetActorLocation().Z;
+
+	// Swept, so a wall still has a say: being stopped by the world is not the same as falling short.
+	SetActorLocation(Target, /*bSweep=*/ true);
+
+	// This body's movement is the attack's and nothing else's while it is live, which is what refuses the
+	// player's own: no velocity of his survives to fight the placement above, and the movement component
+	// starts each frame from nothing instead of running him off the line.
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		Movement->Velocity = FVector::ZeroVector;
+	}
+
+	// ...and the body FACES its line for the whole of the attack — not the camera, not the way it
+	// happened to be walking — which is the other half of what an attack is: it goes that way and it
+	// looks that way until it is over.
+	SetActorRotation(FRotator(0.0f, AttackLine.Rotation().Yaw, 0.0f));
+
+	if (AttackElapsed >= AttackSeconds)
+	{
+		EndAttack();
+	}
 }
 
 float AProsperitocracyCharacter::GetAimingAlpha_Implementation() const
