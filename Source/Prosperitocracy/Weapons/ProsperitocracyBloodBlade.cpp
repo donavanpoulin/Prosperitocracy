@@ -267,7 +267,19 @@ void AProsperitocracyBloodBlade::BeginTheBodyAttack(int32 AttackIndex)
 		return;
 	}
 
-	Character->BeginAttack(GetSwingDirection(), GetRangeCm(), GetAttackSeconds(AttackIndex));
+	// The numbers half, handed to the BODY: the LINE (what the player was looking at when he pressed,
+	// taken flat), the DISTANCE (Range), and TWO times — the DASH and the ATTACK — because they are
+	// not the same thing. The body covers its Range over the part of the attack up to the BITE, so the
+	// dash and the cut land together, and it is then refused for the whole attack.
+	//
+	// One number decides both, and it is the same half the blade starts cutting at: the dash ends
+	// exactly where the cutting begins, which is the whole point of it. A missing clock or a missing
+	// number is handed over as nothing at all, and the body says no to that honestly rather than
+	// inventing an attack.
+	const float TheAttack = GetAttackSeconds(AttackIndex);
+	const float TheDash = TheAttack * ProsperitocracyBladeHandling::BiteStartsAtFraction;
+
+	Character->BeginAttack(GetSwingDirection(), GetRangeCm(), TheDash, TheAttack);
 }
 
 bool AProsperitocracyBloodBlade::HasAlreadyBeenCut(const AActor* Actor) const
