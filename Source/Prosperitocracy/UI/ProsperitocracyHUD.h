@@ -44,10 +44,14 @@ public:
 	//
 	// It sits in the BOTTOM LEFT corner (his call, 2026-09-20): off to the side so it does not sit in the
 	// middle of what you are looking at, half the width it had when it was centred.
+	//
+	// The margin is 80 rather than the 40 it shipped with: the blood bar was hugging the right edge of
+	// the screen (his report, 2026-09-23), so BOTH bars moved in by the same 40 pixels — the two of them
+	// stay mirrored, and evenness is the whole reason this number moves with the blood bar's.
 	static constexpr float BarWidthShareOfScreen = 0.2f;
 	static constexpr float BarHeightPixels = 10.0f;
 	static constexpr float BarBottomMarginPixels = 70.0f;
-	static constexpr float BarLeftMarginPixels = 40.0f;
+	static constexpr float BarLeftMarginPixels = 80.0f;
 	static constexpr float BorderThicknessPixels = 2.0f;
 
 	/**
@@ -62,9 +66,13 @@ public:
 	// The health bar's own size turned on its side, in the bottom RIGHT corner so the two never crowd
 	// each other: the same 20% of the screen long, the same 10 pixels thin, the same margins mirrored.
 	// It reads like the health bar does — what you are HOLDING is drawn and the rest is left alone.
+	//
+	// 80, not the 40 it shipped with: at 40 the blood bar hugged the right edge (his report,
+	// 2026-09-23) — and the health bar's own left margin moved the same 40 pixels, so the pair stays
+	// mirrored on the screen rather than one of them drifting in on its own.
 	static constexpr float BloodBarThicknessPixels = 10.0f;
 	static constexpr float BloodBarLengthShareOfScreen = 0.2f;
-	static constexpr float BloodBarRightMarginPixels = 40.0f;
+	static constexpr float BloodBarRightMarginPixels = 80.0f;
 	static constexpr float BloodBarBottomMarginPixels = 70.0f;
 
 	/**
