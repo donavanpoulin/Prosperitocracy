@@ -168,6 +168,52 @@ public:
 	virtual void ReloadAction_Implementation();
 
 	/**
+	 * This thing's SECONDARY action — what the right mouse button means when this is the weapon in the
+	 * hand. Declared here for the same reason the primary is: the input asks the thing in the hand to
+	 * do its own job and never learns what it is holding.
+	 *
+	 * **The default answer is AIMING, because aiming is what a GUN's second button does** — a firearm
+	 * is aimed by holding the right button, and the body's camera, crosshair and pose are driven off
+	 * the state this sets. A weapon with NO FIRE MODE is not a gun and gets no default here: a melee
+	 * answers this for itself (the blade runs its own ability), and a thing that answers nothing does
+	 * nothing.
+	 */
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	void SecondaryAction();
+	virtual void SecondaryAction_Implementation();
+
+	/**
+	 * The button coming back up, on the same terms — because a press is not the whole of a secondary
+	 * action. AIMING IS A HOLD: the press starts it and this stops it. A melee owes nothing here, and
+	 * that is why this has an honest empty default rather than being folded into the press.
+	 */
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	void SecondaryActionReleased();
+	virtual void SecondaryActionReleased_Implementation();
+
+	/**
+	 * Whether this weapon is being AIMED right now.
+	 *
+	 * The weapon OWNS the intent — it is the thing the player is holding, and it is the only thing
+	 * that knows whether right-click does anything for it — and the BODY owns the mechanism: the aim
+	 * blend, the camera, the crosshair and the pose all read this one value. One writer, one reader,
+	 * exactly like a weapon's stance and its draw.
+	 *
+	 * A melee never sets it: aiming is not a thing a sword does.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	bool IsAiming() const { return bAiming; }
+
+	/**
+	 * Whether this thing is a GUN — a weapon carrying a fire-mode tag (Design/weapons.md: a gun is a
+	 * weapon with a fire mode, a melee is a weapon without one). It is the project's own test, read
+	 * off the thing's block, and it is what decides whether the secondary press has a default meaning
+	 * at all.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	bool HasAFireMode() const;
+
+	/**
 	 * Whether this thing comes out with a DRAW of its own and a STANCE of its own.
 	 *
 	 * A gun says YES: it has an equip animation and a sound, and while it is out the body holds the
@@ -446,6 +492,14 @@ protected:
 
 	/** Whether the numbers are in hand. False until the loadout has answered. */
 	bool bInitialized = false;
+
+	/**
+	 * Whether this weapon is being aimed right now — its own state, written by its own secondary press
+	 * and release, and read by the body for the aim blend, the camera, the crosshair and the pose.
+	 * Never set by a melee.
+	 */
+	UPROPERTY(Transient)
+	bool bAiming = false;
 
 	/** What the loadout answered. Undressed until it is asked, and until the gun is in the rig. */
 	EProsperitocracyWeaponDressResult DressResult = EProsperitocracyWeaponDressResult::Undressed;

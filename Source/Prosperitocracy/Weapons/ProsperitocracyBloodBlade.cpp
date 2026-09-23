@@ -4,6 +4,7 @@
 
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
+#include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/ProsperitocracyCharacter.h"
@@ -309,8 +310,8 @@ void AProsperitocracyBloodBlade::CutWhatTheSwingIsThrough()
 
 	// THE SHAPE IS THE RANGE, and there is nothing else to it. A cube one Range on a side sits with
 	// its back face at the player's eye and its far face a Range in front of him: the swing reaches a
-	// Range, it is a Range WIDE, it is as tall as it is long, and there is nothing behind him at all
-	// — because a swing is a swing and not a circle. Move Range and all three move together.
+	// Range, it is a Range WIDE, and there is nothing behind him at all — because a swing is a swing
+	// and not a circle. Move Range and all of it moves together.
 	const FVector Eye = Pawn->GetPawnViewLocation();
 	const FVector Centre = Eye + Forward * (RangeCm * 0.5f);
 	const FQuat Facing = FRotator(0.0f, Forward.Rotation().Yaw, 0.0f).Quaternion();
@@ -508,4 +509,35 @@ void AProsperitocracyBloodBlade::PrimaryAction_Implementation()
 	// The release half is not here either, and that is the truth about a sword: there is nothing a
 	// swing owes the moment the button comes up. `ReloadAction`, inherited from the weapon, does
 	// nothing — a melee never reloads.
+}
+
+void AProsperitocracyBloodBlade::SecondaryAction_Implementation()
+{
+	// Only the blade in the player's hand does anything on the right press: a stowed blade owes
+	// nothing to a button.
+	if (!IsInHand())
+	{
+		return;
+	}
+
+	// THE BLADE NAMES THE ABILITY; THE ABILITY IS THE MOVE. A null slot is a real answer — a blade
+	// carrying no right-click ability simply does nothing — and it is said out loud, because a press
+	// that does nothing and a press that is broken look the same from the outside.
+	if (!SecondaryAbility)
+	{
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Blade] %s: this blade carries no right-click ability, so the press does nothing."), *GetName());
+		return;
+	}
+
+	// The body's ability system runs it, and everything about the move is the ability's own: whether
+	// it may start at all, its numbers, its animation. This class never learns what it asked for.
+	const UProsperitocracyAbilitySystemComponent* AbilitySystemComponent = Cast<UProsperitocracyAbilitySystemComponent>(
+		UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(OwningPawn.Get()));
+	if (!AbilitySystemComponent)
+	{
+		UE_LOG(LogProsperitocracy, Warning, TEXT("[Blade] %s: the body has no ability system, so its right-click ability cannot run."), *GetName());
+		return;
+	}
+
+	const_cast<UProsperitocracyAbilitySystemComponent*>(AbilitySystemComponent)->TryActivateAbilityByClass(SecondaryAbility);
 }

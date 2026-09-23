@@ -94,6 +94,45 @@ bool AProsperitocracyCharacter::ReloadTheWeaponInHand()
 	return true;
 }
 
+bool AProsperitocracyCharacter::SecondaryActionTheWeaponInHand()
+{
+	// The right mouse button, on exactly the same terms as the reload above: the thing in hand answers
+	// for itself. A gun's secondary action is its aim; the blade's is its dash; a thing with neither
+	// answers with nothing at all. Nothing here learns which of them it asked.
+	AProsperitocracyWeapon* Weapon = GetGunWeaponInHand();
+	if (!Weapon)
+	{
+		return false;
+	}
+
+	Weapon->SecondaryAction();
+	return true;
+}
+
+bool AProsperitocracyCharacter::SecondaryActionReleasedTheWeaponInHand()
+{
+	// The other half of the press above, and the reason a gun keeps its aim: aiming is a HOLD, so the
+	// thing that started aiming is the thing that stops. The blade's answer to this is nothing at all
+	// — its dash was spent on the press.
+	AProsperitocracyWeapon* Weapon = GetGunWeaponInHand();
+	if (!Weapon)
+	{
+		return false;
+	}
+
+	Weapon->SecondaryActionReleased();
+	return true;
+}
+
+bool AProsperitocracyCharacter::IsTheWeaponInHandAiming() const
+{
+	// The INTENT is the weapon's; this is only the read. Nothing in hand answers false, which is the
+	// same answer a melee gives — so the body's camera is driven by the thing in the hand and never by
+	// the key that asked it.
+	const AProsperitocracyWeapon* Weapon = GetGunWeaponInHand();
+	return Weapon && Weapon->IsAiming();
+}
+
 bool AProsperitocracyCharacter::SetSlotOut(FGameplayTag Slot, bool bOut)
 {
 	// WHICH channel carries that slot, asked of the things themselves: a weapon knows the slot the

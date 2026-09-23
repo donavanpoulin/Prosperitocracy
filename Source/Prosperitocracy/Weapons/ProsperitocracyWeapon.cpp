@@ -55,6 +55,33 @@ void AProsperitocracyWeapon::ReloadAction_Implementation()
 	// never reloads.
 }
 
+void AProsperitocracyWeapon::SecondaryAction_Implementation()
+{
+	// THE DEFAULT ANSWER IS AIMING, and it belongs to a GUN: a firearm is aimed by holding the right
+	// button, so the thing in the hand says "I am being aimed" and the body drives its camera,
+	// crosshair and pose off that. The test is the project's own — a gun is a weapon with a fire mode
+	// — so a melee gets no default here and answers for itself (the blade runs its own ability), and
+	// nothing outside this weapon has to know which of them the player is holding.
+	if (HasAFireMode())
+	{
+		bAiming = true;
+	}
+}
+
+void AProsperitocracyWeapon::SecondaryActionReleased_Implementation()
+{
+	// Aiming is a HOLD: the press starts it and this lets it go. A thing that never set it is not
+	// harmed by clearing it — a melee's answer here is nothing at all.
+	bAiming = false;
+}
+
+bool AProsperitocracyWeapon::HasAFireMode() const
+{
+	// Read off the thing's own block: a weapon tagged FullAuto or SemiAuto is a gun, and a weapon with
+	// no tag is not (Design/weapons.md). No block means no numbers and no mode.
+	return StatBlockAsset && StatBlockAsset->GetFireMode().IsValid();
+}
+
 void AProsperitocracyWeapon::BeginPlay()
 {
 	Super::BeginPlay();
@@ -251,6 +278,11 @@ bool AProsperitocracyWeapon::ApplyLoadoutEntry(const FGameplayTag& InSlot, UPros
 	CrouchingMultiplier = 1.0f;
 	LastControlRotation = FRotator::ZeroRotator;
 	bHasLastControlRotation = false;
+
+	// And a gun that has just come up is not being aimed: the state belongs to a press, and there has
+	// not been one yet.
+	bAiming = false;
+
 	bInitialized = true;
 
 	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s ready — slot %s | block %s | mag %d spare %d | rate %.2f/s | %s"),

@@ -9,6 +9,7 @@
 
 class UAnimInstance;
 class UAnimMontage;
+class UProsperitocracyGameplayAbility;
 
 /**
  * The blade's swing: ONE number sizes it, and this is where in an attack it bites.
@@ -37,17 +38,23 @@ namespace ProsperitocracyBladeHandling
 /**
  * AProsperitocracyBloodBlade
  *
- * The Reclaimer's blade as a thing: the combo, and the one number that sizes everything about it.
+ * The Reclaimer's blade as a thing: the COMBO, and the one number that sizes everything about it.
  *
  * It has NO FIRE MODE, and that is the whole of what makes it a melee — the project's own test
  * (Design/weapons.md: a gun is a weapon with a fire mode, a melee is a weapon without one). The
  * class's forced-melee primary and the pose both read that tag, so nothing here declares itself a
  * sword and nothing here needs to.
  *
- * The blade owns its COMBO — which attack is playing, and what a press does — and it hands the BODY
- * three things and holds nothing: the LINE, the DISTANCE and the TIME. It never writes the body's
- * speed, its velocity or its facing; those belong to the body, and an attack that owned them from
- * two places is what made the last attempt unfixable.
+ * The blade owns its COMBO — which attack is playing, and what a left press does — and it hands the
+ * BODY three things and holds nothing: the LINE, the DISTANCE and the TIME. It never writes the
+ * body's speed, its velocity or its facing; those belong to the body, and an attack that owned them
+ * from two places is what made the last attempt unfixable.
+ *
+ * WHAT THE RIGHT BUTTON DOES IS NOT THE BLADE'S, AND THAT IS THE POINT. A sword's other move is an
+ * ABILITY, and this blade carries a slot naming which one it fires (`SecondaryAbility`) — so a sword
+ * throw, or anything else a sword should do on a press, is a new ability and nothing about this
+ * class changes. The blade does not know what its right click is; it knows which ability to ask for,
+ * and the ability owns its own numbers, its own animation and its own hit.
  */
 UCLASS(BlueprintType)
 class AProsperitocracyBloodBlade : public AProsperitocracyWeapon
@@ -61,14 +68,28 @@ public:
 	 * One press of the left mouse button, as the blade reads it.
 	 *
 	 * A press with nothing playing starts the combo at its first attack. A press inside a RECOVERY
-	 * takes the combo straight to the next attack. A press inside an attack does nothing at all —
-	 * it never stacks, and it never cancels a swing. False means this press was not an attack, so
-	 * nothing is owed: no hit, no attack on the body.
+	 * takes the combo straight to the next attack. A press inside an attack does nothing at all — it
+	 * never stacks, and it never cancels a swing. False means this press was not an attack, so nothing
+	 * is owed: no hit, no attack on the body.
 	 *
 	 * This is the weapon's own primary action, answered — `AProsperitocracyWeapon::PrimaryAction` —
 	 * so the input asks the thing in the hand and never learns what it is holding.
 	 */
 	virtual void PrimaryAction_Implementation() override;
+
+	/**
+	 * One press of the right mouse button: run this blade's own ability.
+	 *
+	 * The blade carries the ability it fires rather than containing the move, so what a sword does on
+	 * a right press is one asset away from being something else — a dash today, a sword throw later,
+	 * anything the sword should do. Everything about what that move IS belongs to the ability: its
+	 * Range, its Rate, its Cooldown, its damage, its animation, and the question of whether it may
+	 * start at all.
+	 *
+	 * This is where the template's right-click AIM used to be. Aiming was never a thing this weapon
+	 * did; the press belongs to the thing in the hand, exactly as the left button's does.
+	 */
+	virtual void SecondaryAction_Implementation() override;
 
 	/** Whether this blade's combo is running right now. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Blade")
@@ -104,6 +125,19 @@ public:
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Blade")
 	TObjectPtr<UAnimMontage> ComboMontage;
+
+	/**
+	 * The ability this blade fires on the right mouse button.
+	 *
+	 * A SLOT, not a move: the blade names which ability its second press runs and knows nothing about
+	 * it — not its numbers, not its animation, not what it does. That is what makes a sword's other
+	 * move modular and interchangeable, and it is why the move itself is an ordinary ability with its
+	 * own block rather than a mode hidden in this class.
+	 *
+	 * Null is a real answer: a blade with no ability simply does nothing on the right press.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Blade")
+	TSubclassOf<UProsperitocracyGameplayAbility> SecondaryAbility;
 
 protected:
 	/**
@@ -153,10 +187,10 @@ private:
 	 * One sweep of the swing, at the moment it is made.
 	 *
 	 * The shape is the RANGE, and nothing else: a cube one Range on a side, sitting right in front of
-	 * the player's eye — so it reaches a Range, it is a Range wide, it is as tall as it is long, and
-	 * there is nothing at all behind him, because a swing is a swing and not a circle. Every enemy in
-	 * it is cut, and each of them only ONCE per swing: the swing remembers who it has already been
-	 * through, so a body that sits in the blade for ten frames is cut one time.
+	 * the player's eye — so it reaches a Range, it is a Range wide, and there is nothing at all
+	 * behind him, because a swing is a swing and not a circle. Every enemy in it is cut, and each of
+	 * them only ONCE per swing: the swing remembers who it has already been through, so a body that
+	 * sits in the blade for ten frames is cut one time.
 	 */
 	void CutWhatTheSwingIsThrough();
 

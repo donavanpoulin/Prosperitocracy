@@ -105,6 +105,42 @@ public:
 	bool ReloadTheWeaponInHand();
 
 	/**
+	 * Do whatever the right mouse button means for this body's weapon — the one door that press needs.
+	 *
+	 * The same shape as the reload door above, and for the same reason: the body asks the thing in its
+	 * hand and knows nothing else about it. On a gun the answer is AIMING; on the blade it is the
+	 * DASH. Neither is the character's business, and nothing here casts a hand to a weapon class —
+	 * which is exactly how a sword came to be unusable unless it were dressed up as a rifle.
+	 *
+	 * False when there is nothing in hand: a key with nothing behind it does nothing.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	bool SecondaryActionTheWeaponInHand();
+
+	/**
+	 * The right mouse button coming back up, on the same terms as the press above.
+	 *
+	 * A gun lets its aim go here; a melee owes nothing, because a swing owes nothing the moment the
+	 * button comes up. The body asks and does not learn which of the two answered.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	bool SecondaryActionReleasedTheWeaponInHand();
+
+	/**
+	 * Whether the thing in this body's hand is being AIMED right now — the one question the aim's own
+	 * chain asks, every time the right button changes.
+	 *
+	 * The INTENT is the WEAPON's (see `AProsperitocracyWeapon::IsAiming`) and the mechanism is this
+	 * body's: the aim blend, the camera, the crosshair and the pose all hang off this one answer, and
+	 * nothing here decides it. A blade never aims, so a sword in hand answers FALSE and the body's
+	 * camera stays where it is while the sword does its own thing on the press.
+	 *
+	 * False when there is nothing in hand: nothing held, nothing aimed.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	bool IsTheWeaponInHandAiming() const;
+
+	/**
 	 * Bring whatever a slot carries OUT, or put it away. THE one door, and what happens is the
 	 * WEAPON's.
 	 *
