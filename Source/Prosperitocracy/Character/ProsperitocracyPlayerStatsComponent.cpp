@@ -4,6 +4,7 @@
 
 #include "AbilitySystem/Attributes/ProsperitocracyHealthSet.h"
 #include "AbilitySystem/Attributes/ProsperitocracyStatSet.h"
+#include "AbilitySystem/Abilities/ProsperitocracyGameplayAbility.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
 #include "Character/ProsperitocracyCharacter.h"
@@ -144,6 +145,14 @@ void UProsperitocracyPlayerStatsComponent::BeginPlay()
 		Playing = LoadoutComponent->GetLoadout();
 	}
 	DressFromLoadout(Playing);
+
+	// And what it OWNS as abilities comes from the same loadout, through the same kind of call — so the
+	// four a loadout took in are granted here at spawn exactly as a swap grants them later. ONE door, so
+	// a swap can never own a different set from the one a spawn owns.
+	//
+	// A body with no loadout component (or one naming no abilities) owns none of them, which is a real
+	// state: an empty ability slot is a legal build (Design/loadout.md), not a failure.
+	DressAbilitiesFromLoadout(Playing);
 }
 
 void UProsperitocracyPlayerStatsComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -334,6 +343,83 @@ void UProsperitocracyPlayerStatsComponent::DressFromLoadout(UProsperitocracyLoad
 
 		SetArmorColor(ProsperitocracyArmor::Pieces[Index].Color, Hex);
 	}
+}
+
+void UProsperitocracyPlayerStatsComponent::DressAbilitiesFromLoadout(UProsperitocracyLoadout* Loadout)
+{
+	if (!AbilitySystemComponent)
+	{
+		// Nothing to grant to yet. Said plainly rather than silently, because a body that owns no
+		// abilities and a body whose grant never ran look the same in the world.
+		UE_LOG(LogProsperitocracy, Log,
+			TEXT("%s on %s: the loadout's abilities cannot be granted yet — this body has no ability system up."),
+			*GetName(), *GetNameSafe(GetOwner()));
+		return;
+	}
+
+	// THE LAST LOADOUT'S ABILITIES GO FIRST, and this is the half that makes a swap a SWAP: an ability
+	// the loadout being played does not name is taken away here, with the very spec handle it was granted
+	// with, so it cannot be pressed afterwards. Clearing the list is what ends it — an ability outliving
+	// the loadout that chose it is exactly the accumulation this door exists to prevent, and it would
+	// make a loadout's pick mean nothing at all.
+	//
+	// It is why the loadout's grants are kept in their OWN list: this takes back what a LOADOUT gave, and
+	// never the bash or the contested health the body owns by itself, whatever order the two are called in.
+	LoadoutAbilityHandles.TakeFromAbilitySystem(AbilitySystemComponent);
+
+	if (!Loadout)
+	{
+		return;
+	}
+
+	// The four slots, in bar order — four fields and never a list, because four is the design's number
+	// (Design/abilities.md) and a fifth cannot be authored. Listing them here is what makes this the one
+	// place that knows a loadout's four ability slots are a set.
+	const TSubclassOf<UProsperitocracyGameplayAbility> Slots[] =
+	{
+		Loadout->Ability1,
+		Loadout->Ability2,
+		Loadout->Ability3,
+		Loadout->Ability4
+	};
+
+	int32 Granted = 0;
+
+	for (const TSubclassOf<UProsperitocracyGameplayAbility>& Slot : Slots)
+	{
+		// Presence is scope: an empty slot is a slot this loadout did not fill, which is a legal build
+		// (Design/loadout.md) and not a missing entry.
+		if (!Slot)
+		{
+			continue;
+		}
+
+		UProsperitocracyGameplayAbility* AbilityCDO = Slot->GetDefaultObject<UProsperitocracyGameplayAbility>();
+		if (!AbilityCDO)
+		{
+			// A slot holding something that is not one of our abilities is a misconfiguration worth
+			// naming: it would otherwise be granted and never work, which reads as a broken loadout.
+			UE_LOG(LogProsperitocracy, Warning,
+				TEXT("%s on %s: a loadout's ability slot holds %s, which is not one of our abilities — it is skipped."),
+				*GetName(), *GetNameSafe(GetOwner()), *GetNameSafe(Slot.Get()));
+			continue;
+		}
+
+		// GRANTED THE SAME SHAPE the character's own abilities are granted in: a spec whose level is 1,
+		// with this component as the source object. It carries NO input tag, and that is deliberate — a
+		// loadout's abilities are not pressed BY a tag: the thing in the player's hand runs its own by
+		// name (the weapon's second-press slot), and a tag here would be a second way to address them.
+		FGameplayAbilitySpec AbilitySpec(AbilityCDO, /*AbilityLevel=*/ 1);
+		AbilitySpec.SourceObject = this;
+
+		LoadoutAbilityHandles.AddAbilitySpecHandle(AbilitySystemComponent->GiveAbility(AbilitySpec));
+		++Granted;
+	}
+
+	// With its count, and with which loadout: "the abilities did nothing" and "the loadout names no
+	// abilities" are the same silence, and only one of them is a bug.
+	UE_LOG(LogProsperitocracy, Log, TEXT("%s on %s: %s grants %d of its four ability slots."),
+		*GetName(), *GetNameSafe(GetOwner()), *GetNameSafe(Loadout), Granted);
 }
 
 void UProsperitocracyPlayerStatsComponent::WearWeave(UProsperitocracyStatTable* Weave)

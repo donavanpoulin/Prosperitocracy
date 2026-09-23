@@ -62,10 +62,17 @@ namespace ProsperitocracyBladeHandling
  * from two places is what made the last attempt unfixable.
  *
  * WHAT THE RIGHT BUTTON DOES IS NOT THE BLADE'S, AND THAT IS THE POINT. A sword's other move is an
- * ABILITY, and this blade carries a slot naming which one it fires (`SecondaryAbility`) — so a sword
- * throw, or anything else a sword should do on a press, is a new ability and nothing about this
- * class changes. The blade does not know what its right click is; it knows which ability to ask for,
- * and the ability owns its own numbers, its own animation and its own hit.
+ * ABILITY, and the blade is lent one — a sword throw, a parry, or the HEAVY COMBO, and nothing about
+ * this class changes for any of them. The blade does not know what its right click is; it asks the
+ * weapon for the ability it was dressed with, and that ability owns its own numbers, its own animation
+ * and its own hit.
+ *
+ * AND WHAT IT IS DRESSED WITH IS A LOADOUT'S CHOICE, never this class's and never a default anywhere:
+ * the loadout's ability slots are what the character owns, the ability that names this blade's slot's
+ * second press is the one handed over, and a loadout that takes a different one changes the right
+ * button without a single weapon asset being touched. There is deliberately NO authored slot on this
+ * class any more — an authored value would be a second copy of an answer the loadout already owns, and
+ * that copy is exactly what goes stale.
  */
 UCLASS(BlueprintType)
 class AProsperitocracyBloodBlade : public AProsperitocracyWeapon
@@ -91,11 +98,12 @@ public:
 	/**
 	 * One press of the right mouse button: run this blade's own ability.
 	 *
-	 * The blade carries the ability it fires rather than containing the move, so what a sword does on
-	 * a right press is one asset away from being something else — a dash today, a sword throw later,
-	 * anything the sword should do. Everything about what that move IS belongs to the ability: its
-	 * Range, its Rate, its Cooldown, its damage, its animation, and the question of whether it may
-	 * start at all.
+	 * The blade carries the ability it fires rather than containing the move — handed over by the loadout
+	 * that dressed it (the weapon's `SecondPressAbility`) — so what a sword does on a right press is one
+	 * loadout slot away from being something else: a dash today, the heavy combo on a loadout that takes
+	 * it, a sword throw later, anything the sword should do. Everything about what that move IS belongs to
+	 * the ability: its Range, its Rate, its Cooldown, its damage, its animation, and the question of
+	 * whether it may start at all.
 	 *
 	 * This is where the template's right-click AIM used to be. Aiming was never a thing this weapon
 	 * did; the press belongs to the thing in the hand, exactly as the left button's does.
@@ -215,19 +223,6 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Blade")
 	TObjectPtr<UAnimMontage> ComboMontage;
 
-	/**
-	 * The ability this blade fires on the right mouse button.
-	 *
-	 * A SLOT, not a move: the blade names which ability its second press runs and knows nothing about
-	 * it — not its numbers, not its animation, not what it does. That is what makes a sword's other
-	 * move modular and interchangeable, and it is why the move itself is an ordinary ability with its
-	 * own block rather than a mode hidden in this class.
-	 *
-	 * Null is a real answer: a blade with no ability simply does nothing on the right press.
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Blade")
-	TSubclassOf<UProsperitocracyGameplayAbility> SecondaryAbility;
-
 protected:
 	/**
 	 * The blade is looked at and never bumped into.
@@ -275,8 +270,8 @@ private:
 	/**
 	 * End whatever the RIGHT button's ability is running, if it is running.
 	 *
-	 * The blade knows which ability its own slot names, and a move started by the left button ends it
-	 * by name — the ability's own EndAbility stops its clock, its window, its sweep and its facing, so
+	 * The blade holds the ability it was dressed with, and a move started by the left button ends it by
+	 * name — the ability's own EndAbility stops its clock, its window, its sweep and its facing, so
 	 * nothing of it keeps working underneath the combo.
 	 */
 	void EndTheOtherMove();

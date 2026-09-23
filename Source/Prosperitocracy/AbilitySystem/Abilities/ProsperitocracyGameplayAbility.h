@@ -168,6 +168,24 @@ public:
 	EProsperitocracyAbilityActivationPolicy GetActivationPolicy() const { return ActivationPolicy; }
 	EProsperitocracyAbilityActivationGroup GetActivationGroup() const { return ActivationGroup; }
 
+	/**
+	 * Which WEAPON SLOT's second press this ability is, or an invalid tag for an ability that is not one.
+	 *
+	 * A weapon's right button is answered by an ability its carrier OWNS, and this is how that ability
+	 * says so about itself: it names the slot whose second press it is. It is what turns a loadout's pick
+	 * into the thing in the player's hand — the character carries a loadout's four abilities, and the
+	 * weapon in a slot is dressed with the one that names ITS slot, so choosing a different ability in a
+	 * loadout is choosing what the right button does, with no weapon edited and no cast anywhere.
+	 *
+	 * A SWORD'S OTHER MOVE IS AN ABILITY, which is the whole reason this lives here rather than inside one
+	 * weapon class: a sword throw, a parry, a bash — anything a weapon should do on its second press — is
+	 * a new ability that names the slot, and the blade it belongs to changes in no way at all.
+	 *
+	 * Presence is scope, exactly as everywhere else: an ability that is not a weapon's second press
+	 * carries no tag, and a slot nothing names simply lends the weapon nothing.
+	 */
+	FGameplayTag GetSecondPressOfSlot() const { return ServesSecondPressOfSlot; }
+
 	UE_API void TryActivateAbilityOnSpawn(const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilitySpec& Spec) const;
 
 	// Returns true if the requested activation group is a valid transition.
@@ -222,6 +240,16 @@ protected:
 	// deals that block's Impact/Piercing, evaluated by the aggregator).
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Ability")
 	TObjectPtr<UProsperitocracyStatTable> StatBlock = nullptr;
+
+	/**
+	 * The weapon slot whose SECOND PRESS this ability is — see GetSecondPressOfSlot above.
+	 *
+	 * Empty for every ability that is not a weapon's second press, which is nearly all of them. A weapon
+	 * is dressed with the granted ability that names the slot it sits in, so this one field is what makes
+	 * "what the right button does" a thing a LOADOUT decides and a weapon never learns about.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Ability", meta = (Categories = "Prosperitocracy.Weapon.Slot"))
+	FGameplayTag ServesSecondPressOfSlot;
 
 	// The ability's GAS home (see AProsperitocracyStatHostActor): every stat the ability's block
 	// carries is a GAS attribute on this host's own ASC — the ONE evaluator. Spawned on give (or

@@ -2,6 +2,7 @@
 
 #include "ProsperitocracyLoadoutComponent.h"
 
+#include "AbilitySystem/Abilities/ProsperitocracyGameplayAbility.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
 #include "Character/ProsperitocracyCharacter.h"
@@ -32,6 +33,12 @@ void UProsperitocracyLoadoutComponent::BeginPlay()
 	// Spawn goes through the SAME door a change goes through, so a body coming up cannot be dressed
 	// differently from the way a switch or a change dresses it.
 	NotifyBodyDressed();
+
+	// And what the loadout OWNS — the four abilities, and the move the thing in the hand makes on the
+	// right button — comes up with it too, through the same door a change uses. It is called AFTER the
+	// channels are in line above, because one of the two halves hands something to the weapons that are
+	// standing in them.
+	DressLoadoutAbilities();
 }
 
 void UProsperitocracyLoadoutComponent::MakePlayingCopies()
@@ -215,6 +222,117 @@ void UProsperitocracyLoadoutComponent::Redress()
 			}
 		}
 	}
+
+	// And what the loadout OWNS, last, because it is the half that reaches the WEAPONS themselves: the four
+	// abilities are granted to the body, and each weapon standing in a channel is handed the one that is
+	// its own slot's second press — so the right button answers to the loadout that was just dressed, and
+	// a swap changes it without a weapon asset being touched.
+	DressLoadoutAbilities();
+}
+
+void UProsperitocracyLoadoutComponent::DressLoadoutAbilities()
+{
+	// 1. WHAT THE BODY OWNS. The four ability slots the loadout took in, granted to this body's ability
+	//    system through the one door that owns it — the same call at spawn and after every change, so a
+	//    switch can never leave a body owning a different set from the one it came up with.
+	if (AActor* Owner = GetOwner())
+	{
+		if (UProsperitocracyPlayerStatsComponent* Stats = Owner->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
+		{
+			Stats->DressAbilitiesFromLoadout(GetLoadout());
+		}
+	}
+
+	// 2. WHAT THE THING IN THE HAND DOES. Each weapon standing in a channel is told which of the four is
+	//    ITS slot's second press — asked of the ability, which names the slot it serves — so nothing here
+	//    has to know what a blade is, or that a heavy combo exists at all. A weapon whose slot the loadout
+	//    lends nothing is told NOTHING, which is a real answer: its right button falls back to what it is
+	//    by itself (a gun's aim).
+	if (AActor* Owner = GetOwner())
+	{
+		TArray<UChildActorComponent*> Channels;
+		Owner->GetComponents(Channels);
+
+		// Collected first, and for the same reason the dress above collects its own list: a channel is
+		// dressed through a door that records things, and a map is not something to walk while it is
+		// written.
+		TArray<AProsperitocracyWeapon*> InTheChannels;
+		for (UChildActorComponent* Channel : Channels)
+		{
+			if (AProsperitocracyWeapon* Weapon = Channel ? Cast<AProsperitocracyWeapon>(Channel->GetChildActor()) : nullptr)
+			{
+				InTheChannels.Add(Weapon);
+			}
+		}
+
+		for (AProsperitocracyWeapon* Weapon : InTheChannels)
+		{
+			Weapon->SetSecondPressAbility(FindSecondPressAbilityForSlot(Weapon->GetSlotTag()));
+		}
+	}
+}
+
+TSubclassOf<UProsperitocracyGameplayAbility> UProsperitocracyLoadoutComponent::FindSecondPressAbilityForSlot(FGameplayTag Slot) const
+{
+	// A slot nothing names cannot lend anything, and neither can a loadout with nothing on it: a weapon's
+	// right press is a loadout's choice, and a loadout that makes no choice leaves the weapon its own
+	// answer.
+	if (!Slot.IsValid())
+	{
+		return nullptr;
+	}
+
+	const UProsperitocracyLoadout* Playing = GetLoadout();
+	if (!Playing)
+	{
+		return nullptr;
+	}
+
+	// The four slots, in bar order — the same four fields, listed in one other place, because a loadout's
+	// ability slots being a SET of four is a thing exactly two places have to know.
+	const TSubclassOf<UProsperitocracyGameplayAbility> Slots[] =
+	{
+		Playing->Ability1,
+		Playing->Ability2,
+		Playing->Ability3,
+		Playing->Ability4
+	};
+
+	TSubclassOf<UProsperitocracyGameplayAbility> Found = nullptr;
+
+	for (const TSubclassOf<UProsperitocracyGameplayAbility>& Candidate : Slots)
+	{
+		if (!Candidate)
+		{
+			continue;
+		}
+
+		// ASKED OF THE ABILITY, never of a list of which ability is which: an ability that is a weapon's
+		// second press says which slot's it is, so this needs no vocabulary and nothing to keep in step
+		// when a new one arrives.
+		const UProsperitocracyGameplayAbility* AbilityCDO = Candidate->GetDefaultObject<UProsperitocracyGameplayAbility>();
+		if (!AbilityCDO || AbilityCDO->GetSecondPressOfSlot() != Slot)
+		{
+			continue;
+		}
+
+		if (Found)
+		{
+			// TWO abilities claiming one slot's second press is a loadout that cannot be answered
+			// honestly — one of them would be silently ignored. The first still wins, and the clash is
+			// named, because a right button that quietly does the wrong one of two things is the exact
+			// class of bug this whole path exists to make impossible.
+			UE_LOG(LogProsperitocracy, Warning,
+				TEXT("%s on %s: %s and %s BOTH claim %s's second press — %s is used and %s is ignored. A slot takes one."),
+				*GetName(), *GetNameSafe(GetOwner()), *GetNameSafe(Found.Get()), *GetNameSafe(Candidate.Get()),
+				*Slot.ToString(), *GetNameSafe(Found.Get()), *GetNameSafe(Candidate.Get()));
+			continue;
+		}
+
+		Found = Candidate;
+	}
+
+	return Found;
 }
 
 void UProsperitocracyLoadoutComponent::NotifyBodyDressed()

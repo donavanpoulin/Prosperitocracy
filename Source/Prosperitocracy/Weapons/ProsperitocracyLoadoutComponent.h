@@ -13,6 +13,7 @@
 class AProsperitocracyWeapon;
 class UGameplayEffect;
 class UProsperitocracyClass;
+class UProsperitocracyGameplayAbility;
 
 /**
  * The magazine and the spare pool of ONE slot. Runtime state, never authored data.
@@ -315,13 +316,42 @@ private:
 	UProsperitocracyLoadout* ResolveLoadoutSource(int32 Index) const;
 
 	/**
-	 * Dress the body from the loadout being played: the armour, then the guns in hand.
+	 * Dress the body from the loadout being played: the abilities, the armour, then the guns in hand.
 	 *
 	 * ONE act, so a switch and a change made in play cannot dress a body or a gun differently — and so
 	 * there is exactly one place that has to know what "this character is now carrying something else"
 	 * means.
 	 */
 	void Redress();
+
+	/**
+	 * Which of the loadout's four abilities is the move a given weapon slot's SECOND PRESS makes, or null
+	 * when the loadout names none.
+	 *
+	 * The question is answered by the ability itself: an ability that is a weapon's second press says
+	 * which slot's it is (UProsperitocracyGameplayAbility::GetSecondPressOfSlot), so this walks the
+	 * loadout's four slots and finds the one that claims THAT slot. That is what makes the right button a
+	 * loadout's choice and the weapon's business to ask for — a loadout that names the dash gets the dash,
+	 * a loadout that names the heavy combo gets the heavy combo, and no weapon is edited for either.
+	 *
+	 * One answer, never two: a slot two abilities both claimed would be ambiguous, so the FIRST one that
+	 * claims it wins and says so out loud rather than being silently picked.
+	 */
+	TSubclassOf<UProsperitocracyGameplayAbility> FindSecondPressAbilityForSlot(FGameplayTag Slot) const;
+
+	/**
+	 * Grant the four abilities this loadout took in, and hand each weapon in a channel the one that is its
+	 * own slot's second press.
+	 *
+	 * ONE door, called from the two places a body is dressed — when it comes up, and on every change — for
+	 * the same reason the armour has one: a body coming up must not end up owning a different set from the
+	 * one a loadout switch gives it.
+	 *
+	 * Both halves are here because they are one decision. What the character OWNS comes from the loadout's
+	 * four slots; what the thing in its HAND does on the right button is one of those four, found by the
+	 * slot the ability claims. Splitting them would be two places that have to agree about a single choice.
+	 */
+	void DressLoadoutAbilities();
 
 	/**
 	 * Make this character's OWN copy of every loadout the class being played carries, under the index

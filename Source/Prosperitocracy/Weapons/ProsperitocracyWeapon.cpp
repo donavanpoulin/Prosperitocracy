@@ -57,6 +57,12 @@ void AProsperitocracyWeapon::ReloadAction_Implementation()
 
 void AProsperitocracyWeapon::SecondaryAction_Implementation()
 {
+	// THE BUTTON IS DOWN, and the thing it was pressed on is what knows it. That one line is the whole
+	// of what a HOLD is, and it is recorded for every weapon before anything is decided: a move that is
+	// held rather than pressed (the heavy combo) asks this every step, so nothing has to route the
+	// release back to a running ability — the weapon it was pressed on answers.
+	bSecondaryHeld = true;
+
 	// THE DEFAULT ANSWER IS AIMING, and it belongs to a GUN: a firearm is aimed by holding the right
 	// button, so the thing in the hand says "I am being aimed" and the body drives its camera,
 	// crosshair and pose off that. The test is the project's own — a gun is a weapon with a fire mode
@@ -70,9 +76,24 @@ void AProsperitocracyWeapon::SecondaryAction_Implementation()
 
 void AProsperitocracyWeapon::SecondaryActionReleased_Implementation()
 {
+	// The other half of the hold, recorded for every weapon for the same reason.
+	bSecondaryHeld = false;
+
 	// Aiming is a HOLD: the press starts it and this lets it go. A thing that never set it is not
 	// harmed by clearing it — a melee's answer here is nothing at all.
 	bAiming = false;
+}
+
+void AProsperitocracyWeapon::SetSecondPressAbility(TSubclassOf<UProsperitocracyGameplayAbility> InAbility)
+{
+	// HANDED OVER, never read off the weapon: the loadout that dressed this thing is the one that knows
+	// what its carrier took in, and the weapon only holds what it was given. Said out loud, because a
+	// right button that quietly does nothing and a right button that quietly does the WRONG thing look
+	// exactly the same from the outside.
+	SecondPressAbility = InAbility;
+
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s: the right button runs %s"),
+		*GetName(), *GetNameSafe(InAbility.Get()));
 }
 
 bool AProsperitocracyWeapon::HasAFireMode() const

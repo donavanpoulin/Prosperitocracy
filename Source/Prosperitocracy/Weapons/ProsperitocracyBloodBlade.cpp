@@ -780,6 +780,12 @@ void AProsperitocracyBloodBlade::PrimaryAction_Implementation()
 
 void AProsperitocracyBloodBlade::SecondaryAction_Implementation()
 {
+	// THE BUTTON IS DOWN, recorded on the thing it was pressed on — for every weapon, melee included,
+	// and BEFORE anything below can return. That is the whole of what a HOLD is: a move that runs while
+	// the button is down (the heavy combo) asks this weapon every step whether it still is, so nothing
+	// has to route a release back to a running ability.
+	Super::SecondaryAction_Implementation();
+
 	// Only the blade in the player's hand does anything on the right press: a stowed blade owes
 	// nothing to a button.
 	if (!IsInHand())
@@ -787,12 +793,15 @@ void AProsperitocracyBloodBlade::SecondaryAction_Implementation()
 		return;
 	}
 
-	// THE BLADE NAMES THE ABILITY; THE ABILITY IS THE MOVE. A null slot is a real answer — a blade
-	// carrying no right-click ability simply does nothing — and it is said out loud, because a press
-	// that does nothing and a press that is broken look the same from the outside.
-	if (!SecondaryAbility)
+	// THE LOADOUT LENT IT THE ABILITY; THE ABILITY IS THE MOVE. The slot is the weapon's and it was
+	// dressed from a loadout's four ability slots, so which move this is belongs to what the player took
+	// in and never to this class. A null slot is a real answer — a loadout that lends this blade no move
+	// means the right press does nothing — and it is said out loud, because a press that does nothing
+	// and a press that is broken look the same from the outside.
+	const TSubclassOf<UProsperitocracyGameplayAbility> SecondPress = GetSecondPressAbility();
+	if (!SecondPress)
 	{
-		UE_LOG(LogProsperitocracy, Log, TEXT("[Blade] %s: this blade carries no right-click ability, so the press does nothing."), *GetName());
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Blade] %s: no loadout lent this blade a right-click move, so the press does nothing."), *GetName());
 		return;
 	}
 
@@ -806,7 +815,7 @@ void AProsperitocracyBloodBlade::SecondaryAction_Implementation()
 		return;
 	}
 
-	const_cast<UProsperitocracyAbilitySystemComponent*>(AbilitySystemComponent)->TryActivateAbilityByClass(SecondaryAbility);
+	const_cast<UProsperitocracyAbilitySystemComponent*>(AbilitySystemComponent)->TryActivateAbilityByClass(SecondPress);
 }
 
 void AProsperitocracyBloodBlade::StandDownForANewMove()
@@ -824,7 +833,8 @@ void AProsperitocracyBloodBlade::StandDownForANewMove()
 
 void AProsperitocracyBloodBlade::EndTheOtherMove()
 {
-	if (!SecondaryAbility)
+	const TSubclassOf<UProsperitocracyGameplayAbility> SecondPress = GetSecondPressAbility();
+	if (!SecondPress)
 	{
 		return;
 	}
@@ -838,7 +848,7 @@ void AProsperitocracyBloodBlade::EndTheOtherMove()
 
 	// Cancelling it IS ending the move: the ability's own EndAbility stops its clock, drops its window
 	// and lets the facing go — so a move the player is no longer in never keeps working beneath him.
-	if (const FGameplayAbilitySpec* Spec = AbilitySystemComponent->FindAbilitySpecFromClass(SecondaryAbility))
+	if (const FGameplayAbilitySpec* Spec = AbilitySystemComponent->FindAbilitySpecFromClass(SecondPress))
 	{
 		if (Spec->IsActive())
 		{

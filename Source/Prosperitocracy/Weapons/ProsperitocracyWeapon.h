@@ -15,6 +15,7 @@ class AProsperitocracyStatHostActor;
 class APawn;
 class UGameplayEffect;
 class USkeletalMeshComponent;
+class UProsperitocracyGameplayAbility;
 class UProsperitocracyLoadoutComponent;
 class UProsperitocracyStatTable;
 struct FProsperitocracyDamageLine;
@@ -212,6 +213,38 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
 	bool HasAFireMode() const;
+
+	/**
+	 * Whether the right mouse button is DOWN on this thing right now.
+	 *
+	 * The press and the release both land on the weapon in the hand (`SecondaryAction` /
+	 * `SecondaryActionReleased`), so this — and nothing in the input graph — is the one holder of what
+	 * a HOLD is. A move that is held rather than pressed asks its own weapon this every step, which is
+	 * why the heavy combo needs no event of its own to be told the button came up: the thing it was
+	 * pressed on already knows, and answers.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	bool IsSecondaryHeld() const { return bSecondaryHeld; }
+
+	/**
+	 * The thing in hand's OWN move on the right button, dressed onto it by its carrier's loadout.
+	 *
+	 * A SLOT, not a move, and the weapon never learns what is in it: the loadout grants its four
+	 * abilities and hands the one that names this weapon's slot to the weapon, so a loadout is what
+	 * decides what the right button does — the dash today, the heavy combo on a loadout that takes it,
+	 * a sword throw tomorrow — and a weapon is never edited to change it.
+	 *
+	 * It is DRESSED rather than authored on the weapon blueprint, for the same reason a gun's numbers
+	 * are: an authored value is a second copy of an answer that has an owner, and a copy goes stale the
+	 * moment the owner changes. Null is a real answer — a weapon carries no second move unless a loadout
+	 * gives it one, and then its right button falls back to what it is by itself (a gun's aim).
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	TSubclassOf<UProsperitocracyGameplayAbility> GetSecondPressAbility() const { return SecondPressAbility; }
+
+	/** Hand this thing the ability its right button runs. Called by the loadout that dressed it. */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	void SetSecondPressAbility(TSubclassOf<UProsperitocracyGameplayAbility> InAbility);
 
 	/**
 	 * Another move is about to take the stage on this weapon's owner: stand down.
@@ -536,6 +569,21 @@ protected:
 	 */
 	UPROPERTY(Transient)
 	bool bAiming = false;
+
+	/**
+	 * Whether the right button is down on this thing — its own state, written by the same two doors that
+	 * write `bAiming`, and read by any move that is a HOLD rather than a press (see IsSecondaryHeld).
+	 */
+	UPROPERTY(Transient)
+	bool bSecondaryHeld = false;
+
+	/**
+	 * The ability this thing's right button runs, handed over by the loadout that dressed it — and
+	 * deliberately NOT a default on a weapon blueprint, for exactly the reason the stat block above is
+	 * not one: the loadout is the owner of the answer, and a weapon must not hold a copy of it.
+	 */
+	UPROPERTY(Transient)
+	TSubclassOf<UProsperitocracyGameplayAbility> SecondPressAbility;
 
 	/** What the loadout answered. Undressed until it is asked, and until the gun is in the rig. */
 	EProsperitocracyWeaponDressResult DressResult = EProsperitocracyWeaponDressResult::Undressed;

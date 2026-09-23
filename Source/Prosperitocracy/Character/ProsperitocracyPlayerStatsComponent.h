@@ -191,6 +191,30 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Armor")
 	void DressFromLoadout(UProsperitocracyLoadout* Loadout);
 
+	//~ The abilities a loadout names — what this body OWNS (Design/loadout.md, Design/abilities.md) ----
+
+	/**
+	 * OWN the four abilities this loadout took in, and give back the four the last one took in.
+	 *
+	 * THE ONE DOOR between "what a loadout selects" and "what this character can do", and the reason it
+	 * lives here rather than anywhere else: this component is the one that owns the ability system, and
+	 * an ability can only be granted to the system that will run it.
+	 *
+	 * A class has a ROSTER and a loadout picks FOUR from it (Design/abilities.md), so what a character
+	 * owns is these four and never the whole roster — granting the roster would give everyone everything,
+	 * which is the opposite of picking. The four here are the loadout's own slots, in bar order.
+	 *
+	 * The last loadout's four go FIRST, always, and that is the half that makes a swap a swap rather than
+	 * an accumulation: an ability the new loadout does not name is taken away with its spec handle, so it
+	 * cannot be pressed any more. Nothing else in the game grants or removes a loadout's abilities, so
+	 * there is exactly one writer of what this body owns from a loadout.
+	 *
+	 * Empty slots are skipped, and a loadout with none of them is a real loadout (Design/loadout.md): it
+	 * simply owns nothing, which is a legal build and not a broken one. Null takes everything back.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Abilities")
+	void DressAbilitiesFromLoadout(UProsperitocracyLoadout* Loadout);
+
 	/** The weave on this body right now. Null = bare. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Armor")
 	UProsperitocracyStatTable* GetWornWeave() const { return ArmorWeave; }
@@ -516,6 +540,17 @@ private:
 
 	/** What was granted, so it could be taken away again. */
 	FProsperitocracyAbilitySet_GrantedHandles GrantedAbilityHandles;
+
+	/**
+	 * What a LOADOUT granted, kept apart from what the character owns by itself, so the two can never be
+	 * taken away by each other's change.
+	 *
+	 * Everything here belongs to the loadout playing right now: a swap empties this list and fills it
+	 * again from the loadout being played, while `GrantedAbilityHandles` above — the bash, contested
+	 * health, the passives every body has — is untouched by any loadout change. One list per owner is
+	 * what makes "take back the last loadout's abilities" safe to say at all.
+	 */
+	FProsperitocracyAbilitySet_GrantedHandles LoadoutAbilityHandles;
 
 	/** The owning pawn's ability system — where every stat of theirs lives. */
 	UPROPERTY(Transient)
