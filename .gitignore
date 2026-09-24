@@ -8,6 +8,13 @@ Build/
 # Template download cache (the 920 MB zip is not project source)
 downloaded/
 
+# World-building asset packs — kept on disk, not project source (the user's call, 2026-09-24)
+Content/SD_Art/
+Content/STF/
+
+# Fab / vault download cache (the raw downloads, not the imported assets)
+Content/VaultCache/
+
 # Visual Studio / IDE
 .vs/
 .vscode/
