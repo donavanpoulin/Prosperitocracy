@@ -19,12 +19,13 @@ class UImage;
  *   - "Circle" — a constant-size marker at the landing point. Where the bullet WILL hit.
  *
  * The circle is moved every frame, never resized: inaccuracy is the circle sitting somewhere other
- * than the dot, not a circle growing. Its offset is the gun's own drift (handling trail and movement
- * trail from Weight, per-shot spread from Accuracy, recoil climb from Recoil), which is the very same
- * value the bullet flies along — so the circle genuinely is the landing point.
+ * than the dot, not a circle growing. And it is not moved from a number of its own — it is placed on
+ * THE SHOT'S OWN LINE, asked of the gun (the muzzle, the man's own aim, and the one trace the
+ * bullet travels), so the circle is where the bullet would land because it is the same answer the
+ * bullet uses. A wall in the way puts the circle on the wall.
  *
- * It is an ADS-only aid: at hipfire only the dot shows, and the circle fades in with the template's
- * own ADS blend. It also cover-snaps: the circle sits on whatever is between the player and the aim,
+ * It is an ADS-only aid: at hipfire only the dot shows, and the circle fades in on the gun's own
+ * aiming state. It also cover-snaps: the circle sits on whatever is between the player and the aim,
  * because that is where the bullet will actually stop.
  *
  * The two images are found by name in the widget tree, so the widget blueprint holds the layout and
@@ -49,8 +50,8 @@ public:
 	/**
 	 * Where the circle goes, in viewport pixels: the landing point of the next shot.
 	 *
-	 * The camera aim plus the gun's drift, along whatever the shot would hit first (cover snap), or a
-	 * reference distance in open air.
+	 * Asked of the gun — the barrel's own line, and the one trace the bullet travels — so the circle
+	 * sits on what the shot would hit, or on the end of the gun's own range in open air.
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure)
 	FVector2D ComputeCircleScreenPosition() const;
@@ -80,6 +81,9 @@ protected:
 private:
 	/** The character this reticle belongs to, or null when there is none yet. */
 	AProsperitocracyCharacter* GetOwningCharacter() const;
+
+	/** How visible the circle is right now: it follows the gun's aiming state at CircleFadeRate. */
+	float CircleOpacity = 0.0f;
 
 	/**
 	 * Keep the bound gun equal to the one in hand.

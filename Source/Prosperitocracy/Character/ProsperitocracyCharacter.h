@@ -20,17 +20,16 @@ class USkeletalMeshComponent;
  * The player character's C++ half: the one place our aim behaviour reaches the body.
  *
  * The template keeps everything it did before — mesh, animation, movement, the rig, the HUD widget.
- * What lives here is the one thing that cannot live in a blueprint: the `GetBaseAimRotation`
- * override. The template's own animation blueprint (`Content/ThirdPerson/Blueprints/Locomotion.uasset`)
- * already drives its aim offset from `GetBaseAimRotation`, so overriding that one function is what
- * makes the character's gun and arms point where the next bullet will actually land — the same aim
- * the reticle circle and the bullet use (Design/combat.md: "the sway feeds the same aim the circle,
- * the bullet, and the character pose read").
+ * What lives here is the one thing that cannot live in a blueprint: **the AIM** — where this body
+ * is actually pointing. It TURNS toward where the player is looking, at its own rate, so the man
+ * comes round at his own speed instead of snapping, and what he carries is what makes him slow.
+ * The template's own animation blueprint (`Content/ThirdPerson/Blueprints/Locomotion.uasset`)
+ * already drives its aim offset from `GetBaseAimRotation`, so the animation reads this aim for
+ * free: the gun and arms point where the next bullet will land, because that is where it leaves from.
  *
- * Three facts belong to the rig and cannot be guessed from C++, so the blueprint answers them. Each is
+ * Two facts belong to the rig and cannot be guessed from C++, so the blueprint answers them. Each is
  * a BlueprintNativeEvent with an honest empty default, which is the whole door:
  *   - which gun is in hand (`GetGunInHand`) — the template's equip state decides it;
- *   - how far into ADS we are (`GetAimingAlpha`) — the template's `Aim_Smooth` timeline owns it.
  *   - which mesh the body is DRAWN with (`GetBodyMesh`) — the rig put the visible body on it.
  *
  * Nobody recomputes either from a proxy: not from a mesh being visible, not from a camera boom
@@ -60,8 +59,8 @@ public:
 	 * The rig decides which gun is in hand, so the answer comes from the blueprint; C++ only asks.
 	 * It answers with the ACTOR because that is what the rig actually holds (a child actor on one of
 	 * its rig components), and the type is resolved right here, once per reader — the same shape as
-	 * `GetChildActor` itself. Null is a truthful answer, not a failure: no gun in hand means no drift,
-	 * so the aim stays the plain camera aim everywhere it is read.
+	 * `GetChildActor` itself. Null is a truthful answer, not a failure: nothing in hand is nothing to
+	 * shoot, and the aim is the body's whether he is holding something or not.
 	 */
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Prosperitocracy|Aim")
 	AActor* GetGunInHand() const;
@@ -294,18 +293,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Attack")
 	bool IsSwingLocked() const { return bAttackLive; }
 	/**
-	 * How far into aiming down sights we are: 0 = hipfire, 1 = fully aiming.
-	 *
-	 * The template's `Aim_Smooth` timeline IS that blend — it already drives the camera boom and the
-	 * crosshair — so the blueprint reports its alpha here instead of anyone recomputing it from the
-	 * boom length. The same number drives the posture multiplier on Accuracy and the reticle
-	 * circle's fade, which is why the circle always appears with the camera, never on a separate clock.
-	 */
-	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Prosperitocracy|Aim")
-	float GetAimingAlpha() const;
-	virtual float GetAimingAlpha_Implementation() const;
-
-	/**
 	 * The skeletal mesh this body is DRAWN with — the one you actually see, or null when the
 	 * blueprint has not said which it is.
 	 *
@@ -337,12 +324,46 @@ public:
 	void OnLoadoutDressed();
 
 	/**
-	 * The aim the body and the animation read: the base aim rotation plus the in-hand gun's drift.
+	 * The aim the body and the animation read: where this man is actually pointing, right now.
 	 *
-	 * The drift is the SAME value the bullet flies along and the circle sits on, added the same way
-	 * in all three places (Design/ui.md: every bullet lands exactly where the circle points).
+	 * It is the ONE aim. The gun's barrel is placed by it, the bullet leaves along that barrel, and
+	 * the reticle circle sits on the line the two make (Design/ui.md: every bullet lands exactly
+	 * where the circle points) — nothing is added to it here, because the aim IS the thing.
 	 */
 	virtual FRotator GetBaseAimRotation() const override;
+
+	//~ The aim — where this man is actually pointing.
+	//
+	// ONE thing, held here and nowhere else: the gun is placed by it, the bullet leaves along the
+	// barrel that placement makes, and the circle sits on that line. No second copy exists anywhere
+	// and nothing adds to it.
+
+	/** The aim this body holds right now, in world space. */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Aim")
+	FRotator GetAimRotation() const { return AimRotation; }
+
+	/**
+	 * How fast this body turns its aim, in degrees per second — the carried weight's answer.
+	 *
+	 * Heavy gear turns slower, and that is the whole of the turn's feel. ONE number doing two jobs,
+	 * because they are one thing: it caps how fast the aim may travel (a flick cannot outrun the man)
+	 * and it is what walks a shot's kick or shove back onto the point.
+	 *
+	 * Derived, never authored: the body's own turn rate through the SAME weight penalty the run speed
+	 * and the jump already take, so a heavier build turns slower with no new row and no second speed
+	 * number. [TUNE]
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Aim")
+	float GetAimTurnRate() const;
+
+	/**
+	 * Move the aim off its point, right now: a shot's kick and its shove land here.
+	 *
+	 * A real displacement of the real aim, in degrees of yaw and pitch. Nothing else brings it back —
+	 * the body's own turn rate does, which is why a planted crouched body settles fastest.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Aim")
+	void PushAim(float DeltaYawDegrees, float DeltaPitchDegrees);
 
 	//~IAbilitySystemInterface — where this body's damage lands.
 	//
@@ -419,21 +440,24 @@ protected:
 	 */
 	bool bFacingHeld = false;
 
-	/** True while the body is turning back to where the player is looking, after the facing was let go. */
-	bool bTurningToLook = false;
+	/**
+	 * The AIM: where this body is actually pointing. Written in ONE place (`TickAim`), and read by
+	 * the gun (which places the barrel with it), by the animation (which poses the arms with it) and
+	 * by the reticle (which sits on the line those two make). Nothing else writes it.
+	 */
+	FRotator AimRotation = FRotator::ZeroRotator;
 
-	/** What `bUseControllerRotationYaw` was before the attack took the facing over, so it goes back. */
-	bool bControllerYawBeforeFacing = true;
+	/** The yaw the aim last wrote, and whether it has written one — so a frame can tell if anything
+	 *  else moved this body (a mantle, root motion) and be carried by it rather than fighting it. */
+	float LastAimYaw = 0.0f;
+	bool bHasWrittenAimYaw = false;
 
-	/** One frame of a live attack: the body is placed along its line and turned to face it. */
+	/** One frame of a live attack: the body is placed along its line, whose facing the aim holds. */
 	void TickAttack(float DeltaSeconds);
 
-	/** One frame of the turn back to the player's look. A turn, never a snap. */
-	void TickFacingTurn(float DeltaSeconds);
+	/** One frame of the aim: it turns toward the player's look at this body's own rate. */
+	void TickAim(float DeltaSeconds);
 
-	/** The facing is the controller's again, from here on. */
-	void FinishFacingTurn();
-
-	/** This body's own tick, which is where a live attack and the turn behind it are driven. */
+	/** This body's own tick, which is where the aim, a live attack and the turn behind it are driven. */
 	virtual void Tick(float DeltaSeconds) override;
 };

@@ -97,12 +97,12 @@ void UProsperitocracyGameplayAbility_Bash::ActivateAbility(const FGameplayAbilit
 	UWorld* World = GetWorld();
 	if (World)
 	{
-		// The swing reaches from the player's EYE along the SAME direction the bullet flies (drift
-		// included), so a bash lands where the reticle circle sits. The camera sits a boom length
-		// behind the player, so the eye is the origin — a camera-origin trace would never leave the
-		// character's own back.
+		// The swing reaches from the player's EYE along the direction the man is actually pointing, so a
+		// bash lands where the shot would and where the reticle circle sits. The camera sits a boom
+		// length behind the player, so the eye is the origin — a camera-origin sweep would never leave
+		// the character's own back.
 		const FVector SwingStart = AvatarPawn->GetPawnViewLocation();
-		const FVector SwingEnd = SwingStart + Gun->GetShotDirection() * (ReachMeters * CentimetersPerMeter);
+		const FVector SwingEnd = SwingStart + Gun->GetAimDirection() * (ReachMeters * CentimetersPerMeter);
 
 		// The same channel and the same ignores as the shot: never the shooter, never the gun in its
 		// hands.
