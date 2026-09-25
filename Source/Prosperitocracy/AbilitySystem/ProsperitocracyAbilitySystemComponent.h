@@ -5,6 +5,7 @@
 #include "Abilities/ProsperitocracyGameplayAbility.h"
 #include "AbilitySystemComponent.h"
 #include "NativeGameplayTags.h"
+#include "UI/ProsperitocracyHitMarkerTypes.h"
 
 #include "ProsperitocracyAbilitySystemComponent.generated.h"
 
@@ -18,6 +19,13 @@ struct FFrame;
 struct FGameplayAbilityTargetDataHandle;
 
 PROSPERITOCRACY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Gameplay_AbilityInputBlocked);
+
+/**
+ * Fired on a player's OWN client when damage THEY dealt landed: which of the three markers it earns
+ * (see EProsperitocracyHitMarkerKind). The reticle listens on this; nothing else has to ask whose
+ * damage it was, because the component that fires it belongs to the man who dealt it.
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FProsperitocracyHitMarkerEvent, EProsperitocracyHitMarkerKind, Kind);
 
 /**
  * UProsperitocracyAbilitySystemComponent
@@ -100,6 +108,24 @@ public:
 	{
 		return InputHeldSpecHandles.Contains(Handle);
 	}
+
+	/**
+	 * The player's OWN readout: what the damage HE just dealt did. Fired on the client that owns this
+	 * component — another man's damage never reaches it, so a listener can never show the wrong man's
+	 * hit.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Prosperitocracy|Hit Marker")
+	FProsperitocracyHitMarkerEvent OnHitMarker;
+
+	/**
+	 * Server → the shooting man's own client, one hop (see UProsperitocracyHitMarkerStatics).
+	 *
+	 * Unreliable on purpose: a marker is confirmation, not state. It is fired per damage event —
+	 * a burn ticking on a whole horde is several a second — and in a burst a dropped one is a burst
+	 * with others right behind it, so there is nothing to catch up on.
+	 */
+	UFUNCTION(Client, Unreliable)
+	UE_API void ClientNotifyHitMarker(EProsperitocracyHitMarkerKind Kind);
 
 protected:
 
