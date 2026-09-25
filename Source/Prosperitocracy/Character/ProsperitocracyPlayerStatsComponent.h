@@ -276,6 +276,24 @@ public:
 	void NotifyShotFired(float DragPercent, float CarryPercent, const FVector& ShotDirection);
 
 	/**
+	 * THE PICTURE'S DOOR: the thing that just acted hands over its own Shake row, read FINAL, and the
+	 * screen leans by it.
+	 *
+	 * One call per act — a gun's committed shot, a blade's attack — from the same per-act hook that act's
+	 * other numbers already hang off, so nothing carries code of its own for this and a thing that does
+	 * not exist yet shakes the day it acts. The number is the thing's OWN stat through GAS, the one
+	 * evaluator: never a raw base, and never a formula re-run down here. This component applies it; it
+	 * does not decide what it is worth.
+	 *
+	 * It reaches the MAN'S OWN SCREEN AND NOTHING ELSE. It is the look, not the shot: the aim the gun
+	 * flies along, the reticle and the pose never read it, and the screen shake itself is written onto
+	 * the view the frame is drawn from (see FProsperitocracyViewShake). A body with no local player —
+	 * a dummy, a man driven from another machine, a dedicated server — has no screen to shake and this
+	 * finds nowhere to put it.
+	 */
+	void NotifyViewShake(float ShakeDegrees);
+
+	/**
 	 * What the live shot is doing to this character's speed right now, signed and in cm/s — the
 	 * number the body is actually being pushed by this frame.
 	 *

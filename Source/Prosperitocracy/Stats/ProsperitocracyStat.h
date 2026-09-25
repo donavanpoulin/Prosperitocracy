@@ -152,4 +152,23 @@ enum class EProsperitocracyStat : uint8
 	// cost without anything branching on which is which. The pool itself is not a row: a magazine-size
 	// number says how big it is (`MagSize`) and the amount left is runtime, exactly like a gun's ammo.
 	BloodCost			UMETA(DisplayName = "Blood Cost"),
+
+	// --- How hard a thing's own act SHAKES THE PICTURE ---
+
+	// degrees — the lean a thing's own act puts on the screen the player is looking THROUGH: a gun's
+	// shot, a blade's swing. It is the LOOK and nothing else: it never touches the aim, the shot, the
+	// reticle or the pose — all four read the aim, and the aim never reads this — so the world can be
+	// jolted on screen with the barrel not moved a hair.
+	//
+	// DERIVED, never authored, by ONE fixed formula off the thing's own damage
+	// (AProsperitocracyStatHostActor::ApplyDerivedStats): a thing that hits harder shakes harder, and
+	// its damage is the whole of what decides it. Nothing is set on a gun or on an attack for this, so
+	// a gun that does not exist yet shakes the day it shoots and an attack nobody has authored shakes
+	// as hard as it hits. A thing with no damage shakes nothing, and nothing asks it to.
+	//
+	// A row and not a constant for the same reason every number here is one: it is a number a THING
+	// carries, so a perk on damage — or on this row itself — moves it and the shake comes along with
+	// the tuning instead of needing a pass of its own. Read FINAL through the thing's own GAS home like
+	// every other stat, and written as a stat BASE like Drag, so perks resolve on top of it.
+	Shake				UMETA(DisplayName = "Shake"),
 };

@@ -8,6 +8,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/ProsperitocracyCharacter.h"
+#include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "CollisionQueryParams.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/OverlapResult.h"
@@ -365,6 +366,24 @@ void UProsperitocracyGameplayAbility_BladeDash::DashStep()
 	// as it goes and a man stepping into it anywhere still gets cut.
 	if (AttackElapsed <= AttackSeconds)
 	{
+		// AND THE PICTURE, ONCE, on the first step of the move — where the dash starts going through
+		// what it is about to cut. The jolt is the thing in hand's OWN Shake row, the same number the
+		// combo and every gun hand over: derived off the blade's damage by the one universal formula, so
+		// the dash is felt as hard as it hits with nothing authored for it.
+		if (AttackElapsed - DashStepSeconds <= 0.0f)
+		{
+			if (const AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(GetAvatarActorFromActorInfo()))
+			{
+				if (UProsperitocracyPlayerStatsComponent* BodyStats = Body->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
+				{
+					if (const AProsperitocracyWeapon* InHand = Body->GetGunWeaponInHand())
+					{
+						BodyStats->NotifyViewShake(InHand->GetWeaponStat(EProsperitocracyStat::Shake));
+					}
+				}
+			}
+		}
+
 		CutWhatTheDashIsThrough();
 	}
 

@@ -67,6 +67,8 @@ public:
 	// --- What a thing that DRINKS BLOOD costs to use (Design/classes/reclaimer.md) ---
 	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, BloodDrain);
 	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, BloodCost);
+	// --- What a thing's own act does to the PICTURE (Design/ui.md — the screen shake) ---
+	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, Shake);
 	// --- Receiver side: the pen gate's threshold, on an enemy part (Design/damage.md) ---
 	ATTRIBUTE_ACCESSORS(UProsperitocracyThingStatSet, Armor);
 
@@ -133,6 +135,9 @@ protected:
 
 	UFUNCTION()
 	UE_API void OnRep_Armor(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	UE_API void OnRep_Shake(const FGameplayAttributeData& OldValue);
 
 private:
 	// blunt melee, explosions, grenades, push, mech stomp, vehicle ram, thrown objects (enemies, barrels)
@@ -207,6 +212,12 @@ private:
 	// % — the same shove when it carries you backwards instead of fighting you: always half of Drag.
 	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_Carry, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
 	FGameplayAttributeData Carry;
+
+	// degrees — how hard this thing's own act shakes the screen the player is looking through: a gun's
+	// shot, a blade's swing. Derived from this thing's own damage by one fixed formula, never authored,
+	// and read FINAL like every other stat; the shake system is the only thing that reads it.
+	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_Shake, Category = "Prosperitocracy|Stat", Meta = (AllowPrivateAccess = true))
+	FGameplayAttributeData Shake;
 
 	// The armor's colour, one row per piece, each the whole colour as ONE number — the piece's RGB hex
 	// (0xRRGGBB). Carried, not aggregated: the look reads it to set the mesh material. 0 = black;
