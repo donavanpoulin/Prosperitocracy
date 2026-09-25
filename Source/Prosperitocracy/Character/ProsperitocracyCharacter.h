@@ -15,17 +15,40 @@ class UProsperitocracyStatusComponent;
 class USkeletalMeshComponent;
 
 /**
+ * The BODY's aim numbers: how the man himself comes round.
+ *
+ * Not the gun's — the gun's feel is its own stats poured into the weapon-handling shape. This is the
+ * body: how fast the whole man turns toward where the player is looking. Universal, the same for every
+ * loadout, poured into the load he carries. All values [TUNE].
+ */
+namespace ProsperitocracyBodyAimHandling
+{
+	// Degrees per second the body comes round at with nothing carried, what each carried pound takes
+	// off that, and the floor — so a heavy load still turns, just slowly. THE RATE IS THE ONLY LIMIT,
+	// and there is deliberately no cap on how far behind he may be: a cap is a dead zone. With one, the
+	// aim holds still until the look has dragged it past, which is not a turn at all — he would be late
+	// by a fixed angle instead of catching up. Late is a rate, never a distance.
+	constexpr float TurnRateBase = 1080.0f;
+	constexpr float TurnRatePerLb = 24.0f;
+	constexpr float TurnRateMin = 420.0f;
+
+	// How often the aim says where it is while he is behind, so a play test can see the turn.
+	constexpr float AimLogIntervalSeconds = 0.25f;
+}
+
+/**
  * AProsperitocracyCharacter
  *
  * The player character's C++ half: the one place our aim behaviour reaches the body.
  *
  * The template keeps everything it did before — mesh, animation, movement, the rig, the HUD widget.
- * What lives here is the one thing that cannot live in a blueprint: the `GetBaseAimRotation`
- * override. The template's own animation blueprint (`Content/ThirdPerson/Blueprints/Locomotion.uasset`)
- * already drives its aim offset from `GetBaseAimRotation`, so overriding that one function is what
- * makes the character's gun and arms point where the next bullet will actually land — the same aim
- * the reticle circle and the bullet use (Design/combat.md: "the sway feeds the same aim the circle,
- * the bullet, and the character pose read").
+ * What lives here is the MAN'S OWN AIM: he turns toward where the player is looking at a rate set by
+ * what he carries, and nothing about him is instant. The aim is ONE rotation, owned here, and
+ * everything that needs to know where his gun points asks it — the bullet, the reticle circle, the
+ * gun's own numbers. The template's animation blueprint
+ * (`Content/ThirdPerson/Blueprints/Locomotion.uasset`) already drives its aim offset from
+ * `GetBaseAimRotation`, so that one function is the whole of what the arms and the gun need in order
+ * to come round with him.
  *
  * Three facts belong to the rig and cannot be guessed from C++, so the blueprint answers them. Each is
  * a BlueprintNativeEvent with an honest empty default, which is the whole door:
@@ -337,10 +360,36 @@ public:
 	void OnLoadoutDressed();
 
 	/**
-	 * The aim the body and the animation read: the base aim rotation plus the in-hand gun's drift.
+	 * WHERE THIS MAN'S GUN IS POINTING — the one answer every reader asks.
 	 *
-	 * The drift is the SAME value the bullet flies along and the circle sits on, added the same way
-	 * in all three places (Design/ui.md: every bullet lands exactly where the circle points).
+	 * His own turn (the facing, and the pitch, at the rate his load allows) PLUS the gun's own
+	 * numbers (the climb from Recoil, the shove from Accuracy, the movement's inertia). One rotation,
+	 * composed in one place, so the bullet, the reticle circle and the pose cannot disagree about
+	 * where the next shot goes.
+	 *
+	 * Nothing outside this needs to know how the two are put together: a reader asks for the aim.
+	 * No gun in hand = his turn alone.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Aim")
+	FRotator GetAimRotation() const;
+
+	/**
+	 * How fast this man comes round right now, in degrees per second — from what he is CARRYING.
+	 *
+	 * The whole load, not just the thing in his hands: a man in armour with a rifle on him comes round
+	 * slower than a man with nothing, and that is the whole of what weight does to the turn. Nothing
+	 * carried is the quickest this body turns.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Aim")
+	float GetTurnRateDegreesPerSecond() const;
+
+	/**
+	 * The aim the body and the animation read — THE MAN'S AIM, whole.
+	 *
+	 * The template's animation blueprint takes its aim offset from this function, so this is the one
+	 * place the pose is handed where the gun points: the arms and gun come round with the man, and the
+	 * climb and shove move the arms because they moved his aim. Nothing is added here to make the
+	 * animation match anything — the animation is given the aim itself.
 	 */
 	virtual FRotator GetBaseAimRotation() const override;
 
@@ -419,21 +468,35 @@ protected:
 	 */
 	bool bFacingHeld = false;
 
-	/** True while the body is turning back to where the player is looking, after the facing was let go. */
-	bool bTurningToLook = false;
+	/**
+	 * THE MAN'S AIM — his facing, and where his gun points up and down — and it is the BODY's own state.
+	 *
+	 * His, not the camera's: the controller's rotation is only what he is TURNING TOWARD, and he gets
+	 * there at the rate his load allows (GetTurnRateDegreesPerSecond). His yaw is written from this
+	 * every frame, which is why the whole man comes round late instead of the arms being bent to
+	 * pretend. The gun's own numbers are added on top when anyone asks for the aim (GetAimRotation),
+	 * and are never stored here.
+	 */
+	FRotator AimRotation = FRotator::ZeroRotator;
 
-	/** What `bUseControllerRotationYaw` was before the attack took the facing over, so it goes back. */
-	bool bControllerYawBeforeFacing = true;
+	/**
+	 * False until this body has met its controller once, so the first frame SNAPS the aim to the look
+	 * instead of measuring him as having been left behind by every frame since the world began.
+	 */
+	bool bAimInitialized = false;
+
+	/** Counts down between the aim's own log lines, so a play test can see the turn without spam. */
+	float AimLogCooldown = 0.0f;
 
 	/** One frame of a live attack: the body is placed along its line and turned to face it. */
 	void TickAttack(float DeltaSeconds);
 
-	/** One frame of the turn back to the player's look. A turn, never a snap. */
-	void TickFacingTurn(float DeltaSeconds);
+	/**
+	 * One frame of THE MAN'S OWN TURN: the aim comes round toward the look at the rate his load allows
+	 * — never faster, and never further behind than the leash — and his facing is written from it.
+	 */
+	void TickAimTurn(float DeltaSeconds);
 
-	/** The facing is the controller's again, from here on. */
-	void FinishFacingTurn();
-
-	/** This body's own tick, which is where a live attack and the turn behind it are driven. */
+	/** This body's own tick, which is where the aim's turn and a live attack are driven. */
 	virtual void Tick(float DeltaSeconds) override;
 };

@@ -11,6 +11,7 @@
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "ProsperitocracyLogChannels.h"
 #include "Weapons/ProsperitocracyWeapon.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyReticleWidgetBase)
@@ -105,9 +106,10 @@ FVector2D UProsperitocracyReticleWidgetBase::ComputeCircleScreenPosition() const
 		return FVector2D::ZeroVector;
 	}
 
-	// The circle sits exactly where the next shot lands: the camera aim plus the gun's drift. With a
-	// gun in hand the gun answers the direction — literally the vector the bullet flies along — so the
-	// circle and the bullet cannot disagree. With nothing in hand it is the plain camera aim.
+	// The circle sits exactly where the next shot lands: THE MAN'S AIM, which is his own turn plus the
+	// gun's own numbers. With a gun in hand the gun answers the direction — literally the vector the
+	// bullet flies along — so the circle and the bullet cannot disagree. With nothing in hand it is
+	// the plain camera aim.
 	FVector CameraPosition;
 	FRotator CameraRotation;
 	PC->PlayerCameraManager->GetCameraViewPoint(CameraPosition, CameraRotation);
@@ -146,11 +148,39 @@ FVector2D UProsperitocracyReticleWidgetBase::ComputeCircleScreenPosition() const
 		return ScreenPosition;
 	}
 
-	// Nothing to project (the view is not set up): the circle belongs at centre, on the dot.
+	// BEHIND THE VIEW — there is no landing point on the screen, and the ring must NEVER be dropped
+	// onto the dot to say so. A hard turn is exactly this case: the man is still swinging round, so
+	// his gun's landing point is momentarily behind where the player is looking. Parking the ring at
+	// the centre is a one-frame teleport that reads as the aim snapping, and it is a lie besides —
+	// the gun IS still pointing back there. So the ring goes to the EDGE, in the direction it left
+	// by, which is what actually happened.
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Reticle] the landing point is behind the view — the ring is pinned to the edge, never the dot"));
+
 	int32 ViewportSizeX(0);
 	int32 ViewportSizeY(0);
 	PC->GetViewportSize(ViewportSizeX, ViewportSizeY);
-	return FVector2D(ViewportSizeX * 0.5, ViewportSizeY * 0.5);
+
+	const FVector2D ScreenCentre(ViewportSizeX * 0.5, ViewportSizeY * 0.5);
+
+	// Which way it went, in the VIEW's own frame — right and up as the player sees them. Read off the
+	// camera's rotation rather than the projection, because the projection is what just failed.
+	const FVector ViewDirection = CameraRotation.UnrotateVector(AimDirection);
+	const FVector2D ScreenDirection(ViewDirection.X, -ViewDirection.Y); // screen Y grows downward
+	if (ScreenDirection.IsNearlyZero())
+	{
+		// Straight behind the camera: there is no side to go to, and inventing one would be a second
+		// lie. The bottom edge is the one place that can never be mistaken for the dot.
+		return FVector2D(ScreenCentre.X, ViewportSizeY);
+	}
+
+	const FVector2D Direction = ScreenDirection.GetSafeNormal();
+	const float HalfWidth = FMath::Max(1.0, ScreenCentre.X);
+	const float HalfHeight = FMath::Max(1.0, ScreenCentre.Y);
+	const float EdgeScale = FMath::Min(
+		FMath::Abs(Direction.X) > KINDA_SMALL_NUMBER ? HalfWidth / FMath::Abs(Direction.X) : BIG_NUMBER,
+		FMath::Abs(Direction.Y) > KINDA_SMALL_NUMBER ? HalfHeight / FMath::Abs(Direction.Y) : BIG_NUMBER);
+
+	return ScreenCentre + Direction * EdgeScale;
 }
 
 float UProsperitocracyReticleWidgetBase::GetCircleScreenRadius() const

@@ -8,11 +8,13 @@
 #include "AbilitySystem/ProsperitocracyStatusComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "Components/ChildActorComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/PlayerController.h"
 #include "ProsperitocracyGameplayTags.h"
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStat.h"
@@ -46,6 +48,12 @@ AProsperitocracyCharacter::AProsperitocracyCharacter()
 	// than left to whichever blueprint happens to have it switched on: the attack's own clock is
 	// C++'s job, and an attack that never ticks is an attack that never happens.
 	PrimaryActorTick.bCanEverTick = true;
+
+	// THE YAW IS THE MAN'S OWN. The controller's rotation is only the direction he is TURNING TOWARD
+	// (TickAimTurn), so the body must not be snapped onto it every frame — that snap is exactly what
+	// made him instant and left only his arms pretending to be late. Nothing else turns him either
+	// (bOrientRotationToMovement stays off), so his aim is the ONE writer of his yaw.
+	bUseControllerRotationYaw = false;
 }
 
 AActor* AProsperitocracyCharacter::GetGunInHand_Implementation() const
@@ -251,12 +259,6 @@ void AProsperitocracyCharacter::BeginAttack(const FVector& LineDirection, float 
 		return;
 	}
 
-	// Whether this body already OWES its yaw to something: the facing was the last attack's, or the
-	// turn back from it is still under way. The yaw is taken from the controller only ONCE, so a press
-	// that passes through a recovery into the next attack must not save the value this body already
-	// set — saving it there would save "off", and the controller would never get the body back.
-	const bool bTheBodyAlreadyOwesItsYaw = bFacingHeld || bTurningToLook;
-
 	// Where the body is now is what its number is measured from, and the attack's own length is its clock.
 	AttackStartLocation = GetActorLocation();
 	AttackDistanceCm = DistanceCm;
@@ -269,20 +271,10 @@ void AProsperitocracyCharacter::BeginAttack(const FVector& LineDirection, float 
 	AttackElapsed = 0.0f;
 	bAttackLive = true;
 
-	// The FACING belongs to the attack. This body's yaw is normally the controller's
-	// (bUseControllerRotationYaw), so that is what steps aside for the window and what comes back at
-	// the end of the turn that follows it (see ReleaseFacing, TickFacingTurn).
-	if (!bTheBodyAlreadyOwesItsYaw)
-	{
-		bControllerYawBeforeFacing = bUseControllerRotationYaw;
-		bUseControllerRotationYaw = false;
-	}
-
+	// The FACING belongs to the attack, and nothing has to step aside for it: the yaw is the AIM's own
+	// (see Tick), so a live attack simply writes the aim to the blade's line, and the whole man — the
+	// gun, the arms and the facing — goes down that line with the swing.
 	bFacingHeld = true;
-
-	// A live attack always wins over a turn that was under way: the newest line and clock are the ones
-	// that count, which is what a press through a recovery into the next attack means.
-	bTurningToLook = false;
 
 	// Said out loud, with its numbers: an attack nobody can see and an attack that is not happening
 	// look exactly the same in the world, and only one of them is a bug.
@@ -392,10 +384,10 @@ void AProsperitocracyCharacter::ReleaseFacing()
 
 	bFacingHeld = false;
 
-	// The TURN begins here; the controller does not get this body's yaw back until the body has actually
-	// arrived at the look (see TickFacingTurn). That delay is the whole difference between a turn and a
-	// snap — hand the yaw back now and a body looking ninety degrees away jumps.
-	bTurningToLook = true;
+	// The turn back to the look is THE AIM'S own, and it is always running (TickAimTurn) — so letting
+	// the facing go needs nothing here at all. He comes round from the blade's line to wherever he is
+	// looking at the rate his load allows: a turn, never a snap, with nothing special about the
+	// handover.
 }
 
 void AProsperitocracyCharacter::ReleaseMovementLock()
@@ -424,40 +416,82 @@ void AProsperitocracyCharacter::ReleaseMovementLock()
 		MovedCm, AttackDistanceCm);
 }
 
-void AProsperitocracyCharacter::FinishFacingTurn()
+void AProsperitocracyCharacter::TickAimTurn(float DeltaSeconds)
 {
-	bTurningToLook = false;
-	bUseControllerRotationYaw = bControllerYawBeforeFacing;
-}
-
-void AProsperitocracyCharacter::TickFacingTurn(float DeltaSeconds)
-{
-	// Named for what it is rather than `Controller`: APawn already has a member by that name, and a
-	// local shadowing it hides the body's own controller from every read in this function.
+	// THE MAN COMES ROUND HIMSELF. Where he is LOOKING is instant — the controller's rotation is the
+	// player's own input and nothing here slows it down — but his BODY gets there at its own rate, so
+	// the whole man is late rather than his arms being bent to pretend. This is the lag: the aim behind
+	// the look, in degrees, and it is the same lag the circle sits off the dot by (see GetAimRotation).
 	const AController* OwningController = GetController();
-	const UCharacterMovementComponent* Movement = GetCharacterMovement();
-
-	// Nothing to turn towards, or no rate on this body to turn at: the honest answer is to hand the
-	// facing straight back rather than invent a number to turn it by.
-	const float TurnRate = Movement ? Movement->RotationRate.Yaw : 0.0f;
-	if (!OwningController || TurnRate <= 0.0f)
+	if (!OwningController)
 	{
-		FinishFacingTurn();
 		return;
 	}
 
-	// The body turns to where the player is looking at the rate it ALREADY turns at — the movement
-	// component's own yaw rate, the number this body is configured with — so the look can be right round
-	// behind him and the body walks its way round instead of snapping to it.
-	const float TargetYaw = OwningController->GetControlRotation().Yaw;
-	const float NewYaw = FMath::FixedTurn(GetActorRotation().Yaw, TargetYaw, TurnRate * DeltaSeconds);
-	SetActorRotation(FRotator(0.0f, NewYaw, 0.0f));
+	// WHAT HE CHASES IS WHAT THE PLAYER IS LOOKING THROUGH — the camera's own rotation, never the raw
+	// mouse. The view is a smoothed copy of the mouse (the body's camera has rotation lag on), so a man
+	// chasing the mouse keeps up with the INPUT while the PICTURE is still coming round: he arrives
+	// before the view does, which reads as the gun swinging the wrong way — leading instead of lagging.
+	// The chain must only ever run one way: mouse → view → him → his gun → the ring. Nothing measures
+	// itself against the mouse except the view.
+	const APlayerController* PC = Cast<APlayerController>(OwningController);
+	const FRotator Look = (PC && PC->PlayerCameraManager)
+		? PC->PlayerCameraManager->GetCameraRotation()
+		: OwningController->GetControlRotation();
 
-	// Arrived. From here the controller's yaw IS this body's yaw, which is what turns it the rest of the
-	// time — so the turn hands over to nothing at all, and there is no snap at either end of it.
-	if (FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(NewYaw, TargetYaw), 0.1f))
+	// The first frame this body has a controller there is nothing to turn FROM: he is not late, he has
+	// simply not been anywhere yet, and starting at nought would swing the whole man round from the
+	// north. Snap once, here, and never again.
+	if (!bAimInitialized)
 	{
-		FinishFacingTurn();
+		AimRotation = Look;
+		bAimInitialized = true;
+		SetActorRotation(FRotator(0.0f, AimRotation.Yaw, 0.0f));
+		return;
+	}
+
+	// Where he is going is the LOOK ITSELF — there is no clamp on how far behind he is allowed to be.
+	// A clamp is a dead zone: inside it the aim does not move at all, and past it the aim mirrors the
+	// look one-for-one, which is the opposite of a turn. He comes round at the rate his LOAD allows,
+	// never faster, and that rate is the whole of what weight does to the turn
+	// (GetTurnRateDegreesPerSecond). His lateness is therefore a rate, not a distance: the circle
+	// trails the dot while he is coming round and lands on it when he arrives.
+	const FRotator Wanted = Look.GetNormalized();
+	const float TurnRate = GetTurnRateDegreesPerSecond();
+
+	AimRotation = (DeltaSeconds > 0.0f && TurnRate > 0.0f)
+		? FMath::RInterpConstantTo(AimRotation, Wanted, DeltaSeconds, TurnRate).GetNormalized()
+		: Wanted;
+
+	// His YAW is the aim's — one writer, so the man, the gun in his hands and the animation all agree
+	// about which way he is facing. His pitch is NOT written to the actor: a man cannot lean his whole
+	// body up, so the up-and-down of the aim reaches the pose through the aim itself
+	// (GetBaseAimRotation, and the gun's own climb inside GetAimRotation).
+	const FRotator Facing(0.0f, AimRotation.Yaw, 0.0f);
+	if (!GetActorRotation().Equals(Facing, 0.01f))
+	{
+		SetActorRotation(Facing);
+	}
+
+	// Said out loud, throttled, while he is actually behind: the look, the aim, how far behind he is,
+	// how fast he can come round and what he is carrying. A turn nobody can see and a turn that is not
+	// happening look the same in the world, and this is what tells them apart.
+	const float TrailDegrees = FMath::Abs(FMath::FindDeltaAngleDegrees(AimRotation.Yaw, Look.Yaw));
+	if (!FMath::IsNearlyZero(TrailDegrees, 1.0f))
+	{
+		AimLogCooldown -= DeltaSeconds;
+		if (AimLogCooldown <= 0.0f)
+		{
+			AimLogCooldown = ProsperitocracyBodyAimHandling::AimLogIntervalSeconds;
+			const UProsperitocracyPlayerStatsComponent* Stats = GetStats(this);
+			UE_LOG(LogProsperitocracy, Log, TEXT("[Aim] look %.1f° → aim %.1f° (%.1f° behind, turn %.0f°/s, load %.1f lb)"),
+				Look.Yaw, AimRotation.Yaw, TrailDegrees, TurnRate,
+				Stats ? Stats->GetCarriedWeightLbs() : 0.0f);
+		}
+	}
+	else
+	{
+		AimLogCooldown = 0.0f;
 	}
 }
 
@@ -465,26 +499,27 @@ void AProsperitocracyCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// WHERE HE IS FACING IS THE AIM'S, always, and the aim comes round at his own rate. The one thing
+	// that takes it over is a live attack: a swing goes along its line and looks along it until it is
+	// over, so the aim wears the blade's line for the whole of it — and the gun, the arms and the
+	// facing all go down that line together.
 	if (bAttackLive)
 	{
-		// A live attack is this body's own state and is driven here, in ONE place: the line, the
-		// distance, the facing and the clock. Nothing else moves this body while it is live.
+		AimRotation.Yaw = AttackLine.Rotation().Yaw;
 		TickAttack(DeltaSeconds);
 		return;
 	}
 
 	if (bFacingHeld)
 	{
-		// The attack's clock is out but the combo is NOT over — a recovery is playing — so the body goes
-		// on facing its line while the player's legs are his own again. Only the travel stopped.
-		SetActorRotation(FRotator(0.0f, AttackLine.Rotation().Yaw, 0.0f));
+		// The attack has stopped TRAVELLING but the combo is not over — a recovery is playing — so he
+		// goes on facing his line while the player's legs are his own again. Only the travel stopped.
+		AimRotation.Yaw = AttackLine.Rotation().Yaw;
+		SetActorRotation(FRotator(0.0f, AimRotation.Yaw, 0.0f));
 		return;
 	}
 
-	if (bTurningToLook)
-	{
-		TickFacingTurn(DeltaSeconds);
-	}
+	TickAimTurn(DeltaSeconds);
 }
 
 void AProsperitocracyCharacter::TickAttack(float DeltaSeconds)
@@ -541,22 +576,43 @@ USkeletalMeshComponent* AProsperitocracyCharacter::GetBodyMesh_Implementation() 
 	return nullptr;
 }
 
-FRotator AProsperitocracyCharacter::GetBaseAimRotation() const
+FRotator AProsperitocracyCharacter::GetAimRotation() const
 {
-	FRotator AimRotation = Super::GetBaseAimRotation();
+	FRotator Aim = AimRotation;
 
-	// The animation's aim pose must follow the reticle circle: the drift (handling trail from Weight,
-	// movement trail, per-shot spread from Accuracy, recoil climb) is the same value the bullet flies
-	// along and the circle sits on, so adding it here is what makes the character's gun and arms point
-	// where the bullet will land. No gun in hand = no drift, and the pose keeps the plain camera aim.
+	// The gun's own numbers ride ON his aim and never beside it: the climb from Recoil, the shove from
+	// Accuracy and the movement's inertia are the gun's, and they are read HERE by everyone who needs
+	// to know where the next bullet goes. No gun in hand = no offset, and the aim is the plain turn.
 	if (const AProsperitocracyWeapon* Gun = GetGunWeaponInHand())
 	{
-		const FVector2D Drift = Gun->GetAimDriftDegrees();
-		AimRotation.Pitch += Drift.Y;
-		AimRotation.Yaw += Drift.X;
+		const FVector2D Offset = Gun->GetAimDriftDegrees();
+		Aim.Yaw += Offset.X;
+		Aim.Pitch += Offset.Y;
 	}
 
-	return AimRotation;
+	return Aim.GetNormalized();
+}
+
+float AProsperitocracyCharacter::GetTurnRateDegreesPerSecond() const
+{
+	// WHAT HE CARRIES IS WHAT TURNS HIM — the whole load, not just the thing in his hands. Nothing
+	// carried is the quickest this body comes round, and every pound takes a little off the rate down
+	// to the floor, so a heavy man is slow and deliberate rather than glued to the spot.
+	const UProsperitocracyPlayerStatsComponent* Stats = GetStats(this);
+	const float Carried = Stats ? FMath::Max(0.0f, Stats->GetCarriedWeightLbs()) : 0.0f;
+
+	return FMath::Clamp(
+		ProsperitocracyBodyAimHandling::TurnRateBase - Carried * ProsperitocracyBodyAimHandling::TurnRatePerLb,
+		ProsperitocracyBodyAimHandling::TurnRateMin,
+		ProsperitocracyBodyAimHandling::TurnRateBase);
+}
+
+FRotator AProsperitocracyCharacter::GetBaseAimRotation() const
+{
+	// The animation is handed THE MAN'S AIM and nothing else — the same rotation the bullet flies
+	// along and the reticle circle sits on — so the pose can never disagree with the shot. Nothing is
+	// bent here to make the arms match a number: the arms are given the number.
+	return GetAimRotation();
 }
 
 //~ Being damageable -------------------------------------------------------------------------------
