@@ -7,11 +7,14 @@
 #include "AbilitySystem/Abilities/ProsperitocracyGameplayAbility.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
+#include "Camera/ProsperitocracyViewShake.h"
 #include "Character/ProsperitocracyCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerController.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
@@ -985,6 +988,36 @@ void UProsperitocracyPlayerStatsComponent::NotifyShotFired(float DragPercent, fl
 		UE_LOG(LogProsperitocracy, Log,
 			TEXT("%s on %s: shot push — %.0f%% drag / %.0f%% carry of speed back along the shot's line, decaying over %.2fs | walk %.0f | anim x%.2f"),
 			*GetName(), *GetNameSafe(GetOwner()), ShotPushDragPercent, ShotPushCarryPercent, ShotPushSeconds, GetWalkSpeed(), GetAnimationRate());
+	}
+}
+
+//~ The picture's shake ---------------------------------------------------------------------------
+
+void UProsperitocracyPlayerStatsComponent::NotifyViewShake(float ShakeDegrees)
+{
+	if (ShakeDegrees <= 0.0f)
+	{
+		return;
+	}
+
+	// THE MAN'S OWN SCREEN OR NOBODY'S. A shake is a picture, and a picture belongs to one man at one
+	// screen: this finds the LOCAL player behind the body — the one whose controller this is — and hands
+	// the number to the shake subsystem that player owns. A dummy, a man driven from another machine and
+	// a dedicated server have no local player at all and get nowhere, which is what keeps a cosmetic
+	// number off the wire entirely.
+	const APawn* Body = Cast<APawn>(GetOwner());
+	const APlayerController* OwningController = Body ? Cast<APlayerController>(Body->GetController()) : nullptr;
+	ULocalPlayer* Screen = OwningController ? OwningController->GetLocalPlayer() : nullptr;
+	if (!Screen)
+	{
+		return;
+	}
+
+	// The subsystem does the rest, and it is the ONLY thing that reaches a screen: a thing hands its own
+	// number over and this component decides nothing about what it is worth or where it lands.
+	if (UProsperitocracyViewShakeSubsystem* ViewShake = Screen->GetSubsystem<UProsperitocracyViewShakeSubsystem>())
+	{
+		ViewShake->AddShake(ShakeDegrees);
 	}
 }
 

@@ -8,6 +8,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/ProsperitocracyCharacter.h"
+#include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "CollisionQueryParams.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/OverlapResult.h"
@@ -436,6 +437,27 @@ void UProsperitocracyGameplayAbility_HeavyCombo::ComboStep()
 	if (AttackElapsed >= AttackSeconds * ProsperitocracyBladeHeavyCombo::BiteStartsAtFraction
 		&& AttackElapsed <= AttackSeconds)
 	{
+		// AND THE PICTURE, once per SLICE, at the moment the blade goes through: the first step of the
+		// bite, never the whole half of it — that half is swept every step, and a jolt per step would be
+		// a rumble instead of a hit.
+		//
+		// The jolt is the thing in hand's OWN Shake row, the same number the light combo and every gun
+		// hand over: derived off the blade's damage by the one universal formula, so the heavy hits are
+		// felt exactly as hard as they hit and nothing is authored for this move.
+		if (AttackElapsed - StepSeconds < AttackSeconds * ProsperitocracyBladeHeavyCombo::BiteStartsAtFraction)
+		{
+			if (const AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(GetAvatarActorFromActorInfo()))
+			{
+				if (UProsperitocracyPlayerStatsComponent* BodyStats = Body->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
+				{
+					if (const AProsperitocracyWeapon* InHand = Body->GetGunWeaponInHand())
+					{
+						BodyStats->NotifyViewShake(InHand->GetWeaponStat(EProsperitocracyStat::Shake));
+					}
+				}
+			}
+		}
+
 		CutWhatTheSwingIsThrough();
 	}
 

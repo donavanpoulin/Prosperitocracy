@@ -337,6 +337,15 @@ private:
 	/** Whether this blade's combo is running: true between an attack starting and the combo ending. */
 	bool bSwinging = false;
 
+	/**
+	 * Whether this attack has already handed its jolt to the PICTURE.
+	 *
+	 * The jolt belongs where the blade actually goes THROUGH — half an attack after the press, in the
+	 * middle of the animation the player is watching — and that half is swept every frame, so this is what
+	 * makes one attack one jolt instead of a rumble for the whole of it.
+	 */
+	bool bBiteHandedOver = false;
+
 	/** Which attack the combo is on — `a`, `b` or `c` by index — while it is swinging. */
 	int32 CurrentAttack = INDEX_NONE;
 

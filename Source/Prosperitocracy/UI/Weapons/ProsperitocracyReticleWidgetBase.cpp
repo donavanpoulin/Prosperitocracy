@@ -1,17 +1,22 @@
 // Copyright Prosperitocracy. All Rights Reserved.
 
-#include "ProsperitocracyReticleWidgetBase.h"
+#include "UI/Weapons/ProsperitocracyReticleWidgetBase.h"
 
+#include "AbilitySystemBlueprintLibrary.h"
+#include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "Blueprint/WidgetTree.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Character/ProsperitocracyCharacter.h"
 #include "CollisionQueryParams.h"
+#include "Components/AudioComponent.h"
 #include "Components/Image.h"
 #include "Engine/EngineTypes.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "Kismet/GameplayStatics.h"
 #include "ProsperitocracyLogChannels.h"
+#include "UI/Weapons/ProsperitocracyHitMarkerWidget.h"
 #include "Weapons/ProsperitocracyWeapon.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyReticleWidgetBase)
@@ -25,18 +30,29 @@ void UProsperitocracyReticleWidgetBase::NativeConstruct()
 {
 	Super::NativeConstruct();
 
-	// The visual side is the widget blueprint's: it lays out exactly two images and this class moves
-	// one of them. Found by name, so the blueprint owns the look and this owns the behaviour.
+	// The visual side is the widget blueprint's: it lays out exactly three layers and this class moves
+	// two of them. Found by name, so the blueprint owns the look and this owns the behaviour.
 	if (WidgetTree)
 	{
 		DotImage = Cast<UImage>(WidgetTree->FindWidget(TEXT("Dot")));
 		CircleImage = Cast<UImage>(WidgetTree->FindWidget(TEXT("Circle")));
+		HitMarkerWidget = Cast<UProsperitocracyHitMarkerWidget>(WidgetTree->FindWidget(TEXT("HitMarker")));
+
+		if (!HitMarkerWidget)
+		{
+			// Loud, because it is an authoring gap rather than a state: the damage still lands, the
+			// sounds still play, and no X is ever drawn.
+			UE_LOG(LogProsperitocracy, Warning, TEXT("[Reticle] no widget named 'HitMarker' in %s — hits will make no X (the sounds are unaffected)."), *GetNameSafe(GetClass()));
+		}
 	}
 }
 
 void UProsperitocracyReticleWidgetBase::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	// Listen to the man's own damage, once he exists (one look per frame until then).
+	BindToHitMarkersOnce();
 
 	// Follow the gun in hand: one universal reticle, no per-weapon wiring, and no stale gun.
 	AcquireWeaponFromCharacter();
@@ -52,8 +68,15 @@ void UProsperitocracyReticleWidgetBase::NativeTick(const FGeometry& MyGeometry, 
 	const AProsperitocracyCharacter* Character = GetOwningCharacter();
 	const float AimingAlpha = Character ? Character->GetAimingAlpha() : 0.0f;
 	CircleImage->SetRenderOpacity(FMath::Clamp(AimingAlpha * 2.0f, 0.0f, 1.0f));
+
+	// At the hip there is no ring, and a marker is PART of the ring's UI — so nothing is drawn, and no
+	// marker is kept waiting for the ring to come back (his call, 2026-09-25). The SOUND already played
+	// when the hit arrived: at the hip, hearing it is what tells you that you connected.
 	if (AimingAlpha <= 0.01f)
 	{
+		bMarkerLive = false;
+		bMarkerDrawn = false;
+		HideHitMarker();
 		return;
 	}
 
@@ -68,7 +91,171 @@ void UProsperitocracyReticleWidgetBase::NativeTick(const FGeometry& MyGeometry, 
 	}
 	const FVector2D ScreenCenter(ViewportSizeX * 0.5, ViewportSizeY * 0.5);
 
-	CircleImage->SetRenderTranslation(ComputeCircleScreenPosition() - ScreenCenter);
+	const FVector2D CircleOffset = ComputeCircleScreenPosition() - ScreenCenter;
+	CircleImage->SetRenderTranslation(CircleOffset);
+
+	// The X is measured in the RING's own size, read off the ring image itself — never a second number
+	// kept somewhere else, so "inside the ring" stays true even if the ring's own art is ever resized.
+	const FVector2D RingLocalSize = CircleImage->GetCachedGeometry().GetLocalSize();
+	const float RingRadius = FMath::Max(RingLocalSize.X, RingLocalSize.Y) * 0.5f;
+
+	UpdateHitMarker(InDeltaTime, AimingAlpha, CircleOffset, RingRadius);
+}
+
+void UProsperitocracyReticleWidgetBase::BindToHitMarkersOnce()
+{
+	if (bBoundToHitMarkers)
+	{
+		return;
+	}
+
+	APawn* Pawn = GetOwningPlayerPawn();
+	UProsperitocracyAbilitySystemComponent* AbilitySystemComponent = Pawn
+		? Cast<UProsperitocracyAbilitySystemComponent>(UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Pawn))
+		: nullptr;
+	if (!AbilitySystemComponent)
+	{
+		return;
+	}
+
+	// The man's OWN component, so anything broadcast on it is his damage and only his damage.
+	AbilitySystemComponent->OnHitMarker.AddDynamic(this, &ThisClass::HandleHitMarker);
+	bBoundToHitMarkers = true;
+}
+
+void UProsperitocracyReticleWidgetBase::HandleHitMarker(EProsperitocracyHitMarkerKind Kind)
+{
+	// ONE marker at a time (his spec): a fresh hit RESTARTS the X's fade rather than stacking another X
+	// on top of one that is still fading — whichever kind was fading, a kill's included.
+	//
+	// (A kill's X is not protected while it lasts. It tried to be, and his own report — 2026-09-25,
+	// "some x's just don't go through" while shooting slowly — is why it is not: hits landing during a
+	// kill's fade were being swallowed. A hit is always an answer, and the newest answer is the one on
+	// screen. The blow that kills still shows ONE X, the big one, because its kill arrives in the same
+	// frame as its own hit and takes the marker from it there.)
+	PlayHitMarkerSound(Kind);
+
+	LiveMarkerKind = Kind;
+	MarkerAgeSeconds = 0.0f;
+	bMarkerDrawn = false;
+	bMarkerLive = true;
+}
+
+void UProsperitocracyReticleWidgetBase::UpdateHitMarker(float DeltaTime, float AimingAlpha, const FVector2D& CircleOffset, float RingRadius)
+{
+	if (!HitMarkerWidget)
+	{
+		return;
+	}
+
+	if (!bMarkerLive || RingRadius <= 0.0f)
+	{
+		// Nothing to show — and HideHitMarker tells the widget only on the frame a marker actually ends,
+		// so a widget that is already hidden is not re-collapsed every frame for nothing.
+		HideHitMarker();
+		return;
+	}
+
+	// THE MARKER'S LIFE STARTS ON THE FIRST FRAME IT IS ACTUALLY ON SCREEN — never on the frame it
+	// arrived.
+	//
+	// It used to run from arrival, and THAT is what made whole markers vanish. One long frame — and the
+	// first shot after a lull is exactly when one lands, with a fresh shader, flash, impact and sound
+	// being built — pushed the age past the marker's entire lifetime on its very first evaluation, so it
+	// was expired before it was ever drawn: born and dead inside one frame, nothing on the screen. His
+	// report, 2026-09-25: "the first shot... it's just not there, next shot it is though". A marker now
+	// gets its full-strength frame whatever the frame time was, and the clock starts after it.
+	if (bMarkerDrawn)
+	{
+		MarkerAgeSeconds += DeltaTime;
+	}
+	bMarkerDrawn = true;
+
+	const float Lifetime = (LiveMarkerKind == EProsperitocracyHitMarkerKind::Kill) ? KillMarkerLifetimeSeconds : HitMarkerLifetimeSeconds;
+	if (MarkerAgeSeconds >= Lifetime)
+	{
+		// Spent: it goes, and the next hit starts its own from full strength.
+		bMarkerLive = false;
+		bMarkerDrawn = false;
+		HideHitMarker();
+		return;
+	}
+
+	// Full strength for the first stretch, then the fade — a marker that starts fading the instant it
+	// appears reads as a flicker rather than as a hit.
+	const float FadeStart = Lifetime * HitMarkerHoldFraction;
+	const float Fade = (MarkerAgeSeconds <= FadeStart)
+		? 1.0f
+		: 1.0f - ((MarkerAgeSeconds - FadeStart) / (Lifetime - FadeStart));
+
+	// Part of the ring's UI, in both senses: it fades in with the ring's own ADS blend (the very number
+	// the ring's own opacity reads) and it is moved by the very value the ring is moved by — so the X is
+	// inside the ring by construction, never by a second calculation that could disagree with it.
+	const float RingVisibility = FMath::Clamp(AimingAlpha * 2.0f, 0.0f, 1.0f);
+
+	HitMarkerWidget->SetMarker(LiveMarkerKind, Fade * RingVisibility, RingRadius);
+	HitMarkerWidget->SetRenderTranslation(CircleOffset);
+}
+
+void UProsperitocracyReticleWidgetBase::HideHitMarker()
+{
+	// Already hidden: nothing to tell the widget, and it is asked its own state rather than kept in a
+	// flag of its own — one owner for "is the X on the ring".
+	if (!HitMarkerWidget || HitMarkerWidget->MarkerOpacity <= 0.0f)
+	{
+		return;
+	}
+
+	HitMarkerWidget->SetMarker(HitMarkerWidget->Kind, 0.0f, HitMarkerWidget->RingRadius);
+}
+
+USoundBase* UProsperitocracyReticleWidgetBase::GetHitMarkerSound(EProsperitocracyHitMarkerKind Kind) const
+{
+	switch (Kind)
+	{
+	case EProsperitocracyHitMarkerKind::Kill:
+		return KillHitSound;
+
+	case EProsperitocracyHitMarkerKind::Half:
+		return HalfHitSound;
+
+	case EProsperitocracyHitMarkerKind::Full:
+	default:
+		return FullHitSound;
+	}
+}
+
+void UProsperitocracyReticleWidgetBase::PlayHitMarkerSound(EProsperitocracyHitMarkerKind Kind)
+{
+	USoundBase* Sound = GetHitMarkerSound(Kind);
+	if (!Sound)
+	{
+		// The X still shows; it is simply silent until the sound is put on the widget. Not a failure —
+		// it is exactly what the first build after this one looks like.
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	const float Now = World ? World->GetTimeSeconds() : 0.0f;
+
+	// The cap (his call, 2026-09-25): the same marker's sound will not restart faster than this, so a
+	// burn ticking on a whole horde reads as one sound being held rather than a machine-gun.
+	const int32 KindIndex = static_cast<int32>(Kind);
+	if (Now - LastHitMarkerSoundTimes[KindIndex] < HitMarkerSoundRetriggerSeconds)
+	{
+		return;
+	}
+	LastHitMarkerSoundTimes[KindIndex] = Now;
+
+	// A blow that kills is ONE blow: its sound takes over from the hit sound that started an instant
+	// before it (the pipeline tells the hit, the death tells the kill, in the same frame) — which is
+	// also why a kill draws one X and not a hit's X with a bigger one over it.
+	if (Kind == EProsperitocracyHitMarkerKind::Kill && PlayingHitMarkerSound.IsValid())
+	{
+		PlayingHitMarkerSound->Stop();
+	}
+
+	PlayingHitMarkerSound = UGameplayStatics::SpawnSound2D(this, Sound, HitMarkerSoundVolume);
 }
 
 AProsperitocracyCharacter* UProsperitocracyReticleWidgetBase::GetOwningCharacter() const

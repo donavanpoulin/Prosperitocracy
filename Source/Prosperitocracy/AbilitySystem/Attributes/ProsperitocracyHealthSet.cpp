@@ -4,9 +4,11 @@
 #include "AbilitySystem/Attributes/ProsperitocracyAttributeSet.h"
 #include "ProsperitocracyGameplayTags.h"
 #include "Net/UnrealNetwork.h"
+#include "AbilitySystem/Abilities/ProsperitocracyGameplayAbility_ContestedHealth.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "Engine/World.h"
 #include "GameplayEffectExtension.h"
+#include "UI/ProsperitocracyHitMarkerStatics.h"
 // The damage-verb broadcast was CUT on the way in (2026-09-15, your call): it went through
 // GameplayMessageSubsystem, which lives in the Lyra plugin GameplayMessageRouter, and no Lyra
 // plugin enters this project. The damage message comes back through our own messages port;
@@ -134,9 +136,22 @@ void UProsperitocracyHealthSet::PostGameplayEffectExecute(const FGameplayEffectM
 		// The damage-verb broadcast that stood here was CUT on the way in (2026-09-15) — see the
 		// note at the top of this file. Everything below it (health/damage math) is untouched.
 
+		const float HealthBeforeThisHit = GetHealth();
+
 		// Convert into -Health and then clamp
-		SetHealth(FMath::Clamp(GetHealth() - GetDamage(), MinimumHealth, GetMaxHealth()));
+		SetHealth(FMath::Clamp(HealthBeforeThisHit - GetDamage(), MinimumHealth, GetMaxHealth()));
 		SetDamage(0.0f);
+
+		// Contested is born HERE, from the health this hit ACTUALLY took off the body: the drop that
+		// really happened, floored by the clamp above, and never more than that. A body with nothing
+		// left to lose loses nothing, so the hit contests nothing — which is what stops a burn ticking
+		// on an empty body from re-filling a pool that has already drained away (the user's bug,
+		// 2026-09-26: decayed contested re-appearing with every tick of a second burn).
+		//
+		// This is the ONE place the contested pool is told what a hit took, and it is told by the
+		// health's own movement rather than by the number the damage pipeline computed — one number,
+		// not two, so the two can never disagree.
+		UProsperitocracyGameplayAbility_ContestedHealth::NotifyDamageTaken(Data.Target.GetAvatarActor(), HealthBeforeThisHit - GetHealth());
 	}
 	else if (Data.EvaluatedData.Attribute == GetHealingAttribute())
 	{
@@ -166,6 +181,11 @@ void UProsperitocracyHealthSet::PostGameplayEffectExecute(const FGameplayEffectM
 	if ((GetHealth() <= 0.0f) && !bOutOfHealth)
 	{
 		OnOutOfHealth.Broadcast(Instigator, Causer, &Data.EffectSpec, Data.EvaluatedData.Magnitude, HealthBeforeAttributeChange, GetHealth());
+
+		// The killing blow, and the one marker the damage pipeline cannot know about: whether a body is
+		// still standing is decided HERE, where its health reaches zero. Handed to the man whose blow it
+		// was — the same instigator the health change above is credited to.
+		UProsperitocracyHitMarkerStatics::NotifyHitMarker(Instigator, EProsperitocracyHitMarkerKind::Kill);
 	}
 
 	// Check health again in case an event above changed it.

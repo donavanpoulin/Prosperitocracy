@@ -3,12 +3,16 @@
 #pragma once
 
 #include "Blueprint/UserWidget.h"
+#include "UI/ProsperitocracyHitMarkerTypes.h"
 
 #include "ProsperitocracyReticleWidgetBase.generated.h"
 
 class AProsperitocracyCharacter;
 class AProsperitocracyWeapon;
+class UAudioComponent;
 class UImage;
+class UProsperitocracyHitMarkerWidget;
+class USoundBase;
 
 /**
  * UProsperitocracyReticleWidgetBase
@@ -27,8 +31,10 @@ class UImage;
  * own ADS blend. It also cover-snaps: the circle sits on whatever is between the player and the aim,
  * because that is where the bullet will actually stop.
  *
- * The two images are found by name in the widget tree, so the widget blueprint holds the layout and
- * this class holds the behaviour — the same split the template uses everywhere else.
+ * And it is where the HIT MARKERS live (his spec, 2026-09-25), because a marker is part of the ring's
+ * UI: it sits inside the ring, it is moved by the very same value the ring is moved by, and it is
+ * shown only while the ring is. The widget tree holds the look ("Dot", "Circle", "HitMarker") and this
+ * class holds the behaviour — the same split as everywhere else in the template.
  */
 UCLASS(Abstract)
 class UProsperitocracyReticleWidgetBase : public UUserWidget
@@ -62,8 +68,43 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure)
 	float GetCircleScreenRadius() const;
 
+	/**
+	 * A marker arrived for the man this reticle belongs to: damage HE dealt just landed.
+	 *
+	 * Bound to his own ability system's OnHitMarker (see UProsperitocracyHitMarkerStatics), so this
+	 * only ever hears about his own damage — nobody else's hits can reach his screen.
+	 */
+	UFUNCTION()
+	void HandleHitMarker(EProsperitocracyHitMarkerKind Kind);
+
+	//~ The marker's timing and its sounds. [TUNE] — mine to pick, his to move once he has felt them.
+	//
+	// One marker at a time, and it lasts long enough to be seen and no longer: burn ticks land every
+	// quarter second while something is alight, so a marker that lingered would never leave the screen.
+	static constexpr float HitMarkerLifetimeSeconds = 0.4f;
+	static constexpr float KillMarkerLifetimeSeconds = 0.6f;
+
+	/** The share of a marker's life it spends at full strength before it starts to fade. */
+	static constexpr float HitMarkerHoldFraction = 0.25f;
+
+	/**
+	 * How loud a marker's sound is played. [TUNE]
+	 *
+	 * His report, 2026-09-25: the gunshots bury it. Measured off his own three files — they peak at
+	 * about -6 dBFS (half scale), so 2.0 is the most this can be lifted before THEY clip. If a marker
+	 * still loses to the guns, the levers left are the files themselves (louder, punchier — they are
+	 * 0.096s clicks) or the guns' own level, which is a feel call and not this number's business.
+	 */
+	static constexpr float HitMarkerSoundVolume = 2.0f;
+
+	/**
+	 * The sound cap: the same marker's sound will not restart more than once in this long, so a horde
+	 * alight (a burn ticking on a dozen bodies) cannot machine-gun it.
+	 */
+	static constexpr float HitMarkerSoundRetriggerSeconds = 0.1f;
+
 protected:
-	/** Finds the fixed dot and the moving circle by name in the widget tree ("Dot" / "Circle"). */
+	/** Finds the fixed dot, the moving circle and the marker by name in the widget tree. */
 	virtual void NativeConstruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
@@ -72,6 +113,21 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UImage> CircleImage;
+
+	/** The X itself — one widget in the tree, moved and faded from here. */
+	UPROPERTY(Transient)
+	TObjectPtr<UProsperitocracyHitMarkerWidget> HitMarkerWidget;
+
+	//~ The three sounds, one per marker. They live on the widget so whoever owns the look owns the
+	//~ noise it makes, and they are assigned in the widget blueprint — no path in code.
+	UPROPERTY(EditDefaultsOnly, Category = "Hit Marker")
+	TObjectPtr<USoundBase> FullHitSound;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Hit Marker")
+	TObjectPtr<USoundBase> HalfHitSound;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Hit Marker")
+	TObjectPtr<USoundBase> KillHitSound;
 
 	/** The gun whose drift the circle shows — the one in hand, re-read every tick. */
 	UPROPERTY(BlueprintReadOnly, Transient)
@@ -89,4 +145,40 @@ private:
 	 * the circle never read. One reticle, one source — the gun in hand right now.
 	 */
 	void AcquireWeaponFromCharacter();
+
+	/** Listen to the man's own damage. Done on the first tick that can find him, once. */
+	void BindToHitMarkersOnce();
+
+	/** One frame of the marker: the fade, the aiming gate, and riding the ring. */
+	void UpdateHitMarker(float DeltaTime, float AimingAlpha, const FVector2D& CircleOffset, float RingRadius);
+
+	/** Take the X off the ring. Told once, on the frame a marker ends — never once a frame. */
+	void HideHitMarker();
+
+	/** The sound one marker makes, or null when the widget blueprint has not been given it yet. */
+	USoundBase* GetHitMarkerSound(EProsperitocracyHitMarkerKind Kind) const;
+
+	/** Play a marker's sound, under the cap — and let a kill take over from the hit's own sound. */
+	void PlayHitMarkerSound(EProsperitocracyHitMarkerKind Kind);
+
+	/** The marker showing right now, and how long it has been up. The newest hit always restarts it,
+	 *  whatever was fading before — including a kill's. */
+	EProsperitocracyHitMarkerKind LiveMarkerKind = EProsperitocracyHitMarkerKind::Full;
+	float MarkerAgeSeconds = 0.0f;
+	bool bMarkerLive = false;
+
+	/**
+	 * True once the live marker has been ON SCREEN for at least one frame. Its life is measured from
+	 * there, never from the moment it arrived — a long frame between the two must not be able to eat a
+	 * marker nobody ever saw (see UpdateHitMarker).
+	 */
+	bool bMarkerDrawn = false;
+
+	bool bBoundToHitMarkers = false;
+
+	/** When each kind's sound last played, for the cap. Indexed by the kind. */
+	float LastHitMarkerSoundTimes[3] = { -1000.0f, -1000.0f, -1000.0f };
+
+	/** The sound still playing, so the blow that kills can take over from the hit's own sound. */
+	TWeakObjectPtr<UAudioComponent> PlayingHitMarkerSound;
 };

@@ -416,6 +416,13 @@ void UProsperitocracyAbilitySystemComponent::ClientNotifyAbilityFailed_Implement
 	HandleAbilityFailed(Ability, FailureReason);
 }
 
+void UProsperitocracyAbilitySystemComponent::ClientNotifyHitMarker_Implementation(EProsperitocracyHitMarkerKind Kind)
+{
+	// The last hop: this component IS the man's, so the broadcast lands on his screen and on nobody
+	// else's. The reticle is the listener; it owns what a marker looks like and how long it lasts.
+	OnHitMarker.Broadcast(Kind);
+}
+
 void UProsperitocracyAbilitySystemComponent::HandleAbilityFailed(const UGameplayAbility* Ability, const FGameplayTagContainer& FailureReason)
 {
 	//UE_LOG(LogProsperitocracyAbilitySystem, Warning, TEXT("Ability %s failed to activate (tags: %s)"), *GetPathNameSafe(Ability), *FailureReason.ToString());

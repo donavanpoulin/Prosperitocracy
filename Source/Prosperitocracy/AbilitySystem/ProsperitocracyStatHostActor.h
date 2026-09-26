@@ -88,6 +88,22 @@ public:
 	 */
 	static constexpr float CarryShareOfDrag = 0.5f;
 
+	/**
+	 * The ONE shake formula, universal — what a thing's own act is worth on the SCREEN, in degrees.
+	 *
+	 * `damage x ShakeDegreesPerDamagePoint`, where damage is the thing's Impact and Piercing added
+	 * together, exactly the number the push above is priced off (a thing with one line uses that line;
+	 * a hybrid sums both). Written onto the thing's own Shake stat when its block is installed and read
+	 * from there by whatever the thing's act is — a gun's shot, a blade's swing — so a thing never
+	 * carries a shake number of its own to keep in step: give it damage and it shakes.
+	 *
+	 * One dial, because there is one thing that decides it: a thing that hits harder is felt harder.
+	 * Damage is a [TUNE] number like every other, so the whole shake follows the tuning of the game's
+	 * damage instead of needing a second pass over its own scale, and a perk that moves damage moves
+	 * the shake with it.
+	 */
+	static constexpr float ShakeDegreesPerDamagePoint = 0.004f;
+
 //~IProsperitocracyAbilitySourceInterface — the host IS an ability source: it outlives the
 	// thing that spawned it (an ability instance dies at EndAbility; the host lives until the
 	// thing is removed), so delayed damage (a grenade detonating after the ability ended) can

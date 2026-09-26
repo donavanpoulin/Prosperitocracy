@@ -10,6 +10,7 @@
 #include "ProsperitocracyGameplayTags.h"
 #include "Engine/World.h"
 #include "ProsperitocracyLogChannels.h"
+#include "UI/ProsperitocracyHitMarkerStatics.h"
 #include "Weapons/ProsperitocracyBloodBlade.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyDamageExecution)
@@ -74,6 +75,7 @@ void UProsperitocracyDamageExecution::Execute_Implementation(const FGameplayEffe
 	const float HitDistance = HitResult ? HitResult->Distance : 0.0f;
 	const float DistanceAttenuation = AbilitySource ? AbilitySource->GetDistanceAttenuation(HitDistance, nullptr, nullptr) : 1.0f;
 
+	bool bAnyLineHalved = false;
 	float TotalDamage = 0.0f;
 	for (const FProsperitocracyDamageLine& Line : DamageLines)
 	{
@@ -123,6 +125,11 @@ void UProsperitocracyDamageExecution::Execute_Implementation(const FGameplayEffe
 			const bool bReduced = (Line.PenTier == PartArmor);
 			Gate = bReduced ? 0.5f : 1.0f;
 
+			// The hit's own answer, kept for the marker: the gate (and only the gate) is what decides
+			// white or red. Fire never reaches this line — a line with no pen is never gated at all, so
+			// a burn tick is always full: red.
+			bAnyLineHalved |= bReduced;
+
 			// Resist = the per-type efficiency axis, applied after the gate. This part's answer for THIS
 			// type, and nothing else: a part built against another type resists this one not at all.
 			Resist = PartProfile.Resist;
@@ -162,13 +169,16 @@ void UProsperitocracyDamageExecution::Execute_Implementation(const FGameplayEffe
 		// Apply the combined damage as the Damage meta-attribute, which the HealthSet maps to -Health.
 		OutExecutionOutput.AddOutputModifier(FGameplayModifierEvaluatedData(UProsperitocracyHealthSet::GetDamageAttribute(), EGameplayModOp::Additive, TotalDamage));
 
-		// And the two halves of contested health, at the one place damage becomes real
-		// (Design/combat.md): what the TARGET just took becomes ITS contested pool — already lost, on the
-		// clock, and winnable back — and the body that DEALT it wins a flat EIGHTH of what it dealt back
-		// as health (ShareOfDamageDealtRecovered; the words here said "a quarter" for a while and the
-		// constant never did). Credited to the INSTIGATOR, so whoever pulled the trigger is who it counts
-		// for, teammate included: the game does not discriminate.
-		UProsperitocracyGameplayAbility_ContestedHealth::NotifyDamageTaken(HitActor, TotalDamage);
+		// HALF of contested health, at the one place damage becomes real (Design/combat.md): the body
+		// that DEALT it wins a flat EIGHTH of what it dealt back as health (ShareOfDamageDealtRecovered),
+		// credited to the INSTIGATOR, so whoever pulled the trigger is who it counts for, teammate
+		// included: the game does not discriminate.
+		//
+		// The OTHER half — what the target just took becoming ITS contested pool — does NOT happen here
+		// (2026-09-26). It is born where the health actually moves, in the health set, from the health's
+		// own drop. This number is what the pipeline COMPUTED, and on a body with nothing left to lose it
+		// is no longer what the hit took — which is how a burn ticking on an empty body kept re-filling a
+		// pool that had already drained away (the user's bug).
 		UProsperitocracyGameplayAbility_ContestedHealth::NotifyDamageDealt(Spec.GetContext().GetInstigator(), TotalDamage);
 
 		// And the BLOOD — the second thing that follows real damage, told in the same breath and handed
@@ -176,6 +186,16 @@ void UProsperitocracyDamageExecution::Execute_Implementation(const FGameplayEffe
 		// whichever weapon did the taking. Inside `TotalDamage` are the pen gate, the resists and the
 		// falloff, because it is the number that actually came off the target.
 		AProsperitocracyBloodBlade::NotifyDamageDealt(Spec.GetContext().GetInstigator(), TotalDamage);
+
+		// And the MARKER — the plainest of the followers of real damage: the man who dealt it sees that
+		// he connected, in the colour the GATE answered with. White only ever means one thing (the pen
+		// only MATCHED the armour, so the gate halved it); everything else that landed is red, fire
+		// included, because a line with no pen is never gated at all.
+		//
+		// A KILL is the one marker this place cannot know about — the body is still standing at this
+		// point in the frame. It is decided where a body reaches zero, and told from there.
+		UProsperitocracyHitMarkerStatics::NotifyHitMarker(Spec.GetContext().GetInstigator(),
+			bAnyLineHalved ? EProsperitocracyHitMarkerKind::Half : EProsperitocracyHitMarkerKind::Full);
 	}
 #endif // #if WITH_SERVER_CODE
 }

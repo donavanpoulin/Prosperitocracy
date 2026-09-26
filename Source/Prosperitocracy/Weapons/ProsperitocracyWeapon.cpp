@@ -617,6 +617,14 @@ void AProsperitocracyWeapon::ApplyShotFeel()
 			}
 
 			BodyStats->NotifyShotFired(GetWeaponStat(EProsperitocracyStat::Drag), GetWeaponStat(EProsperitocracyStat::Carry), GetShotDirection());
+
+			// And the PICTURE, from the same act and the same derived family: the gun hands over its own
+			// Shake row — how hard IT shakes the screen, off its own damage — and the screen leans by it.
+			// One call per committed shot, made HERE for every gun there will ever be, so a gun that does
+			// not exist yet shakes the day it fires and no gun anywhere carries a line of its own for
+			// this. It reaches the view the frame is drawn from and nothing else: the shot's line was
+			// already handed over above, and the aim the bullet flies along never reads this number.
+			BodyStats->NotifyViewShake(GetWeaponStat(EProsperitocracyStat::Shake));
 		}
 	}
 }

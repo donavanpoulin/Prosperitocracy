@@ -79,6 +79,10 @@ FGameplayAttribute UProsperitocracyStatSystemStatics::GetAttributeForStat(EProsp
 		// (Design/classes/reclaimer.md).
 		{ EProsperitocracyStat::BloodDrain, UProsperitocracyThingStatSet::GetBloodDrainAttribute() },
 		{ EProsperitocracyStat::BloodCost, UProsperitocracyThingStatSet::GetBloodCostAttribute() },
+		// How hard a thing's own act shakes the PICTURE — a gun's shot, a blade's swing — on the
+		// thing's own GAS home like every other thing stat (Design/ui.md), derived from its damage and
+		// never authored.
+		{ EProsperitocracyStat::Shake, UProsperitocracyThingStatSet::GetShakeAttribute() },
 	};
 
 	if (const FGameplayAttribute* Found = Registry.Find(Stat))

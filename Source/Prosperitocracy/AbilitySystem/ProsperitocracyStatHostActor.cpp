@@ -66,6 +66,17 @@ void AProsperitocracyStatHostActor::ApplyDerivedStats()
 
 	SetStatBase(EProsperitocracyStat::Drag, DragPercent);
 	SetStatBase(EProsperitocracyStat::Carry, DragPercent * CarryShareOfDrag);
+
+	// And the same damage, read a second time for a different job: how hard this thing's own act
+	// shakes the SCREEN. It is the picture, not the body — the push above is what the shot does to the
+	// man, this is what it does to the world he is looking through — and both are priced off the one
+	// number a thing already has, so nothing is authored for either of them.
+	//
+	// Worked out HERE, beside the push, because it has the same inputs and the same reason to be read
+	// late: damage can move mid-fight (a perk, a proc, an attachment), and a shake priced at the
+	// damage a gun had the moment it came up would sit at the old number while the gun hit harder.
+	const float ShakeDegrees = Damage * ShakeDegreesPerDamagePoint;
+	SetStatBase(EProsperitocracyStat::Shake, ShakeDegrees);
 }
 
 void AProsperitocracyStatHostActor::SetStatBase(EProsperitocracyStat Stat, float BaseValue)

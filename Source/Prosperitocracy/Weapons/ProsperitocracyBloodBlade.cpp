@@ -13,6 +13,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/ProsperitocracyCharacter.h"
+#include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "CollisionQueryParams.h"
 #include "Components/ChildActorComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -290,6 +291,7 @@ bool AProsperitocracyBloodBlade::PlayOrAdvanceCombo()
 	WindowRemaining = 0.0f;
 	CutThisSwing.Reset();
 	bSwinging = true;
+	bBiteHandedOver = false;
 
 	// The BODY's half, and then the blade holds nothing: the line, the distance and the time are the
 	// body's from here (it faces the line, travels it, refuses the player's own movement and ends it
@@ -469,6 +471,31 @@ void AProsperitocracyBloodBlade::Tick(float DeltaSeconds)
 		&& AttackElapsed >= AttackSeconds * ProsperitocracyBladeHandling::BiteStartsAtFraction
 		&& AttackElapsed <= AttackSeconds)
 	{
+		// AND THE PICTURE, HERE AND NOT AT THE PRESS: the jolt belongs where the blade actually goes
+		// THROUGH — half an attack after the button went down, which is the middle of the animation
+		// the player is watching. ONCE per attack, because this half of the attack is swept every
+		// frame and a jolt per frame would be a rumble for the whole of it.
+		if (!bBiteHandedOver)
+		{
+			bBiteHandedOver = true;
+
+			// The blade's numbers are read at the moment they are used, exactly as a gun reads its own
+			// when it fires: a thing's damage can move mid-fight (a perk, a proc), and a jolt priced
+			// when the blade came up would sit at the old number while it hit harder.
+			if (StatHost)
+			{
+				StatHost->ApplyDerivedStats();
+			}
+
+			if (const AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(OwningPawn.Get()))
+			{
+				if (UProsperitocracyPlayerStatsComponent* BodyStats = Body->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
+				{
+					BodyStats->NotifyViewShake(GetWeaponStat(EProsperitocracyStat::Shake));
+				}
+			}
+		}
+
 		CutWhatTheSwingIsThrough();
 	}
 

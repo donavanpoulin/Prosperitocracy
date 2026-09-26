@@ -14,6 +14,7 @@
 class AProsperitocracyStatHostActor;
 class UAbilitySystemComponent;
 class UGameplayEffect;
+class UNiagaraComponent;
 class UProsperitocracyStatTable;
 
 /**
@@ -63,6 +64,20 @@ struct FProsperitocracyLiveStatus
 
 	/** World seconds of the next tick — only meaningful for a status that ticks (Burn). */
 	float NextTickTime = 0.0f;
+
+	/**
+	 * The status's own LOOK — the effect that stands on the body for as long as this status lasts.
+	 *
+	 * Nothing about it is a number: it is hung at the body's OWN origin, takes no offset and no scale,
+	 * and every body that can carry a status gets it the same way, because a body's origin is where it
+	 * stands. It is attached, so a body that walks away does not leave its fire on the floor.
+	 *
+	 * Null for a status that wears no effect (the pairing is one place, and a status absent from it has
+	 * no look), and null again the moment the status ends — the effect is told to stop and destroys
+	 * itself once its last particle dies.
+	 */
+	UPROPERTY()
+	TObjectPtr<UNiagaraComponent> Effect = nullptr;
 };
 
 /**
@@ -153,6 +168,19 @@ private:
 
 	/** One tick of a ticking status: one normal Piercing damage line, through the one pipeline. */
 	void ApplyTickDamage(const FProsperitocracyLiveStatus& Live);
+
+	/**
+	 * Put this status's own look on the body, at the body's own origin. Called once, when the status
+	 * LANDS — never on a re-application, because a status that is already burning does not light a
+	 * second fire.
+	 */
+	void BeginStatusEffect(FProsperitocracyLiveStatus& Live);
+
+	/**
+	 * Tell this status's look to stop: no more fire is spawned and the flames already on the body burn
+	 * out at their own pace, then the effect destroys itself. A stop, never a cut.
+	 */
+	void EndStatusEffect(FProsperitocracyLiveStatus& Live);
 
 	/** Take the controls away / give them back, as the movement-stopping status lands and ends. */
 	void UpdateMovementGate();
