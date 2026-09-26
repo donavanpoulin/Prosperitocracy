@@ -169,13 +169,16 @@ void UProsperitocracyDamageExecution::Execute_Implementation(const FGameplayEffe
 		// Apply the combined damage as the Damage meta-attribute, which the HealthSet maps to -Health.
 		OutExecutionOutput.AddOutputModifier(FGameplayModifierEvaluatedData(UProsperitocracyHealthSet::GetDamageAttribute(), EGameplayModOp::Additive, TotalDamage));
 
-		// And the two halves of contested health, at the one place damage becomes real
-		// (Design/combat.md): what the TARGET just took becomes ITS contested pool — already lost, on the
-		// clock, and winnable back — and the body that DEALT it wins a flat EIGHTH of what it dealt back
-		// as health (ShareOfDamageDealtRecovered; the words here said "a quarter" for a while and the
-		// constant never did). Credited to the INSTIGATOR, so whoever pulled the trigger is who it counts
-		// for, teammate included: the game does not discriminate.
-		UProsperitocracyGameplayAbility_ContestedHealth::NotifyDamageTaken(HitActor, TotalDamage);
+		// HALF of contested health, at the one place damage becomes real (Design/combat.md): the body
+		// that DEALT it wins a flat EIGHTH of what it dealt back as health (ShareOfDamageDealtRecovered),
+		// credited to the INSTIGATOR, so whoever pulled the trigger is who it counts for, teammate
+		// included: the game does not discriminate.
+		//
+		// The OTHER half — what the target just took becoming ITS contested pool — does NOT happen here
+		// (2026-09-26). It is born where the health actually moves, in the health set, from the health's
+		// own drop. This number is what the pipeline COMPUTED, and on a body with nothing left to lose it
+		// is no longer what the hit took — which is how a burn ticking on an empty body kept re-filling a
+		// pool that had already drained away (the user's bug).
 		UProsperitocracyGameplayAbility_ContestedHealth::NotifyDamageDealt(Spec.GetContext().GetInstigator(), TotalDamage);
 
 		// And the BLOOD — the second thing that follows real damage, told in the same breath and handed
