@@ -24,11 +24,11 @@
 #include "Weapons/ProsperitocracyLoadoutComponent.h"
 
 /**
- * The in-game dev sandbox — DEVELOPMENT ONLY. Six commands, one per thing you cannot try by walking
+ * The in-game dev sandbox — DEVELOPMENT ONLY. Eight commands, one per thing you cannot try by walking
  * around: the gun you are holding, the weave you are wearing, the armour's colour, which of your
- * class's three loadouts you are playing, the Stun status you cannot otherwise put on yourself, and the
- * damage you cannot otherwise take (Prosperitocracy.Hurt — so a weave's resist and contested health can
- * both be felt while nothing in the game attacks you).
+ * class's three loadouts you are playing, which class you are, the Stun and the Burn you cannot put on
+ * yourself, and the damage you cannot otherwise take (Prosperitocracy.Hurt — so a weave's resist and
+ * contested health can both be felt while nothing in the game attacks you).
  *
  * `Prosperitocracy.Gun <name>` puts one of our six guns in your hands without touching what the
  * character spawns with and without a pickup system.
@@ -56,6 +56,11 @@
  * carries comes with it — the armour and the guns. A class owns three (Design/loadout.md) and there is
  * no picker yet, so this is the only way to reach the second and the third; it is one call to the door
  * a switch goes through, the same call the picker will make.
+ *
+ * `Prosperitocracy.Stun` and `Prosperitocracy.Burn` put those two statuses on YOU — each read from the
+ * block of the gun that names it, which is the same pairing a round from that gun puts on a target.
+ * Nothing in the game can damage you yet, so this is the only way to feel either status on the body
+ * they would be felt on. The fire that comes with a burn is the status's own and arrives with it.
  *
  * Nothing here writes a value, spawns an actor, or adds a rule: each calls the one function that
  * already puts that thing on the body, and deleting this file would change no number in the game.
@@ -787,52 +792,65 @@ namespace ProsperitocracyDevLoadout
 }
 
 /**
- * The status half of the sandbox: the Stun you cannot otherwise put on yourself.
+ * The status half of the sandbox: the two statuses you cannot otherwise put on yourself.
  *
- * Burn shows itself — you set a target alight and watch it burn down. A stun shows itself on the only
- * body that can be stopped dead today: the player. Nothing can damage the player yet, so no round can
- * ever land a stun on the one body it would be felt on, and this command is that missing door.
+ * Burn shows itself on a dummy — you set one alight and watch it burn down — but never on the one body
+ * whose fire you can walk around with. A stun shows itself on the only body that can be stopped dead
+ * today: the player. Nothing in the game can damage the player yet, so no round can land either status
+ * on the body it would be felt on, and these two commands are that missing door.
  *
- * It reads the stun pistol's OWN block for both halves of the status — the tag it stamps and the block
- * that is its Duration — so what lands on you is exactly what a stun pistol round puts on a target.
- * This file states no status tag and no duration of its own: change the pistol's block in the editor
- * and this command changes with it, because both read the same pairing.
+ * Both read the block of the gun that NAMES the status — for the tag it stamps and for the block that
+ * is the status's own numbers — so what lands on you is exactly what a round from that gun puts on a
+ * target. This file states no status tag and no duration of its own: change the gun's block in the
+ * editor and these commands change with it, because both read the same pairing.
  */
 namespace ProsperitocracyDevStatus
 {
 	/** The stun pistol's block — the thing that NAMES its status. Read, never restated. */
 	const TCHAR* const StunPistolBlockPath = TEXT("/Game/Weapons/StatBlocks/STB_StunPistol.STB_StunPistol");
 
-	/** Say something in the log and on screen, as the STATUS sandbox. LineIndex = which on-screen slot. */
-	void Report(const FString& Message, int32 LineIndex = 0)
+	/** The incendiary rifle's block — the other thing that names one. Read, never restated. */
+	const TCHAR* const IncendiaryRifleBlockPath = TEXT("/Game/Weapons/StatBlocks/STB_IncendiaryRifle.STB_IncendiaryRifle");
+
+	/** Say something in the log and on screen, as the STATUS sandbox. OnScreenKey = which on-screen slot. */
+	void Report(const FString& Message, int32 OnScreenKey = 0x9006)
 	{
-		ProsperitocracyDev::Report(TEXT("DevStatus"), /*OnScreenKey=*/ 0x9006 + LineIndex, Message);
+		ProsperitocracyDev::Report(TEXT("DevStatus"), OnScreenKey, Message);
 	}
 
-	void HandleStunCommand(const TArray<FString>& Args, UWorld* World)
+	/**
+	 * Put the status a stat block NAMES onto the player — the same pairing a round from that gun applies,
+	 * read from the same place: the block names the status and carries the status's OWN block, and the
+	 * effect the ONE damage pipeline runs on comes from the loadout, exactly as a shot takes it.
+	 *
+	 * ONE helper for both commands, because which gun a status command reads is the only thing that
+	 * differs — nothing about this exists twice. It states no status tag and no duration of its own.
+	 *
+	 * False, with the reason in OutProblem, when nothing landed.
+	 */
+	bool ApplyStatusNamedBy(UWorld* World, const TCHAR* const BlockPath, const FGameplayTag& WantedStatus, FString& OutProblem)
 	{
 		const APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
 		APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
 		if (!Pawn)
 		{
-			Report(TEXT("no character to stun — this only works while the game is running (PIE)."));
-			return;
+			OutProblem = TEXT("no character — this only works while the game is running (PIE).");
+			return false;
 		}
 
 		UAbilitySystemComponent* SourceAbilitySystemComponent = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Pawn);
 		UProsperitocracyStatusComponent* Statuses = Pawn->FindComponentByClass<UProsperitocracyStatusComponent>();
-		const UProsperitocracyStatTable* PistolBlock = LoadObject<UProsperitocracyStatTable>(nullptr, StunPistolBlockPath);
-		if (!SourceAbilitySystemComponent || !Statuses || !PistolBlock)
+		const UProsperitocracyStatTable* NamingBlock = LoadObject<UProsperitocracyStatTable>(nullptr, BlockPath);
+		if (!SourceAbilitySystemComponent || !Statuses || !NamingBlock)
 		{
-			Report(TEXT("cannot stun — the character has no status component, or the stun pistol's block is missing."));
-			return;
+			OutProblem = TEXT("cannot apply it — the character has no status component, or the block it reads is missing.");
+			return false;
 		}
 
-		// The status the pistol names, and the block that is ITS OWN numbers: the same pairing a round
-		// from that gun applies, read from the same place.
-		for (const FProsperitocracyAppliedEffect& Applied : PistolBlock->AppliedEffects)
+		// The status that block names, and the block that is ITS OWN numbers.
+		for (const FProsperitocracyAppliedEffect& Applied : NamingBlock->AppliedEffects)
 		{
-			if (Applied.StatusTag != ProsperitocracyGameplayTags::Status_Stun)
+			if (Applied.StatusTag != WantedStatus)
 			{
 				continue;
 			}
@@ -850,27 +868,59 @@ namespace ProsperitocracyDevStatus
 			const TSubclassOf<UGameplayEffect> DamageEffectClass = Playing ? Playing->GunDamageEffectClass : nullptr;
 			if (!DamageEffectClass)
 			{
-				Report(TEXT("cannot stun — the loadout names no damage effect to carry a status."));
-				return;
+				OutProblem = TEXT("cannot apply it — the loadout names no damage effect to carry a status.");
+				return false;
 			}
 
-			// The same door a hit goes through: the one place a status is put on a body.
+			// The same door a hit goes through: the one place a status is put on a body. The status's own
+			// look — the fire a burn wears — arrives with it, because it belongs to the status.
 			Statuses->ApplyStatus(Applied.StatusTag, StatusBlock, SourceAbilitySystemComponent, DamageEffectClass, FHitResult());
-			Report(TEXT("stun applied to you — for its Duration you cannot walk, jump, fire or use anything."));
+			return true;
+		}
+
+		OutProblem = FString::Printf(TEXT("%s names no %s status — nothing applied."), *NamingBlock->GetName(), *WantedStatus.ToString());
+		return false;
+	}
+
+	void HandleStunCommand(const TArray<FString>& Args, UWorld* World)
+	{
+		FString Problem;
+		if (!ApplyStatusNamedBy(World, StunPistolBlockPath, ProsperitocracyGameplayTags::Status_Stun, Problem))
+		{
+			Report(Problem);
 			return;
 		}
 
-		Report(TEXT("the stun pistol's block names no Stun status — nothing applied."));
+		Report(TEXT("stun applied to you — for its Duration you cannot walk, jump, fire or use anything."));
 	}
 
-	// A plain console command like the other four, so it needs no cheat manager, no PlayerController
-	// subclass and no exec routing — type it in the Output Log's Cmd box during PIE.
+	void HandleBurnCommand(const TArray<FString>& Args, UWorld* World)
+	{
+		FString Problem;
+		if (!ApplyStatusNamedBy(World, IncendiaryRifleBlockPath, ProsperitocracyGameplayTags::Status_Burn, Problem))
+		{
+			Report(Problem);
+			return;
+		}
+
+		Report(TEXT("burn applied to you — the tick damage and the fire both run for its Duration."), /*OnScreenKey=*/ 0x9008);
+	}
+
+	// Plain console commands like the other five, so they need no cheat manager, no PlayerController
+	// subclass and no exec routing — type them in the Output Log's Cmd box during PIE.
 	static FAutoConsoleCommandWithWorldAndArgs StunCommand(
 		TEXT("Prosperitocracy.Stun"),
 		TEXT("Put Stun on yourself, using the stun pistol's own status block — the duration it lands with is ")
 		TEXT("that block's own, so it is the same stun a stun pistol round puts on a target. Nothing can ")
 		TEXT("damage you yet, so this is the only way to feel a stun on the one body it stops."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleStunCommand));
+
+	static FAutoConsoleCommandWithWorldAndArgs BurnCommand(
+		TEXT("Prosperitocracy.Burn"),
+		TEXT("Set YOURSELF alight, using the incendiary rifle's own status block — the rate it ticks at and ")
+		TEXT("the duration it lasts are that block's own, so it is the same burn an incendiary round puts on ")
+		TEXT("a target, fire and all. Watch your own health while it burns."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleBurnCommand));
 }
 
 namespace ProsperitocracyDevHurt

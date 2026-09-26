@@ -7,11 +7,15 @@
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyDamageStatics.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
+#include "Components/SceneComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 #include "ProsperitocracyGameplayTags.h"
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
@@ -48,6 +52,27 @@ namespace ProsperitocracyStatus
 		{
 			GEngine->AddOnScreenDebugMessage(OnScreenKey, /*TimeToDisplay=*/ 3.0f, ColorForStatus(StatusTag), Message);
 		}
+	}
+
+	/**
+	 * A status's LOOK, paired here and nowhere else — the same shape as the colour above: ask the
+	 * status's own identity and get the thing it wears. A status that is not named here simply has no
+	 * look and is left alone, which is how a new status can arrive without this file being touched.
+	 *
+	 * These effects are the modern kind (the pack they come from is all Niagara), so a stop is a
+	 * die-out rather than a cut: no more fire is spawned and the flames already on the body burn out
+	 * at their own pace.
+	 */
+	const TCHAR* const BurnEffectPath = TEXT("/Game/Vefects/Free_Fire/Shared/Particles/NS_Fire_Medium.NS_Fire_Medium");
+
+	UNiagaraSystem* FindStatusEffect(const FGameplayTag& StatusTag)
+	{
+		if (StatusTag == ProsperitocracyGameplayTags::Status_Burn)
+		{
+			return LoadObject<UNiagaraSystem>(nullptr, BurnEffectPath);
+		}
+
+		return nullptr;
 	}
 }
 
@@ -183,6 +208,10 @@ void UProsperitocracyStatusComponent::ApplyStatus(const FGameplayTag& StatusTag,
 	// instance is worth its FULL value (it has all of its time left); the one already there is worth
 	// only what it has left.
 	FProsperitocracyLiveStatus* Live = FindLive(StatusTag);
+	// Whether the body was ALREADY carrying this status, asked once: a re-application strengthens what
+	// is there and keeps the look it already has — a body that is already burning does not light a
+	// second fire on itself.
+	const bool bAlreadyCarried = (Live != nullptr);
 	if (Live)
 	{
 		const float RemainingValue = GetStatusValue(*Live, GetSecondsLeft(*Live, Now));
@@ -221,6 +250,13 @@ void UProsperitocracyStatusComponent::ApplyStatus(const FGameplayTag& StatusTag,
 		TargetAbilitySystemComponent->SetLooseGameplayTagCount(StatusTag, 1);
 	}
 
+	// The status's own look goes on with it — once, at the moment it lands. This is the only place a
+	// look is ever put on a body, so any body that can carry a burn wears it the same way.
+	if (!bAlreadyCarried)
+	{
+		BeginStatusEffect(*Live);
+	}
+
 	ProsperitocracyStatus::Report(StatusTag, /*OnScreenKey=*/ 0x9010,
 		FString::Printf(TEXT("%s on %s — %.1fs"), *StatusTag.ToString(), *Owner->GetName(), Duration));
 }
@@ -254,6 +290,58 @@ void UProsperitocracyStatusComponent::ApplyTickDamage(const FProsperitocracyLive
 
 	UProsperitocracyDamageStatics::AddDamageLine(Context, ProsperitocracyGameplayTags::Damage_Type_Piercing, /*PenTier=*/ 0, Amount);
 	UProsperitocracyDamageStatics::ApplyDamageEffectToHit(Context, Owner, Source, Live.DamageEffectClass);
+}
+
+void UProsperitocracyStatusComponent::BeginStatusEffect(FProsperitocracyLiveStatus& Live)
+{
+	AActor* Owner = GetOwner();
+	UNiagaraSystem* Effect = Owner ? ProsperitocracyStatus::FindStatusEffect(Live.StatusTag) : nullptr;
+
+	// A status with no look of its own is left alone — presence is scope, asked here exactly as it is
+	// asked of a stat. Nothing below belongs to any particular body.
+	if (!Effect)
+	{
+		return;
+	}
+
+	USceneComponent* AttachTo = Owner->GetRootComponent();
+	if (!AttachTo)
+	{
+		return;
+	}
+
+	// At the body's OWN origin: no offset, no scale, no bone. It is attached rather than left standing
+	// where it was put, so a body that walks away carries its fire with it, and it is set to destroy
+	// itself once its last flame dies, so nothing has to remember to clean this up.
+	Live.Effect = UNiagaraFunctionLibrary::SpawnSystemAttached(Effect, AttachTo, NAME_None,
+		FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::KeepRelativeOffset,
+		/*bAutoDestroy=*/ true, /*bAutoActivate=*/ true);
+
+	if (!Live.Effect)
+	{
+		UE_LOG(LogProsperitocracy, Warning, TEXT("[Status] %s names a look that could not be put on %s — nothing spawned."),
+			*Live.StatusTag.ToString(), *GetNameSafe(Owner));
+		return;
+	}
+
+	// A burning body an enemy can see burning is burning on every client that can see it, so the fire
+	// is replicated with the body it stands on rather than drawn on one machine only.
+	Live.Effect->SetIsReplicated(true);
+
+	ProsperitocracyStatus::Report(Live.StatusTag, /*OnScreenKey=*/ 0x9012,
+		FString::Printf(TEXT("%s — its fire is on %s at the body's own origin"), *Live.StatusTag.ToString(), *GetNameSafe(Owner)));
+}
+
+void UProsperitocracyStatusComponent::EndStatusEffect(FProsperitocracyLiveStatus& Live)
+{
+	if (UNiagaraComponent* Effect = Live.Effect)
+	{
+		// A STOP, not a cut: the effect spawns nothing more and puts itself out — the flames already on
+		// the body burn for as long as their own particles last, and the component destroys itself when
+		// the last one dies. Nothing is killed here and nothing is held on to.
+		Effect->Deactivate();
+		Live.Effect = nullptr;
+	}
 }
 
 bool UProsperitocracyStatusComponent::IsMovementStopped() const
@@ -366,6 +454,10 @@ void UProsperitocracyStatusComponent::EndStatus(int32 Index)
 	}
 
 	const FGameplayTag StatusTag = LiveStatuses[Index].StatusTag;
+
+	// The status's look goes off with it, told to stop BEFORE the entry leaves, so the effect is never
+	// orphaned: from here it puts itself out and cleans itself up.
+	EndStatusEffect(LiveStatuses[Index]);
 
 	if (AProsperitocracyStatHostActor* Host = LiveStatuses[Index].Host)
 	{
