@@ -18,19 +18,33 @@ class USkeletalMeshComponent;
  * The BODY's aim numbers: how the man himself comes round.
  *
  * Not the gun's — the gun's feel is its own stats poured into the weapon-handling shape. This is the
- * body: how fast the whole man turns toward where the player is looking. Universal, the same for every
- * loadout, poured into the load he carries. All values [TUNE].
+ * body: how fast the whole man turns toward where the player is looking, in TWO layers. What he
+ * CARRIES — armour and every gun on him — sets the rate he comes round at with his hands empty, and
+ * the thing IN those hands then multiplies it off its own Weight. So the same kit turns differently
+ * with a pistol out than with a rifle out, and an empty hand drops him back to the plain carried
+ * rate. Universal: two constants for every loadout and every thing, no per-gun number anywhere. All
+ * values [TUNE].
  */
 namespace ProsperitocracyBodyAimHandling
 {
-	// Degrees per second the body comes round at with nothing carried, what each carried pound takes
-	// off that, and the floor — so a heavy load still turns, just slowly. THE RATE IS THE ONLY LIMIT,
-	// and there is deliberately no cap on how far behind he may be: a cap is a dead zone. With one, the
-	// aim holds still until the look has dragged it past, which is not a turn at all — he would be late
-	// by a fixed angle instead of catching up. Late is a rate, never a distance.
+	// Degrees per second the body comes round at with nothing carried, and what each carried pound
+	// takes off that. THE RATE IS THE ONLY LIMIT, and there is deliberately no cap on how far behind he
+	// may be: a cap is a dead zone. With one, the aim holds still until the look has dragged it past,
+	// which is not a turn at all — he would be late by a fixed angle instead of catching up. Late is a
+	// rate, never a distance.
 	constexpr float TurnRateBase = 1080.0f;
-	constexpr float TurnRatePerLb = 24.0f;
-	constexpr float TurnRateMin = 420.0f;
+	constexpr float TurnRatePerLb = 6.0f;
+
+	// The multiply the thing IN HIS HANDS puts on that rate, off its own Weight: one at an empty hand,
+	// one step down for every pound it weighs. Floored, because the guns only get heavier from here
+	// and a thing heavy enough to zero the multiply must not stop him turning at all. A thing's Weight
+	// is read FINAL off its own home, so a weight perk or attachment on the gun moves his turn with it
+	// — and the rate floor below is the last word either way.
+	constexpr float EquippedWeightMultiplierPerLb = 0.06f;
+	constexpr float EquippedWeightMultiplierMin = 0.25f;
+
+	// The slowest this man may ever come round, whatever he is carrying and whatever is in his hands.
+	constexpr float TurnRateMin = 120.0f;
 
 	// How often the aim says where it is while he is behind, so a play test can see the turn.
 	constexpr float AimLogIntervalSeconds = 0.25f;
@@ -43,7 +57,8 @@ namespace ProsperitocracyBodyAimHandling
  *
  * The template keeps everything it did before — mesh, animation, movement, the rig, the HUD widget.
  * What lives here is the MAN'S OWN AIM: he turns toward where the player is looking at a rate set by
- * what he carries, and nothing about him is instant. The aim is ONE rotation, owned here, and
+ * what he carries and multiplied by what he is holding, and nothing about him is instant. The aim is
+ * ONE rotation, owned here, and
  * everything that needs to know where his gun points asks it — the bullet, the reticle circle, the
  * gun's own numbers. The template's animation blueprint
  * (`Content/ThirdPerson/Blueprints/Locomotion.uasset`) already drives its aim offset from
@@ -374,11 +389,13 @@ public:
 	FRotator GetAimRotation() const;
 
 	/**
-	 * How fast this man comes round right now, in degrees per second — from what he is CARRYING.
+	 * How fast this man comes round right now, in degrees per second — from what he is CARRYING and what
+	 * he is HOLDING.
 	 *
-	 * The whole load, not just the thing in his hands: a man in armour with a rifle on him comes round
-	 * slower than a man with nothing, and that is the whole of what weight does to the turn. Nothing
-	 * carried is the quickest this body turns.
+	 * Two layers, and both of them weight. Everything on him — armour and every gun, not just the one in
+	 * his hands — sets the rate he turns at with an empty hand; the thing in his hand then multiplies it
+	 * off its own Weight. Nothing carried is the quickest this body turns, and nothing in hand means no
+	 * multiply at all.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Aim")
 	float GetTurnRateDegreesPerSecond() const;
@@ -493,9 +510,19 @@ protected:
 
 	/**
 	 * One frame of THE MAN'S OWN TURN: the aim comes round toward the look at the rate his load allows
-	 * — never faster, and never further behind than the leash — and his facing is written from it.
+	 * and what he is holding allows — never faster, and never instantly — and his facing is written
+	 * from it.
 	 */
 	void TickAimTurn(float DeltaSeconds);
+
+	/**
+	 * The multiply the thing in his hands puts on that turn, off its own Weight: one at an empty hand,
+	 * one step down for every pound it weighs, floored.
+	 *
+	 * ONE home for the number, so the rate and the log line that explains it can never disagree about
+	 * it — and the rate and the log cannot drift apart the way two copies of a sum always do.
+	 */
+	float GetEquippedWeightMultiplier() const;
 
 	/** This body's own tick, which is where the aim's turn and a live attack are driven. */
 	virtual void Tick(float DeltaSeconds) override;

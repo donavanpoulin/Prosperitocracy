@@ -659,8 +659,9 @@ void AProsperitocracyWeapon::UpdateDrift(float DeltaSeconds)
 
 	// Weight is the whole feel of the movement: in this file it is the ONLY stat that scales the
 	// displacement and the settle rate. It is read through this gun's own GAS home like every other
-	// number, so a perk or attachment that moves it moves the feel. (The TURN's own weight is the
-	// body's, and is what the man carries — see AProsperitocracyCharacter::GetTurnRateDegreesPerSecond.)
+	// number, so a perk or attachment that moves it moves the feel. (The TURN is the body's: what the
+	// man CARRIES sets it and this gun's own Weight multiplies it while it is in his hands — see
+	// AProsperitocracyCharacter::GetTurnRateDegreesPerSecond.)
 	const float Weight = FMath::Max(0.0f, GetWeaponStat(EProsperitocracyStat::Weight));
 
 	// --- The movement's inertia: the gun is an inert mass, so it lags its own motion ---

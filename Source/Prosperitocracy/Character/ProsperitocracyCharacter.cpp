@@ -484,9 +484,16 @@ void AProsperitocracyCharacter::TickAimTurn(float DeltaSeconds)
 		{
 			AimLogCooldown = ProsperitocracyBodyAimHandling::AimLogIntervalSeconds;
 			const UProsperitocracyPlayerStatsComponent* Stats = GetStats(this);
-			UE_LOG(LogProsperitocracy, Log, TEXT("[Aim] look %.1f° → aim %.1f° (%.1f° behind, turn %.0f°/s, load %.1f lb)"),
+			// WHAT is in his hands belongs on this line as much as the load does: the rate is two
+			// layers, and a line that printed only one of them could not tell a slow man from a light
+			// gun.
+			const AProsperitocracyWeapon* Held = GetGunWeaponInHand();
+			UE_LOG(LogProsperitocracy, Log,
+				TEXT("[Aim] look %.1f° → aim %.1f° (%.1f° behind, turn %.0f°/s, load %.1f lb, %s x%.2f)"),
 				Look.Yaw, AimRotation.Yaw, TrailDegrees, TurnRate,
-				Stats ? Stats->GetCarriedWeightLbs() : 0.0f);
+				Stats ? Stats->GetCarriedWeightLbs() : 0.0f,
+				Held ? *Held->GetName() : TEXT("empty hand"),
+				GetEquippedWeightMultiplier());
 		}
 	}
 	else
@@ -595,16 +602,42 @@ FRotator AProsperitocracyCharacter::GetAimRotation() const
 
 float AProsperitocracyCharacter::GetTurnRateDegreesPerSecond() const
 {
-	// WHAT HE CARRIES IS WHAT TURNS HIM — the whole load, not just the thing in his hands. Nothing
-	// carried is the quickest this body comes round, and every pound takes a little off the rate down
-	// to the floor, so a heavy man is slow and deliberate rather than glued to the spot.
+	// TWO LAYERS, AND BOTH OF THEM WEIGHT. What he CARRIES sets the rate he comes round at with his
+	// hands empty — his unarmed turn, and the quickest this body moves. The thing IN his hands then
+	// multiplies it off its own Weight, so the same kit turns differently with a pistol out than with
+	// a rifle out, and putting everything away drops him back to the plain carried rate.
+	//
+	// The whole load counts and not just the gun in hand: a man in armour still turns slower than a
+	// naked one, and a gun on his back is still on his back. Nothing here is per-gun — the constants
+	// are the same for every thing in the game, which is the whole of what weight does to the turn.
 	const UProsperitocracyPlayerStatsComponent* Stats = GetStats(this);
 	const float Carried = Stats ? FMath::Max(0.0f, Stats->GetCarriedWeightLbs()) : 0.0f;
+	const float CarriedRate = ProsperitocracyBodyAimHandling::TurnRateBase
+		- Carried * ProsperitocracyBodyAimHandling::TurnRatePerLb;
 
+	// ONE floor, at the end, and it is the last word: however the two layers compose, the man turns.
 	return FMath::Clamp(
-		ProsperitocracyBodyAimHandling::TurnRateBase - Carried * ProsperitocracyBodyAimHandling::TurnRatePerLb,
+		CarriedRate * GetEquippedWeightMultiplier(),
 		ProsperitocracyBodyAimHandling::TurnRateMin,
 		ProsperitocracyBodyAimHandling::TurnRateBase);
+}
+
+float AProsperitocracyCharacter::GetEquippedWeightMultiplier() const
+{
+	// The thing in his hands, off its OWN Weight — read FINAL through the one evaluator, so a weight
+	// perk or an attachment on the gun moves his turn with it. An empty hand multiplies nothing, which
+	// is what makes putting a gun away a real change rather than a relabelling.
+	const AProsperitocracyWeapon* Weapon = GetGunWeaponInHand();
+	if (!Weapon)
+	{
+		return 1.0f;
+	}
+
+	return FMath::Clamp(
+		1.0f - Weapon->GetWeaponStat(EProsperitocracyStat::Weight)
+			* ProsperitocracyBodyAimHandling::EquippedWeightMultiplierPerLb,
+		ProsperitocracyBodyAimHandling::EquippedWeightMultiplierMin,
+		1.0f);
 }
 
 FRotator AProsperitocracyCharacter::GetBaseAimRotation() const
