@@ -15,6 +15,22 @@ Content/STF/
 # Fab / vault download cache (the raw downloads, not the imported assets)
 Content/VaultCache/
 
+# Asset packs too big for the repo — kept on disk, not project source (the user's call, 2026-09-26).
+# 4,017 files / 7.6 GB between them, three of them carrying a single file over GitHub's 100 MB hard
+# limit (baked lighting and demo maps). None of it is project source.
+Content/ModSciInteriors/
+Content/ModSci_EngiProps/
+Content/ModSci_Engineer/
+Content/ModularBuildingSet/
+Content/SoulCity/
+Content/StarterBundle/
+
+# Asset packs too big for the repo — kept on disk, not project source (the user's call, 2026-09-26).
+# Planet_Project carries a 643 MB static mesh and a 253 MB skybox, over GitHub's 100 MB per-file hard
+# limit. ParagonLtBelica is 2.0 GB across 1,846 files, which is the whole per-push cap on its own.
+Content/Planet_Project/
+Content/ParagonLtBelica/
+
 # Visual Studio / IDE
 .vs/
 .vscode/
