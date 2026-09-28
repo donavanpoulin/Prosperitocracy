@@ -6,11 +6,15 @@
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/Abilities/ProsperitocracyGameplayAbility_ContestedHealth.h"
 #include "AbilitySystem/Attributes/ProsperitocracyHealthSet.h"
+#include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "Components/ChildActorComponent.h"
 #include "Engine/Canvas.h"
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
 #include "GameFramework/Pawn.h"
 #include "Stats/ProsperitocracyStat.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
+#include "UI/ProsperitocracyDamageNumbersLayer.h"
 #include "Weapons/ProsperitocracyBloodBlade.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyHUD)
@@ -61,6 +65,11 @@ void AProsperitocracyHUD::DrawHUD()
 	{
 		return;
 	}
+
+	// The readout is bound here, once a frame, because binding belongs to the man's OWN component and this
+	// HUD is the thing that has one. The numbers themselves are drawn by the Slate layer (BeginPlay put it
+	// on screen), not by anything below this line.
+	EnsureBoundToDamageFeedback();
 
 	APawn* Pawn = GetOwningPawn();
 	const UAbilitySystemComponent* AbilitySystemComponent = Pawn ? UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Pawn) : nullptr;
@@ -181,3 +190,93 @@ void AProsperitocracyHUD::DrawHUD()
 	DrawRect(BloodBorderColor, BloodBarLeft - Border, BloodBarTop, Border, BloodLength);
 	DrawRect(BloodBorderColor, BloodBarLeft + BloodThickness, BloodBarTop, Border, BloodLength);
 }
+
+void AProsperitocracyHUD::EnsureBoundToDamageFeedback()
+{
+	// The body the man is playing RIGHT NOW, re-read every frame: a respawn or a fresh pawn is a
+	// different component, and the readout follows it rather than staying pointed at one that is gone.
+	APawn* Pawn = GetOwningPawn();
+	UProsperitocracyAbilitySystemComponent* AbilitySystemComponent = Pawn
+		? Cast<UProsperitocracyAbilitySystemComponent>(UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Pawn))
+		: nullptr;
+
+	if (AbilitySystemComponent == BoundAbilitySystemComponent)
+	{
+		return;
+	}
+
+	if (BoundAbilitySystemComponent)
+	{
+		BoundAbilitySystemComponent->OnDamageFeedback.RemoveDynamic(this, &ThisClass::HandleDamageFeedback);
+	}
+
+	BoundAbilitySystemComponent = AbilitySystemComponent;
+
+	if (BoundAbilitySystemComponent)
+	{
+		BoundAbilitySystemComponent->OnDamageFeedback.AddDynamic(this, &ThisClass::HandleDamageFeedback);
+	}
+}
+
+void AProsperitocracyHUD::BeginPlay()
+{
+	Super::BeginPlay();
+
+	AddDamageNumbersLayer();
+}
+
+void AProsperitocracyHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	RemoveDamageNumbersLayer();
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void AProsperitocracyHUD::AddDamageNumbersLayer()
+{
+	UGameViewportClient* Viewport = GEngine ? GEngine->GameViewport : nullptr;
+	if (!Viewport || DamageNumbersLayer.IsValid())
+	{
+		return;
+	}
+
+	// The numbers are drawn by SLATE and not on this HUD's canvas (see the layer's own header for why: a
+	// canvas outline is four extra full-glyph passes under the fill, and those passes darkened the fade).
+	// The layer is added over everything the canvas draws, so a number is never behind the bars.
+	SAssignNew(DamageNumbersLayer, SProsperitocracyDamageNumbersLayer)
+		.OwningPlayerController(GetOwningPlayerController());
+
+	Viewport->AddViewportWidgetContent(DamageNumbersLayer.ToSharedRef(), /*ZOrder=*/ 10);
+}
+
+void AProsperitocracyHUD::RemoveDamageNumbersLayer()
+{
+	if (!DamageNumbersLayer.IsValid())
+	{
+		return;
+	}
+
+	if (UGameViewportClient* Viewport = GEngine ? GEngine->GameViewport : nullptr)
+	{
+		Viewport->RemoveViewportWidgetContent(DamageNumbersLayer.ToSharedRef());
+	}
+
+	DamageNumbersLayer.Reset();
+}
+
+void AProsperitocracyHUD::HandleDamageFeedback(const FProsperitocracyDamageFeedback& Feedback)
+{
+	// Straight to the layer that draws them. A payload with no numbers is a real, ordinary thing here (the
+	// killing blow's own answer rides the same door and owes none) and the layer ignores it — so the rule
+	// lives in ONE place, where the numbers are held, and not twice.
+	if (DamageNumbersLayer.IsValid())
+	{
+		DamageNumbersLayer->AddNumber(Feedback);
+	}
+}
+
+// THE DAMAGE NUMBERS USED TO BE DRAWN HERE, on this HUD's canvas. They moved out to their own Slate layer
+// (SProsperitocracyDamageNumbersLayer) on 2026-09-27: a canvas outline is four extra full-glyph passes
+// under the fill, and those four passes took the world away behind every digit, so a number went DARK as
+// it faded instead of turning translucent. Everything that was here — the pooling, the world-to-screen
+// projection, the rise and the fade, the one-space gap, the size band — lives there now, in one place.

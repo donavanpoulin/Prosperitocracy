@@ -3,7 +3,7 @@
 #pragma once
 
 #include "Blueprint/UserWidget.h"
-#include "UI/ProsperitocracyHitMarkerTypes.h"
+#include "UI/ProsperitocracyDamageFeedbackTypes.h"
 
 #include "ProsperitocracyReticleWidgetBase.generated.h"
 
@@ -69,13 +69,16 @@ public:
 	float GetCircleScreenRadius() const;
 
 	/**
-	 * A marker arrived for the man this reticle belongs to: damage HE dealt just landed.
+	 * A readout arrived for the man this reticle belongs to: damage HE dealt just landed.
 	 *
-	 * Bound to his own ability system's OnHitMarker (see UProsperitocracyHitMarkerStatics), so this
-	 * only ever hears about his own damage — nobody else's hits can reach his screen.
+	 * Bound to his own ability system's OnDamageFeedback (see UProsperitocracyDamageFeedbackStatics), so
+	 * this only ever hears about his own damage — nobody else's hits can reach his screen.
+	 *
+	 * The reticle owns the MARKER half of the payload and nothing else. The numbers are the HUD's: they
+	 * belong in the world where the hit landed, and the marker belongs on the ring.
 	 */
 	UFUNCTION()
-	void HandleHitMarker(EProsperitocracyHitMarkerKind Kind);
+	void HandleDamageFeedback(const FProsperitocracyDamageFeedback& Feedback);
 
 	//~ The marker's timing and its sounds. [TUNE] — mine to pick, his to move once he has felt them.
 	//

@@ -416,11 +416,12 @@ void UProsperitocracyAbilitySystemComponent::ClientNotifyAbilityFailed_Implement
 	HandleAbilityFailed(Ability, FailureReason);
 }
 
-void UProsperitocracyAbilitySystemComponent::ClientNotifyHitMarker_Implementation(EProsperitocracyHitMarkerKind Kind)
+void UProsperitocracyAbilitySystemComponent::ClientNotifyDamageFeedback_Implementation(const FProsperitocracyDamageFeedback& Feedback)
 {
 	// The last hop: this component IS the man's, so the broadcast lands on his screen and on nobody
-	// else's. The reticle is the listener; it owns what a marker looks like and how long it lasts.
-	OnHitMarker.Broadcast(Kind);
+	// else's. The HUD draws the numbers and the reticle draws the X; neither has to ask whose damage it
+	// was, and neither owns the other's half of the payload.
+	OnDamageFeedback.Broadcast(Feedback);
 }
 
 void UProsperitocracyAbilitySystemComponent::HandleAbilityFailed(const UGameplayAbility* Ability, const FGameplayTagContainer& FailureReason)

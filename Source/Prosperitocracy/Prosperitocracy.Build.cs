@@ -30,11 +30,17 @@ public class Prosperitocracy : ModuleRules
 		// UMG landed with the reticle: UProsperitocracyReticleWidgetBase is a UUserWidget that finds and
 		// moves two UImages (UMG), and FGeometry in its tick comes from SlateCore. Slate is here because
 		// UserWidget's own headers reach into it — measured by the linker, not guessed.
+		// DeveloperSettings landed with the UI palette: UProsperitocracyUISettings is a UDeveloperSettings,
+		// so the whole game's UI colours have ONE home that is always loaded and never referenced from
+		// anywhere (Project Settings → Prosperitocracy UI, recorded in Config/DefaultGame.ini). The linker
+		// named it again — unresolved UDeveloperSettings ctor/dtor/vtable and GetSectionName /
+		// GetContainerName in ProsperitocracyUISettings.cpp.obj.
 		PublicDependencyModuleNames.AddRange(
 			new string[] {
 				"Core",
 				"CoreUObject",
 				"Engine",
+				"DeveloperSettings",
 				"PhysicsCore",
 				"GameplayAbilities",
 				"GameplayTasks",

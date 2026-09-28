@@ -10,7 +10,7 @@
 #include "ProsperitocracyGameplayTags.h"
 #include "Engine/World.h"
 #include "ProsperitocracyLogChannels.h"
-#include "UI/ProsperitocracyHitMarkerStatics.h"
+#include "UI/ProsperitocracyDamageFeedbackStatics.h"
 #include "Weapons/ProsperitocracyBloodBlade.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyDamageExecution)
@@ -76,7 +76,14 @@ void UProsperitocracyDamageExecution::Execute_Implementation(const FGameplayEffe
 	const float DistanceAttenuation = AbilitySource ? AbilitySource->GetDistanceAttenuation(HitDistance, nullptr, nullptr) : 1.0f;
 
 	bool bAnyLineHalved = false;
+	// Whether any line actually LANDED ON A PART — it carried a pen and got through the gate. That is
+	// what decides where the blow comes up (see the readout at the end).
+	bool bAnyLineStruckAPart = false;
 	float TotalDamage = 0.0f;
+
+	// What the man whose damage this is is owed about it, gathered as the lines are resolved: one number
+	// per line, where they come up, and what the gate answered.
+	FProsperitocracyDamageFeedback Feedback;
 	for (const FProsperitocracyDamageLine& Line : DamageLines)
 	{
 		// Presence is scope, and it is what decides WHICH question this line asks:
@@ -155,6 +162,17 @@ void UProsperitocracyDamageExecution::Execute_Implementation(const FGameplayEffe
 				: TEXT("no pen -> the target itself"),
 			Resist, DistanceAttenuation, HitDistance / 100.0f, FinalAmount);
 
+		// What THIS line took off, kept line by line: a number per line, so a blow carrying both types
+		// owes TWO numbers, each painted in its own type's colour. A line the gate stopped never reaches
+		// this point — it took nothing off, so it owes nothing.
+		if (FinalAmount > 0.0f)
+		{
+			FProsperitocracyDamageNumber& Number = Feedback.Numbers.AddDefaulted_GetRef();
+			Number.Type = Line.Type;
+			Number.Amount = FinalAmount;
+			bAnyLineStruckAPart |= bGated;
+		}
+
 		TotalDamage += FinalAmount;
 	}
 	TotalDamage *= DamageInteractionAllowedMultiplier;
@@ -187,15 +205,34 @@ void UProsperitocracyDamageExecution::Execute_Implementation(const FGameplayEffe
 		// falloff, because it is the number that actually came off the target.
 		AProsperitocracyBloodBlade::NotifyDamageDealt(Spec.GetContext().GetInstigator(), TotalDamage);
 
-		// And the MARKER — the plainest of the followers of real damage: the man who dealt it sees that
-		// he connected, in the colour the GATE answered with. White only ever means one thing (the pen
-		// only MATCHED the armour, so the gate halved it); everything else that landed is red, fire
-		// included, because a line with no pen is never gated at all.
+		// And the READOUT — everything the man whose damage this is is owed about it, in ONE hop: what
+		// each line took off, where the numbers come up, and what the gate answered.
 		//
-		// A KILL is the one marker this place cannot know about — the body is still standing at this
-		// point in the frame. It is decided where a body reaches zero, and told from there.
-		UProsperitocracyHitMarkerStatics::NotifyHitMarker(Spec.GetContext().GetInstigator(),
-			bAnyLineHalved ? EProsperitocracyHitMarkerKind::Half : EProsperitocracyHitMarkerKind::Full);
+		// The MARKER is the plainest part of it: he sees that he connected, in the colour the GATE
+		// answered with. White only ever means one thing (the pen only MATCHED the armour, so the gate
+		// halved it); everything else that landed is red, fire included, because a line with no pen is
+		// never gated at all. A KILL is the one marker this place cannot know about — the body is still
+		// standing at this point in the frame. It is decided where a body reaches zero, and told from
+		// there, through this same door.
+		Feedback.Marker = bAnyLineHalved ? EProsperitocracyHitMarkerKind::Half : EProsperitocracyHitMarkerKind::Full;
+
+		// Where the numbers come up, by the one rule that decides it: a line that CARRIES a pen struck a
+		// PART, so the blow comes up at the point it landed — the hit result's own impact point. A line
+		// with NO pen reached the BODY itself (a burn, a command that deals at no particular place), so
+		// it comes up at the body's own origin: the same origin the burn's own fire wears. Presence is
+		// scope, and this is the same branch the gate above runs on.
+		if (HitActor)
+		{
+			// The hit result's own impact point is a FVector_NetQuantize, so it is read into a plain
+			// FVector here rather than through a conditional whose two sides are different types.
+			Feedback.Location = HitActor->GetActorLocation();
+			if (bAnyLineStruckAPart && HitResult && !HitResult->ImpactPoint.IsNearlyZero())
+			{
+				Feedback.Location = HitResult->ImpactPoint;
+			}
+
+			UProsperitocracyDamageFeedbackStatics::NotifyDamageFeedback(Spec.GetContext().GetInstigator(), HitActor, Feedback);
+		}
 	}
 #endif // #if WITH_SERVER_CODE
 }

@@ -119,12 +119,21 @@ void UProsperitocracyReticleWidgetBase::BindToHitMarkersOnce()
 	}
 
 	// The man's OWN component, so anything broadcast on it is his damage and only his damage.
-	AbilitySystemComponent->OnHitMarker.AddDynamic(this, &ThisClass::HandleHitMarker);
+	AbilitySystemComponent->OnDamageFeedback.AddDynamic(this, &ThisClass::HandleDamageFeedback);
 	bBoundToHitMarkers = true;
 }
 
-void UProsperitocracyReticleWidgetBase::HandleHitMarker(EProsperitocracyHitMarkerKind Kind)
+void UProsperitocracyReticleWidgetBase::HandleDamageFeedback(const FProsperitocracyDamageFeedback& Feedback)
 {
+	// A payload that carries no marker earns no X. A blow nothing dealt (a dev command hurting you)
+	// still owes the man its numbers — the HUD draws those — and owes no answer about damage he dealt.
+	if (!Feedback.bCarriesMarker)
+	{
+		return;
+	}
+
+	const EProsperitocracyHitMarkerKind Kind = Feedback.Marker;
+
 	// ONE marker at a time (his spec): a fresh hit RESTARTS the X's fade rather than stacking another X
 	// on top of one that is still fading — whichever kind was fading, a kill's included.
 	//

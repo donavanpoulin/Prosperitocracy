@@ -8,7 +8,7 @@
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "Engine/World.h"
 #include "GameplayEffectExtension.h"
-#include "UI/ProsperitocracyHitMarkerStatics.h"
+#include "UI/ProsperitocracyDamageFeedbackStatics.h"
 // The damage-verb broadcast was CUT on the way in (2026-09-15, your call): it went through
 // GameplayMessageSubsystem, which lives in the Lyra plugin GameplayMessageRouter, and no Lyra
 // plugin enters this project. The damage message comes back through our own messages port;
@@ -184,8 +184,14 @@ void UProsperitocracyHealthSet::PostGameplayEffectExecute(const FGameplayEffectM
 
 		// The killing blow, and the one marker the damage pipeline cannot know about: whether a body is
 		// still standing is decided HERE, where its health reaches zero. Handed to the man whose blow it
-		// was — the same instigator the health change above is credited to.
-		UProsperitocracyHitMarkerStatics::NotifyHitMarker(Instigator, EProsperitocracyHitMarkerKind::Kill);
+		// was — the same instigator the health change above is credited to — through the SAME door the
+		// blow's own numbers went through, one frame earlier or in this one.
+		//
+		// It carries no numbers of its own: where the damage was worked out is where the numbers were
+		// told. A payload with a marker and no numbers is exactly that, and the screen knows it.
+		FProsperitocracyDamageFeedback Feedback;
+		Feedback.Marker = EProsperitocracyHitMarkerKind::Kill;
+		UProsperitocracyDamageFeedbackStatics::NotifyDamageFeedback(Instigator, GetOwningActor(), Feedback);
 	}
 
 	// Check health again in case an event above changed it.

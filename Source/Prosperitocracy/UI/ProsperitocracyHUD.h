@@ -4,11 +4,14 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/HUD.h"
+#include "UI/ProsperitocracyDamageFeedbackTypes.h"
 
 #include "ProsperitocracyHUD.generated.h"
 
-class UProsperitocracyHealthSet;
 class AProsperitocracyBloodBlade;
+class SProsperitocracyDamageNumbersLayer;
+class UProsperitocracyAbilitySystemComponent;
+class UProsperitocracyHealthSet;
 
 /**
  * AProsperitocracyHUD
@@ -38,6 +41,23 @@ public:
 
 	/** Everything is drawn in one pass, once a frame. */
 	virtual void DrawHUD() override;
+
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	//~ THE DAMAGE NUMBERS are NOT drawn here (his spec, 2026-09-27).
+	//
+	// They live in their own layer of SLATE text — SProsperitocracyDamageNumbersLayer, added to the
+	// viewport in BeginPlay. The move off this canvas was the fix for a real defect: a canvas outline is
+	// four extra full-glyph passes under the fill, and those four passes take the world away behind a
+	// digit, so a number went DARK as it faded instead of turning translucent. Slate draws an outline in
+	// its own layer, so a digit's inside is covered once and the whole thing fades as one.
+	//
+	// NOTHING per attack sets a number up, and nothing ever will: it is born in the ONE damage pipeline
+	// every source already goes through, so a gun, a blade, a burn, a grenade and an attack that does not
+	// exist yet all owe the readout by dealing damage and by nothing else. This HUD keeps the BINDING —
+	// it hears the readout on the player's own ability system — and the layer keeps the numbers and draws
+	// them, because a Slate widget is not a UObject and cannot bind a dynamic delegate itself.
 
 	// The bar's geometry, in one list so the look is one place. [TUNE] — all of them are mine to pick, and
 	// moving any of them moves nothing else.
@@ -100,6 +120,30 @@ protected:
 
 	/** The blade this body carries, or null when it carries none — no blade, no blood bar. */
 	AProsperitocracyBloodBlade* FindOwningBloodBlade() const;
+
+	/** The readout arrived for this HUD's own player: hand it to the layer that draws the numbers. */
+	UFUNCTION()
+	void HandleDamageFeedback(const FProsperitocracyDamageFeedback& Feedback);
+
+	/**
+	 * Bind the readout to the body's own ability system — the one the man is playing RIGHT NOW.
+	 *
+	 * Re-bound when the body changes (a respawn, a fresh pawn), which is why the component is kept rather
+	 * than bound once and forgotten: a binding to a component that has gone away would leave him with no
+	 * numbers and nothing saying so.
+	 */
+	void EnsureBoundToDamageFeedback();
+
+	/** Put the numbers' layer on this player's screen, and take it off again on the way out. */
+	void AddDamageNumbersLayer();
+	void RemoveDamageNumbersLayer();
+
+	/** The component the readout is bound to, or null when the body has none yet. */
+	UPROPERTY(Transient)
+	TObjectPtr<UProsperitocracyAbilitySystemComponent> BoundAbilitySystemComponent;
+
+	/** The layer the numbers are DRAWN on: Slate text, over this HUD's canvas. */
+	TSharedPtr<SProsperitocracyDamageNumbersLayer> DamageNumbersLayer;
 
 	/**
 	 * What the bar is DRAWN at (0–1), chasing the real pool. Kept on the HUD because it is a fact about
