@@ -12,13 +12,17 @@
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "Components/ChildActorComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "EnhancedInputComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/PlayerController.h"
+#include "InputAction.h"
 #include "ProsperitocracyGameplayTags.h"
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStat.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
+#include "TimerManager.h"
+#include "Weapons/ProsperitocracyLoadoutComponent.h"
 #include "Weapons/ProsperitocracyWeapon.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyCharacter)
@@ -56,11 +60,42 @@ AProsperitocracyCharacter::AProsperitocracyCharacter()
 	bUseControllerRotationYaw = false;
 }
 
-AActor* AProsperitocracyCharacter::GetGunInHand_Implementation() const
+AActor* AProsperitocracyCharacter::GetGunInHand() const
 {
-	// There is no truth for this in C++: the rig decides which gun is in hand, and the rig is the
-	// template's equip state in the blueprint. Returning null is the honest default — "nothing in
-	// hand" — and every reader treats that as no drift rather than inventing a gun.
+	// THE ONE ANSWER to "what is in hand", and it is read straight off this body's own state: the
+	// chosen slot, and whether its thing is out. Nothing is copied into a blueprint and asked back,
+	// so the answer and where things actually are cannot drift apart.
+	if (!bSlotIsOut)
+	{
+		return nullptr;
+	}
+
+	// The channel that slot's thing sits in, found the same way every other path finds one.
+	if (const UChildActorComponent* Channel = FindChannelForSlot(ChosenSlot))
+	{
+		return Channel->GetChildActor();
+	}
+
+	return nullptr;
+}
+
+UChildActorComponent* AProsperitocracyCharacter::FindChannelForSlot(FGameplayTag Slot) const
+{
+	// The channel is found by ASKING the things themselves which slot they are — a weapon knows the
+	// slot the loadout handed it when it was dressed — never by a list of component names kept here.
+	// A list like that is a second place that has to agree with the rig, and the rig is one thing.
+	TArray<UChildActorComponent*> Channels;
+	GetComponents(Channels);
+
+	for (UChildActorComponent* Candidate : Channels)
+	{
+		const AProsperitocracyWeapon* InIt = Candidate ? Cast<AProsperitocracyWeapon>(Candidate->GetChildActor()) : nullptr;
+		if (InIt && InIt->GetSlotTag() == Slot)
+		{
+			return Candidate;
+		}
+	}
+
 	return nullptr;
 }
 
@@ -69,6 +104,15 @@ AProsperitocracyWeapon* AProsperitocracyCharacter::GetGunWeaponInHand() const
 	// The rig answers with the actor it holds; this is where that becomes OUR gun. A rig holding
 	// something that is not one of our weapons reads as no gun at all — no drift, plain camera aim.
 	return Cast<AProsperitocracyWeapon>(GetGunInHand());
+}
+
+UAnimMontage* AProsperitocracyCharacter::GetMeleeMontageOfTheWeaponInHand() const
+{
+	// The WEAPON's own picture, asked exactly like its draw and its stance are: which hand a gun came
+	// out of is not what decides how its swing looks. Nothing in hand — or a thing that declares no
+	// melee picture — answers nothing, which is the same answer a melee gives.
+	const AProsperitocracyWeapon* Weapon = GetGunWeaponInHand();
+	return Weapon ? Weapon->MeleeMontage : nullptr;
 }
 
 bool AProsperitocracyCharacter::MeleeWithGunInHand()
@@ -170,25 +214,20 @@ bool AProsperitocracyCharacter::IsTheWeaponInHandAGun() const
 
 bool AProsperitocracyCharacter::SetSlotOut(FGameplayTag Slot, bool bOut)
 {
-	// WHICH channel carries that slot, asked of the things themselves: a weapon knows the slot the
-	// loadout handed it when it was dressed, so a channel is found by asking and not by a list of
-	// component names kept here — a list like that is a second place that has to agree with the rig,
-	// and the rig belongs to the blueprint.
-	UChildActorComponent* Channel = nullptr;
-	AProsperitocracyWeapon* Weapon = nullptr;
-
-	TArray<UChildActorComponent*> Channels;
-	GetComponents(Channels);
-	for (UChildActorComponent* Candidate : Channels)
+	// ONE thing out at a time, so bringing a slot out while something else is out is a SWAP: the thing
+	// that was out goes away FIRST, through this same door. That is what keeps a single writer of where
+	// a thing sits — a second placement path beside this one is how two things came to be in one hand.
+	if (bOut && bSlotIsOut && ChosenSlot != Slot)
 	{
-		AProsperitocracyWeapon* InIt = Candidate ? Cast<AProsperitocracyWeapon>(Candidate->GetChildActor()) : nullptr;
-		if (InIt && InIt->GetSlotTag() == Slot)
-		{
-			Channel = Candidate;
-			Weapon = InIt;
-			break;
-		}
+		SetSlotOut(ChosenSlot, false);
 	}
+
+	// WHICH channel carries that slot, asked of the things themselves (FindChannelForSlot): a weapon
+	// knows the slot the loadout handed it when it was dressed, so a channel is found by asking and not
+	// by a list of component names kept here — a list like that is a second place that has to agree
+	// with the rig, and the rig belongs to the blueprint.
+	UChildActorComponent* Channel = FindChannelForSlot(Slot);
+	AProsperitocracyWeapon* Weapon = Channel ? Cast<AProsperitocracyWeapon>(Channel->GetChildActor()) : nullptr;
 
 	if (!Channel || !Weapon)
 	{
@@ -234,6 +273,25 @@ bool AProsperitocracyCharacter::SetSlotOut(FGameplayTag Slot, bool bOut)
 	// body: the weapon decides, the body holds, and this call is the one place the two meet.
 	OnStanceChosen(bOut ? Weapon->Stance : EProsperitocracyStance::Unarmed);
 
+	// AND SAID OUT LOUD WITH ITS VALUE, because "the stance was handed over" and "the animation is holding
+	// it" are two different facts and only the first one is C++'s to know. When a gun is in the hand and
+	// the pose is unarmed, this line is what separates the two: it says what the body was TOLD, so the
+	// silent end is the one left to look at.
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Body] stance — the door hands over %s for slot %s (%s)"),
+		*StaticEnum<EProsperitocracyStance>()->GetNameStringByValue(
+			static_cast<int64>(bOut ? Weapon->Stance : EProsperitocracyStance::Unarmed)),
+		*Slot.ToString(), bOut ? TEXT("out") : TEXT("away"));
+
+	// THE STATE IS WRITTEN HERE AND ONLY HERE. Bringing a thing out chooses that slot and marks it out;
+	// putting it away clears "out" and KEEPS THE SLOT CHOSEN, because the slot is where the WHEEL is
+	// sitting and putting a thing away does not move the wheel. That is also why there is nothing here
+	// remembering what was out before: nothing is remembered, it is simply not out.
+	if (bOut)
+	{
+		ChosenSlot = Slot;
+	}
+	bSlotIsOut = bOut;
+
 	// Said out loud, because "the stick is at my feet" and "the stick is in my hand" are the same
 	// silence in a log that says nothing: what was found, which socket it was sent to, and what it was
 	// asked to play.
@@ -242,6 +300,247 @@ bool AProsperitocracyCharacter::SetSlotOut(FGameplayTag Slot, bool bOut)
 		*GetNameSafe(Weapon->DrawMontage), *GetNameSafe(Weapon->StowMontage));
 
 	return true;
+}
+
+bool AProsperitocracyCharacter::CycleSlot(int32 Step)
+{
+	// The ORDER is the loadout's own, built from the one place a slot's name lives, so no graph and no
+	// second list here can disagree with it.
+	const UProsperitocracyLoadoutComponent* Loadout = FindComponentByClass<UProsperitocracyLoadoutComponent>();
+	if (!Loadout || Step == 0)
+	{
+		return false;
+	}
+
+	const TArray<FGameplayTag> Order = Loadout->GetSlotOrder();
+	if (Order.Num() == 0)
+	{
+		return false;
+	}
+
+	// The walk starts at the wheel's position — the slot it is sitting on — and nothing else. Nothing
+	// chosen yet starts at the FIRST slot that carries something, which is the only honest reading of
+	// a body that has never cycled.
+	int32 Current = Order.IndexOfByKey(ChosenSlot);
+	if (Current == INDEX_NONE)
+	{
+		Current = (Step > 0) ? -1 : 0;
+	}
+
+	// A slot carrying NOTHING is passed over, and the walk wraps, so an empty Special is walked past
+	// and never lands on: the pipeline is open for it, and nothing has to be filled in for it to be.
+	for (int32 Tried = 0; Tried < Order.Num(); ++Tried)
+	{
+		Current = (Current + ((Step > 0) ? 1 : -1) + Order.Num()) % Order.Num();
+		const FGameplayTag Candidate = Order[Current];
+
+		if (!Loadout->DoesSlotCarryWeapon(Candidate))
+		{
+			continue;
+		}
+
+		// THE SWAP IS REAL WHEN SOMETHING IS OUT: SetSlotOut puts the thing that was out away and
+		// brings this one out (it is the one writer of where a thing sits), and with nothing out only
+		// the choice moves — the wheel is not a draw.
+		if (bSlotIsOut)
+		{
+			return SetSlotOut(Candidate, true);
+		}
+
+		ChosenSlot = Candidate;
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Body] wheel — slot %s chosen (nothing is out)"),
+			*ChosenSlot.ToString());
+		return true;
+	}
+
+	// Every slot carries nothing: there is no choice to make and the wheel does nothing at all.
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Body] wheel — no slot carries anything, nothing to choose"));
+	return false;
+}
+
+bool AProsperitocracyCharacter::ToggleTheChosenSlot()
+{
+	const UProsperitocracyLoadoutComponent* Loadout = FindComponentByClass<UProsperitocracyLoadoutComponent>();
+	if (!Loadout)
+	{
+		return false;
+	}
+
+	// NOTHING CHOSEN YET: the first slot that carries something answers for the first press. A body
+	// that has never cycled has no wheel position, and inventing one it cannot see would be worse than
+	// asking the loadout which slot comes first.
+	if (!ChosenSlot.IsValid() || !Loadout->DoesSlotCarryWeapon(ChosenSlot))
+	{
+		ChosenSlot = FGameplayTag();
+		for (const FGameplayTag& Candidate : Loadout->GetSlotOrder())
+		{
+			if (Loadout->DoesSlotCarryWeapon(Candidate))
+			{
+				ChosenSlot = Candidate;
+				break;
+			}
+		}
+	}
+
+	// Out goes away; away comes out. Both through the one door, which is what keeps the answer to
+	// "what is in hand" and where things sit from ever being two answers.
+	return SetSlotOut(ChosenSlot, !bSlotIsOut);
+}
+
+void AProsperitocracyCharacter::PlaceTheChannelsForTheirState()
+{
+	// EVERY channel, every time the body is dressed. Placement only — no draw, no montage, no choice:
+	// the thing that is out sits in its own hand and everything else sits on its own back.
+	//
+	// This is the half that was missing. A channel's body is born at the body's ORIGIN, and only a draw
+	// ever moved it, so a gun that was not out sat between the player's feet from spawn until a key was
+	// pressed. Nothing here decides anything: each weapon answers for its own two sockets, exactly as
+	// it answers for its own draw.
+	TArray<UChildActorComponent*> Channels;
+	GetComponents(Channels);
+
+	for (UChildActorComponent* Channel : Channels)
+	{
+		AProsperitocracyWeapon* Weapon = Channel ? Cast<AProsperitocracyWeapon>(Channel->GetChildActor()) : nullptr;
+		if (!Weapon)
+		{
+			// That channel carries nothing — an empty slot is an empty channel, and there is nothing
+			// to place. Not a failure and not logged: most slots carry nothing most of the time.
+			continue;
+		}
+
+		const bool bThisOneIsOut = bSlotIsOut && Weapon->GetSlotTag() == ChosenSlot;
+		const FName Socket = bThisOneIsOut ? Weapon->HandSocket : Weapon->AwaySocket;
+
+		if (USkeletalMeshComponent* Body = GetMesh())
+		{
+			Channel->AttachToComponent(Body, FAttachmentTransformRules::SnapToTargetIncludingScale, Socket);
+
+			// The same two facts the draw logs, for the same reason: a thing sitting at the body's
+			// origin and a thing sitting on the back are one silence in a log that says nothing.
+			UE_LOG(LogProsperitocracy, Log, TEXT("[Body] dress — %s %s at socket %s (%s)"),
+				*GetNameSafe(Weapon), bThisOneIsOut ? TEXT("in the hand") : TEXT("on the back"),
+				*Socket.ToString(), Body->DoesSocketExist(Socket) ? TEXT("found") : TEXT("NOT FOUND"));
+		}
+	}
+
+	// AND THE STANCE — the other half of the same state, said at the same moment and for the same reason.
+	// The dress has just RE-BUILT the rig, and the stance the animation reads would otherwise be left at
+	// whatever it last was, or — if nothing has written it yet — at the read's own default, which is
+	// UNARMED. That is precisely a gun in the hand playing the unarmed pose, and it is why a loadout
+	// change used to strip the pose off a drawn gun: the draw path is the only place the stance was ever
+	// handed over, so a re-dress left the body holding a stance nobody had re-stated.
+	//
+	// It is the WEAPON's answer, exactly as it is on a draw: the thing that is out names the stance, and
+	// an empty hand names the unarmed one.
+	EProsperitocracyStance Stance = EProsperitocracyStance::Unarmed;
+	if (bSlotIsOut)
+	{
+		const UChildActorComponent* OutChannel = FindChannelForSlot(ChosenSlot);
+		const AProsperitocracyWeapon* Out = OutChannel ? Cast<AProsperitocracyWeapon>(OutChannel->GetChildActor()) : nullptr;
+		if (Out)
+		{
+			Stance = Out->Stance;
+		}
+		else
+		{
+			// What was out did not survive the re-dress — its loadout no longer carries it. Nothing is in
+			// the hand, and the state says so rather than claiming a thing that is not there.
+			bSlotIsOut = false;
+		}
+	}
+
+	OnStanceChosen(Stance);
+
+	// Said out loud, because "the body is holding a rifle" and "the body is holding nothing" are one
+	// silence in a log that says nothing.
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Body] dress — the body holds %s (slot %s, %s)"),
+		*StaticEnum<EProsperitocracyStance>()->GetNameStringByValue(static_cast<int64>(Stance)),
+		*ChosenSlot.ToString(), bSlotIsOut ? TEXT("out") : TEXT("away"));
+}
+
+void AProsperitocracyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
+{
+	Super::SetupPlayerInputComponent(PlayerInputComponent);
+
+	// THE WHEEL AND R, bound here rather than in a graph — the header says why. Nothing is spelled out:
+	// the two actions are properties, so the blueprint says which asset means what and this only says
+	// what happens when one of them fires.
+	UEnhancedInputComponent* Input = Cast<UEnhancedInputComponent>(PlayerInputComponent);
+	if (!Input)
+	{
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("%s: the input component is not an enhanced one, so the wheel and R are not bound."),
+			*GetName());
+		return;
+	}
+
+	if (CycleSlotAction)
+	{
+		// One AXIS action carries both directions, so the wheel needs no second action and nothing has
+		// to branch on which way it turned: the value's own sign is the direction, and the walk wraps
+		// either way.
+		Input->BindAction(CycleSlotAction, ETriggerEvent::Triggered, this,
+			&AProsperitocracyCharacter::OnCycleSlot);
+	}
+
+	if (DrawHolsterAction)
+	{
+		// The key going down only ARMS the hold. Whether it was a hold or a tap is decided by whether it
+		// is still down when the window is out — a released key never reaches the timer.
+		Input->BindAction(DrawHolsterAction, ETriggerEvent::Started, this,
+			&AProsperitocracyCharacter::OnDrawHolsterStarted);
+		Input->BindAction(DrawHolsterAction, ETriggerEvent::Completed, this,
+			&AProsperitocracyCharacter::OnDrawHolsterReleased);
+		Input->BindAction(DrawHolsterAction, ETriggerEvent::Canceled, this,
+			&AProsperitocracyCharacter::OnDrawHolsterReleased);
+	}
+}
+
+void AProsperitocracyCharacter::OnCycleSlot(const FInputActionValue& Value)
+{
+	// The RAW number, said out loud, until the read is settled: a wheel that reports "still scrolling"
+	// and a wheel that reports one click look identical from the outside, and a fix for that has to come
+	// from what the axis actually says rather than from a guess about it.
+	const float Step = Value.Get<float>();
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Body] wheel — value %.3f"), Step);
+
+	// Then the SIGN is the whole of the read: a wheel up and a wheel down are one axis, and a wheel
+	// that reported no movement is not a turn at all.
+	if (FMath::IsNearlyZero(Step))
+	{
+		return;
+	}
+
+	CycleSlot(Step > 0.0f ? 1 : -1);
+}
+
+void AProsperitocracyCharacter::OnDrawHolsterStarted()
+{
+	// ARMED, not acted on: if the window runs out while the key is still down the hold happens, and if
+	// the key comes up first the timer is cleared and the press was a TAP.
+	GetWorldTimerManager().SetTimer(DrawHolsterHoldTimer, this,
+		&AProsperitocracyCharacter::FireTheDrawHolsterHold,
+		ProsperitocracyEquipInput::HoldSeconds, /*bLoop=*/ false);
+}
+
+void AProsperitocracyCharacter::FireTheDrawHolsterHold()
+{
+	// The key stayed down past the window: that is the HOLD, and it goes through the body's own door —
+	// out or away, whatever the chosen slot carries, playing whatever that thing declares.
+	ToggleTheChosenSlot();
+}
+
+void AProsperitocracyCharacter::OnDrawHolsterReleased()
+{
+	// R came up. If the hold already happened the timer is finished and this does nothing at all; if it
+	// had not, the press was a TAP and the thing in hand answers — a gun reloads a magazine, a sword
+	// turns its blood mode on. ONE key, two meanings, and nothing here knows which of them it asked.
+	if (GetWorldTimerManager().IsTimerActive(DrawHolsterHoldTimer))
+	{
+		GetWorldTimerManager().ClearTimer(DrawHolsterHoldTimer);
+		ReloadTheWeaponInHand();
+	}
 }
 
 void AProsperitocracyCharacter::BeginAttack(const FVector& LineDirection, float DistanceCm, float TravelSeconds, float Seconds)

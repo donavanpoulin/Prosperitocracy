@@ -218,23 +218,6 @@ public:
 	bool DoesSlotCarryWeapon(FGameplayTag Slot) const;
 
 	/**
-	 * Whether the weapon a slot carries comes out with a DRAW of its own and a STANCE of its own.
-	 *
-	 * The rig's equip chain plays a draw and names a stance, and it does that for a HAND — so the
-	 * hand, and not the weapon, used to decide both, which is exactly how a sword came out wearing a
-	 * rifle's draw and holding a rifle's stance. This is the question that puts the decision back on
-	 * the weapon: it asks the thing that is about to come out, and the thing answers for itself
-	 * (see `AProsperitocracyWeapon::bDrawnWithItsOwnAnimation`).
-	 *
-	 * A gun says yes, so the rig plays its draw and tells the body which stance it is. A melee says
-	 * no, and the rig then brings it out with no draw at all and leaves the body's stance alone.
-	 *
-	 * False for a slot with nothing in it: nothing carried has nothing to draw.
-	 */
-	UFUNCTION(BlueprintPure, Category = "Loadout")
-	bool DoesSlotDrawWithItsOwnAnimation(FGameplayTag Slot) const;
-
-	/**
 	 * The tag of a hand channel's slot, in the project's own vocabulary (`Prosperitocracy.Weapon.Slot.*`).
 	 *
 	 * Handed over rather than typed into a graph: a slot's name lives in ONE place, so a blueprint wire
@@ -245,6 +228,23 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Loadout")
 	FGameplayTag GetSecondarySlotTag() const;
+
+	UFUNCTION(BlueprintPure, Category = "Loadout")
+	FGameplayTag GetSpecialSlotTag() const;
+
+	UFUNCTION(BlueprintPure, Category = "Loadout")
+	FGameplayTag GetGrenadeSlotTag() const;
+
+	/**
+	 * THE ORDER of the slots, for anything that walks them — the mouse wheel today.
+	 *
+	 * It is here and not in a graph because an order is a fact about what a loadout carries, and a
+	 * second copy of it in a blueprint is a second place that has to agree. Every slot a loadout can
+	 * name is in it, in bar order, whether or not this loadout carries anything in it: the pipeline is
+	 * open for an empty slot, and the walking thing is what decides to pass over it (`DoesSlotCarryWeapon`).
+	 */
+	UFUNCTION(BlueprintPure, Category = "Loadout")
+	TArray<FGameplayTag> GetSlotOrder() const;
 
 	/** What every gun's shot applies, owned by the loadout rather than by each body blueprint. */
 	TSubclassOf<UGameplayEffect> GetGunDamageEffectClass() const;

@@ -55,11 +55,10 @@ namespace ProsperitocracyBladeCombo
 
 AProsperitocracyBloodBlade::AProsperitocracyBloodBlade()
 {
-	// A SWORD IS SIMPLY IN THE HAND. It is not drawn like a gun: there is no equip animation to play,
-	// no sound to play with it, and no stance for the body to take — the sword appears in the hand it
-	// is put in, it follows that hand, and the body goes on running the anims it already runs. The rig
-	// asks this of the thing it is bringing out, so the sword is asked and answers for itself.
-	bDrawnWithItsOwnAnimation = false;
+	// A SWORD IS SIMPLY IN THE HAND: it declares no draw and no stow and names no stance, and that is
+	// the whole of it — the one door plays a montage only when a weapon declares one and hands over the
+	// stance a weapon names, so a sword appears in the hand and the body goes on running the anims it
+	// already runs, with nothing here to say so a second time.
 }
 
 bool AProsperitocracyBloodBlade::IsInHand() const

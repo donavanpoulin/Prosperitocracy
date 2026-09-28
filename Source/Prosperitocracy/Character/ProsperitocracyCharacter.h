@@ -5,11 +5,15 @@
 #include "CoreMinimal.h"
 #include "AbilitySystemInterface.h"
 #include "GameFramework/Character.h"
+#include "InputActionValue.h"
 #include "AbilitySystem/ProsperitocracyDamageReceiver.h"
 
 #include "ProsperitocracyCharacter.generated.h"
 
 class AProsperitocracyWeapon;
+class UChildActorComponent;
+class UInputAction;
+class UInputComponent;
 class UProsperitocracyPlayerStatsComponent;
 class UProsperitocracyStatusComponent;
 class USkeletalMeshComponent;
@@ -84,6 +88,21 @@ namespace ProsperitocracyBodyAimHandling
  * own resist row for that line's type, read FINAL through the one evaluator (a worn weave's resists land
  * on those rows, so a resist perk reaches them like any other stat).
  */
+/**
+ * HOW R IS READ — the window that lets ONE key mean two things.
+ *
+ * R held brings the chosen slot's thing out or puts it away; R let go inside this window is the thing
+ * in hand answering, which is a gun reloading or a sword turning its blood mode on. The window is a
+ * TIME and nothing else: the same key, the same gesture, and no branch anywhere on what is held.
+ *
+ * It is a constant here rather than a number in a graph because there is exactly one of it and it is
+ * read in one place. [TUNE]
+ */
+namespace ProsperitocracyEquipInput
+{
+	constexpr float HoldSeconds = 0.25f;
+}
+
 UCLASS()
 class AProsperitocracyCharacter : public ACharacter, public IAbilitySystemInterface, public IProsperitocracyDamageReceiver
 {
@@ -93,17 +112,17 @@ public:
 	AProsperitocracyCharacter();
 
 	/**
-	 * The gun this character is holding right now, or null when nothing is in hand.
+	 * What this body is holding right now, or null when nothing is in hand.
 	 *
-	 * The rig decides which gun is in hand, so the answer comes from the blueprint; C++ only asks.
-	 * It answers with the ACTOR because that is what the rig actually holds (a child actor on one of
-	 * its rig components), and the type is resolved right here, once per reader — the same shape as
-	 * `GetChildActor` itself. Null is a truthful answer, not a failure: no gun in hand means no drift,
-	 * so the aim stays the plain camera aim everywhere it is read.
+	 * ONE answer, and it lives HERE: which thing is out is the body's own state — the chosen slot and
+	 * whether its thing is out (see `SetSlotOut`) — so it is answered here rather than copied into a
+	 * blueprint and asked back. It answers with the ACTOR because that is what the rig actually holds
+	 * (a child actor on one of its channels), and the type is resolved right here, once per reader —
+	 * the same shape as `GetChildActor` itself. Null is a truthful answer, not a failure: nothing in
+	 * hand means no drift, so the aim stays the plain camera aim everywhere it is read.
 	 */
-	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Prosperitocracy|Aim")
+	UFUNCTION(BlueprintPure, BlueprintCallable, Category = "Prosperitocracy|Aim")
 	AActor* GetGunInHand() const;
-	virtual AActor* GetGunInHand_Implementation() const;
 
 	/**
 	 * The gun in hand, resolved to our weapon type, or null when there is none.
@@ -115,6 +134,17 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
 	AProsperitocracyWeapon* GetGunWeaponInHand() const;
+
+	/**
+	 * The melee picture of the thing in hand, or nothing when it declares none.
+	 *
+	 * The body's melee door runs the swing; this is only the ANIMATION that goes with it, and it is the
+	 * WEAPON's own answer (`MeleeMontage`) rather than a hand's — a pistol bashed with a rifle's swing
+	 * while the hand chose it. Nothing in hand, or a thing that declares no picture, answers nothing,
+	 * which is the same answer a melee gives.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	UAnimMontage* GetMeleeMontageOfTheWeaponInHand() const;
 
 	/**
 	 * The MELEE KEY, as this body reads it: ask the thing in hand what that key means to it.
@@ -217,6 +247,73 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
 	bool SetSlotOut(FGameplayTag Slot, bool bOut);
+
+	/**
+	 * THE WHEEL: walk the slots this body carries and choose the next one.
+	 *
+	 * `Step` is the wheel's own direction (+1 forward, -1 back) and the walk WRAPS, so the wheel is
+	 * never stuck at an end. A slot carrying nothing is passed over, which is what keeps an empty
+	 * Special slot OPEN rather than in the way: the pipeline answers for it, nothing gets filled in.
+	 *
+	 * If a thing is OUT the swap is real — the thing that was out goes away and the chosen slot's
+	 * thing comes out, both through `SetSlotOut`, which stays the only writer of where a thing sits.
+	 * With nothing out, only the choice moves: the wheel is not a draw.
+	 *
+	 * The order is the LOADOUT's (`GetSlotOrder`) — one home for it, so no graph holds a second.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	bool CycleSlot(int32 Step);
+
+	/**
+	 * HOLD R: bring the chosen slot's thing out, or put it back away.
+	 *
+	 * The same door as everything else — `SetSlotOut` — so a rifle comes out to a rifle's socket
+	 * playing a rifle's draw, a sword simply appears, and nothing here has to know which it is.
+	 * Nothing chosen yet asks the loadout for the first slot that carries something, because the
+	 * first press has to answer for a body that has never cycled.
+	 *
+	 * R's OTHER job is untouched and lives elsewhere: the tap is the thing in hand answering
+	 * (`ReloadTheWeaponInHand`) — a gun swaps a magazine, a sword turns its blood mode on.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	bool ToggleTheChosenSlot();
+
+	/** Which slot the wheel is sitting on — the body's own state, asked plainly. */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	FGameplayTag GetChosenSlot() const { return ChosenSlot; }
+
+	/** Whether the chosen slot's thing is out. */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
+	bool IsTheChosenSlotOut() const { return bSlotIsOut; }
+
+	/**
+	 * Put EVERY channel's thing where its state says it goes, and say what the body holds — the whole of
+	 * the body's equip state, re-stated at the dress.
+	 *
+	 * The channel whose slot is OUT goes to that weapon's own HAND socket and names the stance the body
+	 * holds; every other one goes to its own BACK socket, and an empty hand names unarmed. Nothing is
+	 * drawn and nothing is played: this is the state being said again, not an animation.
+	 *
+	 * Both halves belong here because the dress RE-BUILDS the rig. Placement alone was half of it: the
+	 * stance the animation reads was left over — or, when nothing had written it yet, at the read's own
+	 * default, which is UNARMED. That is a gun in the hand playing the unarmed pose, and it is why a
+	 * loadout change used to strip the pose off a drawn gun. Called through the dress path (spawn, class
+	 * change, loadout change), never by a key.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	void PlaceTheChannelsForTheirState();
+
+	/**
+	 * What the WHEEL is, and what R is — the two things the game reads as keys.
+	 *
+	 * They are properties rather than paths spelled in code, so nothing here hardcodes where an asset
+	 * lives and the blueprint keeps the one job it is good at: saying which action means what.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Input")
+	TObjectPtr<UInputAction> CycleSlotAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Input")
+	TObjectPtr<UInputAction> DrawHolsterAction;
 
 	/**
 	 * The body has been told which stance to hold: the thing that came out declared it.
@@ -523,6 +620,53 @@ protected:
 	 * it — and the rate and the log cannot drift apart the way two copies of a sum always do.
 	 */
 	float GetEquippedWeightMultiplier() const;
+
+	/**
+	 * WHICH SLOT IS CHOSEN, and WHETHER ITS THING IS OUT — the body's equip state, and the whole of it.
+	 *
+	 * Two facts and no more: the wheel's position (the slot it is sitting on) and whether that slot's
+	 * thing is in the hand or away. There is deliberately NO memory of a previous slot: a thing that
+	 * is not chosen is not remembered, it is simply not chosen.
+	 *
+	 * `SetSlotOut` is the only writer of both, which is what keeps the answer to "what is in hand"
+	 * from ever disagreeing with where things actually are.
+	 */
+	FGameplayTag ChosenSlot;
+	bool bSlotIsOut = false;
+
+	/**
+	 * The CHANNEL carrying a slot, found by asking each channel's thing which slot it is — never by a
+	 * list of component names kept here, because a list like that is a second place that has to agree
+	 * with the rig. Null when nothing carries that slot.
+	 */
+	UChildActorComponent* FindChannelForSlot(FGameplayTag Slot) const;
+
+	/**
+	 * The keys, read HERE and not in a graph — the one place the project's own key events cannot reach.
+	 *
+	 * A key EVENT node is the one node no tool this project has can make (measured three ways:
+	 * `create_node` in a throwaway blueprint, `create_node` in this very graph, and the graph DSL
+	 * compiler, all refusing `Input|EnhancedActionEvents|...`). R also needs a TAP/HOLD measure that a
+	 * key mapping cannot express on its own. So the blueprint keeps the mapping context and the two
+	 * actions, and every decision a key makes is one of the doors above — the wheel walks the slots,
+	 * the hold draws or puts away, and the tap is the thing in hand answering.
+	 */
+	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
+
+	/** The wheel, as read: +1 forward, -1 back, straight off the axis it is mapped to. */
+	void OnCycleSlot(const FInputActionValue& Value);
+
+	/** R went down: arm the hold. A press that never reaches the window is the TAP. */
+	void OnDrawHolsterStarted();
+
+	/** R came up inside the window: that is the tap — the thing in hand answers. */
+	void OnDrawHolsterReleased();
+
+	/** R stayed down past the window: that is the hold — bring the chosen slot's thing out, or put it away. */
+	void FireTheDrawHolsterHold();
+
+	/** Live while R is down inside the window. A finished handle means the hold already happened. */
+	FTimerHandle DrawHolsterHoldTimer;
 
 	/** This body's own tick, which is where the aim's turn and a live attack are driven. */
 	virtual void Tick(float DeltaSeconds) override;

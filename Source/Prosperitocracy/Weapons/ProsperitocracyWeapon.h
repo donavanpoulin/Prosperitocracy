@@ -284,23 +284,6 @@ public:
 	virtual void MeleeAction_Implementation();
 
 	/**
-	 * Whether this thing comes out with a DRAW of its own and a STANCE of its own.
-	 *
-	 * A gun says YES: it has an equip animation and a sound, and while it is out the body holds the
-	 * stance that goes with it — so the rig plays its draw and tells the body which stance it is.
-	 *
-	 * A melee says NO: it is simply in the hand. It appears there, it follows the hand, and the body
-	 * keeps the anims it already runs with. There is no draw to play and no stance to take.
-	 *
-	 * The WEAPON states this about itself, and that is the whole point of it living here: neither the
-	 * rig, nor the input, nor the body has to know which of the two it is holding — the rig asks the
-	 * thing it is bringing out, and does what it is told. Without this, the hand a weapon sits in is
-	 * what decided its draw and its stance, which is exactly how a sword came to be a rifle.
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Weapon")
-	bool bDrawnWithItsOwnAnimation = true;
-
-	/**
 	 * What the body should hold while this thing is out.
 	 *
 	 * Named by the WEAPON, for the same reason as everything else here: a rifle asks for a rifle's
@@ -330,6 +313,16 @@ public:
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Weapon")
 	TObjectPtr<UAnimMontage> StowMontage;
+
+	/**
+	 * The animation THIS weapon's melee (the bash) plays.
+	 *
+	 * The weapon's own answer for the same reason as its draw: the bash's picture used to be chosen by
+	 * the HAND the gun came out of, so a pistol bashed with a rifle's swing. Empty is a real answer —
+	 * a thing with no melee picture simply plays none.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Weapon")
+	TObjectPtr<UAnimMontage> MeleeMontage;
 
 	/**
 	 * Where this weapon sits while it is OUT, and where it sits while it is away.

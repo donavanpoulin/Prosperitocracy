@@ -340,6 +340,11 @@ void UProsperitocracyLoadoutComponent::NotifyBodyDressed()
 	if (AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(GetOwner()))
 	{
 		Body->OnLoadoutDressed();
+
+		// The dress has just re-created the channels' bodies, so EVERY channel is placed by its state:
+		// the one that is out goes to its own hand, every other one to its own back. Without this a
+		// holstered gun sits at the body's origin — between the player's feet — until a key is pressed.
+		Body->PlaceTheChannelsForTheirState();
 	}
 }
 
@@ -429,31 +434,6 @@ bool UProsperitocracyLoadoutComponent::DoesSlotCarryWeapon(FGameplayTag Slot) co
 	return Entry && !Entry->BodyClass.IsNull();
 }
 
-bool UProsperitocracyLoadoutComponent::DoesSlotDrawWithItsOwnAnimation(FGameplayTag Slot) const
-{
-	const FProsperitocracyWeaponSlot* Entry = GetEntryForSlot(Slot);
-
-	// Nothing carried there has no draw to play and no stance to take.
-	if (!Entry || Entry->BodyClass.IsNull())
-	{
-		return false;
-	}
-
-	// The WEAPON answers, off its own default object — the same soft-class load the body class is
-	// read with above, so no extra load is made and nothing is ever spawned to ask this. A thing that
-	// is not a weapon at all has no draw either, which is why a failed cast reads as NO rather than
-	// as an error: an answer of "no" is a true answer here, and the rig does the honest thing with it.
-	if (const UClass* Body = Entry->BodyClass.LoadSynchronous())
-	{
-		if (const AProsperitocracyWeapon* Defaults = Cast<AProsperitocracyWeapon>(Body->GetDefaultObject()))
-		{
-			return Defaults->bDrawnWithItsOwnAnimation;
-		}
-	}
-
-	return false;
-}
-
 FGameplayTag UProsperitocracyLoadoutComponent::GetPrimarySlotTag() const
 {
 	// The project's own slot vocabulary, so no blueprint has to spell a slot's name out for itself.
@@ -463,6 +443,30 @@ FGameplayTag UProsperitocracyLoadoutComponent::GetPrimarySlotTag() const
 FGameplayTag UProsperitocracyLoadoutComponent::GetSecondarySlotTag() const
 {
 	return ProsperitocracyGameplayTags::Weapon_Slot_Secondary;
+}
+
+FGameplayTag UProsperitocracyLoadoutComponent::GetSpecialSlotTag() const
+{
+	return ProsperitocracyGameplayTags::Weapon_Slot_Special;
+}
+
+FGameplayTag UProsperitocracyLoadoutComponent::GetGrenadeSlotTag() const
+{
+	return ProsperitocracyGameplayTags::Weapon_Slot_Grenade;
+}
+
+TArray<FGameplayTag> UProsperitocracyLoadoutComponent::GetSlotOrder() const
+{
+	// THE ONE ORDER. Built here, out of the same four tag getters every other caller uses, so a slot
+	// is never spelled twice and a walker never carries an order of its own. The SPECIAL slot is in it
+	// while carrying nothing: an empty slot is a slot, and what passes over it is the walker's rule
+	// (DoesSlotCarryWeapon), not an absence from the list.
+	return TArray<FGameplayTag>{
+		GetPrimarySlotTag(),
+		GetSecondarySlotTag(),
+		GetSpecialSlotTag(),
+		GetGrenadeSlotTag()
+	};
 }
 
 const FProsperitocracyWeaponSlot* UProsperitocracyLoadoutComponent::GetEntryForSlot(const FGameplayTag& Slot) const

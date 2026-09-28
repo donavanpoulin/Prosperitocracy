@@ -41,6 +41,7 @@ public class Prosperitocracy : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"DeveloperSettings",
+				"EnhancedInput",
 				"PhysicsCore",
 				"GameplayAbilities",
 				"GameplayTasks",
