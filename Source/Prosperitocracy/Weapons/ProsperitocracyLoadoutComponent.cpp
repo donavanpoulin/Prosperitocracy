@@ -34,6 +34,16 @@ void UProsperitocracyLoadoutComponent::BeginPlay()
 	// differently from the way a switch or a change dresses it.
 	NotifyBodyDressed();
 
+	// AND THE STATE, LAST — the same step Redress ends with, at the same point in the same order, so
+	// spawn and a change cannot disagree about when the body is told what it holds. At spawn the
+	// answer is always "everything away", and that is not a formality: a channel's body is born at
+	// the body's ORIGIN, so without this a holstered gun stands between the player's feet until a key
+	// is pressed.
+	if (AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(GetOwner()))
+	{
+		Body->PlaceTheChannelsForTheirState();
+	}
+
 	// And what the loadout OWNS — the four abilities, and the move the thing in the hand makes on the
 	// right button — comes up with it too, through the same door a change uses. It is called AFTER the
 	// channels are in line above, because one of the two halves hands something to the weapons that are
@@ -223,6 +233,19 @@ void UProsperitocracyLoadoutComponent::Redress()
 		}
 	}
 
+	// AND NOW THE STATE — LAST, and this is the whole of the fix. The rig has been rebuilt above and
+	// what stands in it has been dressed, so this is the first moment a channel's weapon knows which
+	// slot it fills and can be asked whether it is the one in the hand. Stating the state before this
+	// point is what put a drawn gun back on the rack: every freshly built weapon answered "no slot",
+	// so no channel matched the held slot and the body read its own rig as "nothing is out" — the gun
+	// went to its away socket, the body forgot it was holding anything, and the pose fell to unarmed.
+	// One order for every path a dress goes through: spawn, a class change, a loadout change, and a
+	// gun swapped into a slot.
+	if (AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(GetOwner()))
+	{
+		Body->PlaceTheChannelsForTheirState();
+	}
+
 	// And what the loadout OWNS, last, because it is the half that reaches the WEAPONS themselves: the four
 	// abilities are granted to the body, and each weapon standing in a channel is handed the one that is
 	// its own slot's second press — so the right button answers to the loadout that was just dressed, and
@@ -339,12 +362,12 @@ void UProsperitocracyLoadoutComponent::NotifyBodyDressed()
 {
 	if (AProsperitocracyCharacter* Body = Cast<AProsperitocracyCharacter>(GetOwner()))
 	{
+		// The ONE thing this says: the rig has been REBUILT, so the blueprint puts the loadout's
+		// weapons into the channels. What the body is HOLDING is deliberately not stated here — it
+		// cannot be, because a channel's weapon only learns which slot it fills once the dress has
+		// walked the channels and dressed it, and this runs before that. Placing the rig by its state
+		// is the LAST step of a dress, on every path a dress goes through (see Redress and BeginPlay).
 		Body->OnLoadoutDressed();
-
-		// The dress has just re-created the channels' bodies, so EVERY channel is placed by its state:
-		// the one that is out goes to its own hand, every other one to its own back. Without this a
-		// holstered gun sits at the body's origin — between the player's feet — until a key is pressed.
-		Body->PlaceTheChannelsForTheirState();
 	}
 }
 
