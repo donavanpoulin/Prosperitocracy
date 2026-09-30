@@ -58,30 +58,69 @@ void AProsperitocracyStatHostActor::InitializeFromStatBlock(const UProsperitocra
 void AProsperitocracyStatHostActor::ApplyDerivedStats()
 {
 	// Damage is the thing's own two lines added: a piercing-only gun is just its piercing, and a hybrid
-	// (a railgun) is both. Nothing per-thing lives in this — one formula, every thing.
-	const float Damage = GetStatFinal(EProsperitocracyStat::ImpactDamage)
+	// (a railgun) is both.
+	const float DirectDamage = GetStatFinal(EProsperitocracyStat::ImpactDamage)
 		+ GetStatFinal(EProsperitocracyStat::PiercingDamage);
+
+	// AND THE SCALE IS THE WHOLE EVENT, NOT THE BANG (his rule, 2026-09-30): what a thing leaves burning
+	// counts toward its Shake and its sound, because an explosive with fires is not a weaker explosion — it
+	// hits softer up front and pays the rest out over time. Only the SHAKE and the sound read this; the push
+	// below stays on the direct damage, because a push is the kick of the act itself.
+	const float TheWholeEvent = DirectDamage + GetWhatItLeavesBurning();
 
 	// The push is a share of the speed the character is moving at, so it is a PERCENT and it bites the
 	// same at a walk, at a sprint and crouched. Weight and damage both buy it: heavier shoves harder,
 	// harder-hitting shoves harder, and neither alone gets to the top.
 	const float DragPercent = PushBasePercent
 		+ (FMath::Max(0.0f, GetStatFinal(EProsperitocracyStat::Weight)) * PushPercentPerWeightLb)
-		+ (Damage * PushPercentPerDamagePoint);
+		+ (DirectDamage * PushPercentPerDamagePoint);
 
 	SetStatBase(EProsperitocracyStat::Drag, DragPercent);
 	SetStatBase(EProsperitocracyStat::Carry, DragPercent * CarryShareOfDrag);
 
-	// And the same damage, read a second time for a different job: how hard this thing's own act
-	// shakes the SCREEN. It is the picture, not the body — the push above is what the shot does to the
-	// man, this is what it does to the world he is looking through — and both are priced off the one
-	// number a thing already has, so nothing is authored for either of them.
+	// And the same damage, read a second time for a different job: how hard this thing's own act shakes the
+	// SCREEN — and it is the WHOLE EVENT here, the bang plus what the thing leaves burning, because the
+	// picture is of the explosion and not of its first frame. It is the picture, not the body — the push
+	// above is what the act does to the man, this is what it does to the world he is looking through — and
+	// both are priced off numbers a thing already has, so nothing is authored for either of them.
 	//
 	// Worked out HERE, beside the push, because it has the same inputs and the same reason to be read
 	// late: damage can move mid-fight (a perk, a proc, an attachment), and a shake priced at the
 	// damage a gun had the moment it came up would sit at the old number while the gun hit harder.
-	const float ShakeDegrees = Damage * ShakeDegreesPerDamagePoint;
+	const float ShakeDegrees = TheWholeEvent * ShakeDegreesPerDamagePoint;
 	SetStatBase(EProsperitocracyStat::Shake, ShakeDegrees);
+}
+
+float AProsperitocracyStatHostActor::GetWhatItLeavesBurning() const
+{
+	if (!StatBlockAsset)
+	{
+		return 0.0f;
+	}
+
+	float Total = 0.0f;
+	for (const FProsperitocracyAppliedEffect& Applied : StatBlockAsset->AppliedEffects)
+	{
+		const UProsperitocracyStatTable* StatusBlock = Applied.StatBlock.LoadSynchronous();
+		if (!StatusBlock)
+		{
+			continue;
+		}
+
+		// A status's whole output, and only for a status that IS a burn — the same one rule, no branch:
+		// Rate and Piercing Damage present means it ticks (a burn); Duration alone means it merely lasts (a
+		// stun), and a stun contributes nothing to how hard the act shakes.
+		if (!StatusBlock->Carries(EProsperitocracyStat::Rate) || !StatusBlock->Carries(EProsperitocracyStat::PiercingDamage))
+		{
+			continue;
+		}
+
+		Total += StatusBlock->GetBaseValue(EProsperitocracyStat::Rate)
+			* StatusBlock->GetBaseValue(EProsperitocracyStat::PiercingDamage)
+			* StatusBlock->GetBaseValue(EProsperitocracyStat::Duration);
+	}
+
+	return Total;
 }
 
 void AProsperitocracyStatHostActor::SetStatBase(EProsperitocracyStat Stat, float BaseValue)

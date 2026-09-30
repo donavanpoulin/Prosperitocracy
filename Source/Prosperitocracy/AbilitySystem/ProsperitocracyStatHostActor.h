@@ -135,6 +135,23 @@ public:
 	 */
 	virtual void ApplyDerivedStats();
 
+	/**
+	 * WHAT THIS THING LEAVES BURNING, as a total: the whole damage its named statuses would deal — Rate ×
+	 * Piercing Damage × Duration for each — or 0 for a thing that names none.
+	 *
+	 * It exists because a thing's SCALE is the whole event and not the bang alone (his rule, 2026-09-30): a
+	 * real explosive that leaves fires is not a WEAKER explosion, it hits softer up front and pays the rest
+	 * out over time, so its shake — and the sound that shares those numbers — is priced off both.
+	 *
+	 * "Burn only, never a stun" needs no branch: the same one rule that decides what a status IS decides
+	 * this. A block carrying Rate and Piercing Damage ticks that damage (a burn → it counts); a block
+	 * carrying only Duration simply lasts (a stun → it contributes nothing). Presence is scope.
+	 *
+	 * The status's own block is read as AUTHORED here, because a status has no home of its own until it lands
+	 * on somebody — the one honest base read, the same shape the blade's combo uses for its rate.
+	 */
+	float GetWhatItLeavesBurning() const;
+
 protected:
 	/** FINAL value of a stat on this host's own ASC (the ONE evaluator). */
 	float GetStatFinal(EProsperitocracyStat Stat) const;

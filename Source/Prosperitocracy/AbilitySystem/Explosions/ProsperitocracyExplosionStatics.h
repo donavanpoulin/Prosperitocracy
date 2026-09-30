@@ -38,14 +38,17 @@ namespace ProsperitocracyExplosionHandling
 	/**
 	 * [TUNE] How far an explosion's SHAKE reaches, as a multiple of the thing's own FINAL Range.
 	 *
-	 * 10 is what the shake is built and felt on — MINE, and his to move. What it is FOR: a blast's damage
-	 * zone against its FELT zone is about twenty to one in the world (a grenade kills inside ~5 m and is felt
-	 * ~100 m out), and the ball reaches 4 m, so 80 m. It also puts the full-strength zone (half the reach,
-	 * 40 m) right around where a called strike actually lands — 20 to 40 m from the man who called it — so
-	 * the whole bombardment is felt at FULL strength rather than on the fade.
+	 * **10 — MINE, and HIS to move.** He called the DIRECTION (the shake's reach does the work, not its
+	 * strength) and not a number: any crank of this is his to say.
+	 *
+	 * What it is FOR: a blast's damage zone against its FELT zone is about twenty to one in the world (a
+	 * grenade kills inside ~5 m and is felt ~100 m out), and the ball reaches 4 m, so 80 m — whose
+	 * full-strength half, 40 m, covers everywhere a called strike actually lands, 20 to 40 m from the man who
+	 * called it.
 	 *
 	 * A bigger number is a longer tail, never a harder hit: the strength is the thing's own Shake row and
-	 * does not move with this.
+	 * does not move with this. **Reach is also not what makes a blast FELT** — the lean's DECAY is
+	 * (Design/ui.md): a bigger reach only means more of the map leans.
 	 *
 	 * THE SOUND WILL USE THIS SAME NUMBER AND THE SAME RAMP when it exists — it reaches the same range, as
 	 * volume — because it is the same bang read two ways, which is why the constant is named for both.
