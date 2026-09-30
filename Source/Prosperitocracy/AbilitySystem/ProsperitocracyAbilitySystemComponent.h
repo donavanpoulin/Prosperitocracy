@@ -54,6 +54,7 @@ public:
 
 	//~UActorComponent interface
 	UE_API virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	UE_API virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	//~End of UActorComponent interface
 
 	UE_API virtual void InitAbilityActorInfo(AActor* InOwnerActor, AActor* InAvatarActor) override;

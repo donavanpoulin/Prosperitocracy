@@ -228,24 +228,34 @@ public:
 	bool IsSecondaryHeld() const { return bSecondaryHeld; }
 
 	/**
-	 * The thing in hand's OWN move on the right button, dressed onto it by its carrier's loadout.
+	 * The thing in hand's move on the right button: the loadout's PICK when it took one, otherwise the
+	 * thing's OWN — and the order is the rule.
 	 *
-	 * A SLOT, not a move, and the weapon never learns what is in it: the loadout grants its four
-	 * abilities and hands the one that names this weapon's slot to the weapon, so a loadout is what
-	 * decides what the right button does — the dash today, the heavy combo on a loadout that takes it,
-	 * a sword throw tomorrow — and a weapon is never edited to change it.
-	 *
-	 * It is DRESSED rather than authored on the weapon blueprint, for the same reason a gun's numbers
-	 * are: an authored value is a second copy of an answer that has an owner, and a copy goes stale the
-	 * moment the owner changes. Null is a real answer — a weapon carries no second move unless a loadout
-	 * gives it one, and then its right button falls back to what it is by itself (a gun's aim).
+	 * TWO different answers, one door, because "what the carrier took in" and "what this thing does by
+	 * itself" are not copies of each other: a loadout that names this weapon's slot TAKES OVER (the
+	 * heavy combo replacing the blade's dash), and a loadout that names nothing leaves the weapon its
+	 * own (the blade's dash, a gun's aim). It is a SLOT and never a move — the weapon learns only that
+	 * something is in it, never what.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Weapon")
-	TSubclassOf<UProsperitocracyGameplayAbility> GetSecondPressAbility() const { return SecondPressAbility; }
+	TSubclassOf<UProsperitocracyGameplayAbility> GetSecondPressAbility() const { return SecondPressAbility ? SecondPressAbility : BaseSecondPressAbility; }
 
 	/** Hand this thing the ability its right button runs. Called by the loadout that dressed it. */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
 	void SetSecondPressAbility(TSubclassOf<UProsperitocracyGameplayAbility> InAbility);
+
+	/**
+	 * WHAT THIS THING'S RIGHT BUTTON DOES BY ITSELF, said before any loadout is asked.
+	 *
+	 * Null for everything whose own answer is not an ability — a gun's right button is its AIM, which is
+	 * the weapon's own behaviour rather than a move — and the blade's is the DASH, so a Reclaimer dashes
+	 * from the moment the blade is in hand, with nothing on their bar and nothing naming anything.
+	 *
+	 * Authored HERE and not on the picked field above, because this is the weapon's own answer and it
+	 * must not be lent to it: a loadout's four belong to a loadout, and this belongs to the thing.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Weapon")
+	TSubclassOf<UProsperitocracyGameplayAbility> BaseSecondPressAbility;
 
 	/**
 	 * Another move is about to take the stage on this weapon's owner: stand down.
@@ -582,9 +592,11 @@ protected:
 	bool bSecondaryHeld = false;
 
 	/**
-	 * The ability this thing's right button runs, handed over by the loadout that dressed it — and
-	 * deliberately NOT a default on a weapon blueprint, for exactly the reason the stat block above is
-	 * not one: the loadout is the owner of the answer, and a weapon must not hold a copy of it.
+	 * The move the CARRIER'S LOADOUT took in for this weapon's slot, handed over by the dress — and
+	 * TRANSIENT because that is a loadout's answer and not the thing's: it comes and goes with the
+	 * loadout being played. The thing's OWN answer sits beside it (BaseSecondPressAbility) and is what
+	 * stands when no loadout names this slot; GetSecondPressAbility is the one door that reads the two
+	 * in their order.
 	 */
 	UPROPERTY(Transient)
 	TSubclassOf<UProsperitocracyGameplayAbility> SecondPressAbility;

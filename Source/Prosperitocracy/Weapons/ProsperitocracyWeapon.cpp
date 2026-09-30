@@ -92,8 +92,12 @@ void AProsperitocracyWeapon::SetSecondPressAbility(TSubclassOf<UProsperitocracyG
 	// exactly the same from the outside.
 	SecondPressAbility = InAbility;
 
-	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s: the right button runs %s"),
-		*GetName(), *GetNameSafe(InAbility.Get()));
+	// THE ANSWER, not the handover. "Nothing was lent" and "the right button does nothing" stopped being
+	// the same sentence the moment a weapon could answer with its own move — a loadout that names no
+	// move leaves the blade its dash — so printing what was lent, alone, would print a lie.
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Weapon] %s: the right button runs %s — %s"),
+		*GetName(), *GetNameSafe(GetSecondPressAbility().Get()),
+		InAbility ? TEXT("the loadout's pick") : TEXT("its own, no loadout named one"));
 }
 
 bool AProsperitocracyWeapon::HasAFireMode() const

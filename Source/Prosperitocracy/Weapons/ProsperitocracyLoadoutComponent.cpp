@@ -270,7 +270,7 @@ void UProsperitocracyLoadoutComponent::DressLoadoutAbilities()
 	//    ITS slot's second press — asked of the ability, which names the slot it serves — so nothing here
 	//    has to know what a blade is, or that a heavy combo exists at all. A weapon whose slot the loadout
 	//    lends nothing is told NOTHING, which is a real answer: its right button falls back to what it is
-	//    by itself (a gun's aim).
+	//    by itself — a gun's aim, the blade's dash.
 	if (AActor* Owner = GetOwner())
 	{
 		TArray<UChildActorComponent*> Channels;

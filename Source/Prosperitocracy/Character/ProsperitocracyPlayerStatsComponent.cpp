@@ -16,6 +16,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "ProsperitocracyGameplayTags.h"
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
 #include "Stats/ProsperitocracyStatTable.h"
@@ -378,51 +379,79 @@ void UProsperitocracyPlayerStatsComponent::DressAbilitiesFromLoadout(UProsperito
 	// The four slots, in bar order — four fields and never a list, because four is the design's number
 	// (Design/abilities.md) and a fifth cannot be authored. Listing them here is what makes this the one
 	// place that knows a loadout's four ability slots are a set.
-	const TSubclassOf<UProsperitocracyGameplayAbility> Slots[] =
+	//
+	// Each slot is listed WITH its number, because the number is the only part of a slot the player can
+	// press and it belongs to the SLOT, not to whatever ability is sitting in it: the pair is stated
+	// once, here, in the same place the grant that uses it lives.
+	struct FBarSlot
 	{
-		Loadout->Ability1,
-		Loadout->Ability2,
-		Loadout->Ability3,
-		Loadout->Ability4
+		TSubclassOf<UProsperitocracyGameplayAbility> Ability;
+		FGameplayTag Number;
+	};
+
+	const FBarSlot Slots[] =
+	{
+		{ Loadout->Ability1, ProsperitocracyGameplayTags::InputTag_Ability_Slot1 },
+		{ Loadout->Ability2, ProsperitocracyGameplayTags::InputTag_Ability_Slot2 },
+		{ Loadout->Ability3, ProsperitocracyGameplayTags::InputTag_Ability_Slot3 },
+		{ Loadout->Ability4, ProsperitocracyGameplayTags::InputTag_Ability_Slot4 }
 	};
 
 	int32 Granted = 0;
+	int32 AnswerTheirNumber = 0;
 
-	for (const TSubclassOf<UProsperitocracyGameplayAbility>& Slot : Slots)
+	for (const FBarSlot& Slot : Slots)
 	{
 		// Presence is scope: an empty slot is a slot this loadout did not fill, which is a legal build
 		// (Design/loadout.md) and not a missing entry.
-		if (!Slot)
+		if (!Slot.Ability)
 		{
 			continue;
 		}
 
-		UProsperitocracyGameplayAbility* AbilityCDO = Slot->GetDefaultObject<UProsperitocracyGameplayAbility>();
+		UProsperitocracyGameplayAbility* AbilityCDO = Slot.Ability->GetDefaultObject<UProsperitocracyGameplayAbility>();
 		if (!AbilityCDO)
 		{
 			// A slot holding something that is not one of our abilities is a misconfiguration worth
 			// naming: it would otherwise be granted and never work, which reads as a broken loadout.
 			UE_LOG(LogProsperitocracy, Warning,
 				TEXT("%s on %s: a loadout's ability slot holds %s, which is not one of our abilities — it is skipped."),
-				*GetName(), *GetNameSafe(GetOwner()), *GetNameSafe(Slot.Get()));
+				*GetName(), *GetNameSafe(GetOwner()), *GetNameSafe(Slot.Ability.Get()));
 			continue;
 		}
 
 		// GRANTED THE SAME SHAPE the character's own abilities are granted in: a spec whose level is 1,
-		// with this component as the source object. It carries NO input tag, and that is deliberate — a
-		// loadout's abilities are not pressed BY a tag: the thing in the player's hand runs its own by
-		// name (the weapon's second-press slot), and a tag here would be a second way to address them.
+		// with this component as the source object.
 		FGameplayAbilitySpec AbilitySpec(AbilityCDO, /*AbilityLevel=*/ 1);
 		AbilitySpec.SourceObject = this;
+
+		// THE NUMBER, and only for an ability that FIRES FROM THE BAR. It rides on the GRANT rather than
+		// on the ability, because where it sits in the bar is this loadout's choice: the same ability
+		// answers a different number by being granted into a different slot, and a loadout that moves it
+		// moves what it answers. The tag is what the number key's input path looks the spec up by
+		// (UProsperitocracyAbilitySystemComponent::AbilityInputTagPressed) — stamped exactly the way
+		// UProsperitocracyAbilitySet gives an ability its input tag, so there is one way to put a tag on
+		// a grant in this project and this is it.
+		//
+		// An ability that is PASSIVE, or that has taken another input over, carries no bar tag and is
+		// granted with no number at all: it sits in the slot and never answers a key. That absence IS the
+		// rule — nothing here has to know which kind of not-from-the-bar it was.
+		if (AbilityCDO->GetFiresFromBar().IsValid())
+		{
+			AbilitySpec.GetDynamicSpecSourceTags().AddTag(Slot.Number);
+			++AnswerTheirNumber;
+		}
 
 		LoadoutAbilityHandles.AddAbilitySpecHandle(AbilitySystemComponent->GiveAbility(AbilitySpec));
 		++Granted;
 	}
 
 	// With its count, and with which loadout: "the abilities did nothing" and "the loadout names no
-	// abilities" are the same silence, and only one of them is a bug.
-	UE_LOG(LogProsperitocracy, Log, TEXT("%s on %s: %s grants %d of its four ability slots."),
-		*GetName(), *GetNameSafe(GetOwner()), *GetNameSafe(Loadout), Granted);
+	// abilities" are the same silence, and only one of them is a bug. The second count is the bar's —
+	// how many of the four answer a number key — because an ability granted with no bar tag sits in the
+	// slot unpressable, which from the outside looks exactly like a broken key.
+	UE_LOG(LogProsperitocracy, Log, TEXT("%s on %s: %s grants %d of its four ability slots, %d of them from the bar."),
+		*GetName(), *GetNameSafe(GetOwner()), *GetNameSafe(Loadout), Granted, AnswerTheirNumber);
 }
 
 void UProsperitocracyPlayerStatsComponent::WearWeave(UProsperitocracyStatTable* Weave)

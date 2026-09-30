@@ -26,6 +26,28 @@ UProsperitocracyAbilitySystemComponent::UProsperitocracyAbilitySystemComponent(c
 	InputHeldSpecHandles.Reset();
 
 	FMemory::Memset(ActivationGroupCounts, 0, sizeof(ActivationGroupCounts));
+
+	// THE INPUT PATH'S OTHER HALF. AbilityInputTagPressed/Released below only RECORD which abilities a key
+	// touched; nothing acts on those records until ProcessAbilityInput runs, and in this component that
+	// runs on the tick. It is the one piece of the ported input path that was never turned on, and
+	// without it a number key banks a press and no ability ever starts.
+	PrimaryComponentTick.bCanEverTick = true;
+	PrimaryComponentTick.bStartWithTickEnabled = true;
+}
+
+void UProsperitocracyAbilitySystemComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	// ONLY WHERE THE KEYS ARE. The input handles below are only ever fed from a LOCAL player's keys, so a
+	// copy of this component with no keyboard behind it — the same body on someone else's machine — has
+	// nothing to process and never activates anything off its own tick. That is the split the ported
+	// input path already assumes everywhere else.
+	if (AbilityActorInfo.IsValid() && AbilityActorInfo->IsLocallyControlled())
+	{
+		const UWorld* World = GetWorld();
+		ProcessAbilityInput(DeltaTime, World && World->IsPaused());
+	}
 }
 
 void UProsperitocracyAbilitySystemComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -187,6 +209,8 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 void UProsperitocracyAbilitySystemComponent::AbilityInputTagPressed(const FGameplayTag& InputTag)
 {
+	int32 Answered = 0;
+
 	if (InputTag.IsValid())
 	{
 		for (const FGameplayAbilitySpec& AbilitySpec : ActivatableAbilities.Items)
@@ -195,13 +219,22 @@ void UProsperitocracyAbilitySystemComponent::AbilityInputTagPressed(const FGamep
 			{
 				InputPressedSpecHandles.AddUnique(AbilitySpec.Handle);
 				InputHeldSpecHandles.AddUnique(AbilitySpec.Handle);
+				++Answered;
 			}
 		}
 	}
+
+	// SAID OUT LOUD, because "the key did nothing" and "no ability answers that number" are one silence
+	// in the world and only one of them is a bug. The count is the honest answer to it: a number key only
+	// reaches an ability the loadout granted a bar tag onto, so a slot holding a passive — or an empty
+	// one — reads as zero here rather than as a key that went missing.
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Bar] %s down — %d abilities answer it."), *InputTag.ToString(), Answered);
 }
 
 void UProsperitocracyAbilitySystemComponent::AbilityInputTagReleased(const FGameplayTag& InputTag)
 {
+	int32 Answered = 0;
+
 	if (InputTag.IsValid())
 	{
 		for (const FGameplayAbilitySpec& AbilitySpec : ActivatableAbilities.Items)
@@ -210,9 +243,14 @@ void UProsperitocracyAbilitySystemComponent::AbilityInputTagReleased(const FGame
 			{
 				InputReleasedSpecHandles.AddUnique(AbilitySpec.Handle);
 				InputHeldSpecHandles.Remove(AbilitySpec.Handle);
+				++Answered;
 			}
 		}
 	}
+
+	// Logged for the same reason the press is: an ability that should have happened on let-go and did not
+	// has to be told apart from a key whose release never arrived at all.
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Bar] %s up — %d abilities answer it."), *InputTag.ToString(), Answered);
 }
 
 bool UProsperitocracyAbilitySystemComponent::TryActivateAbilityByInputTag(const FGameplayTag& InputTag)

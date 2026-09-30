@@ -19,6 +19,12 @@ namespace ProsperitocracyGameplayTags
 
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Behavior_SurvivesDeath);
 
+	// THE BAR: an ability carrying this tag is fired from the ability bar, so the player's 1–4 key for
+	// the slot the loadout granted it in activates it. Empty means no number ever does — one absence
+	// answering both an ability that is PASSIVE and one that lives on another input (the tag below,
+	// ServesSecondPressOfSlot, names which input that is when it is that kind).
+	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Behavior_FiresFromBar);
+
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Move);
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Look_Mouse);
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Look_Stick);
@@ -31,6 +37,16 @@ namespace ProsperitocracyGameplayTags
 	// abilities are granted with an input tag and activated by it (UProsperitocracyAbilitySet), so
 	// the character's melee needs no handle and no cast — it asks for the tag.
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Bash);
+
+	// THE FOUR BAR NUMBERS (1–4). A granted spec carries the tag of the slot whose number it answers,
+	// stamped by the loadout at grant time — and only on an ability that carries
+	// Ability.Behavior.FiresFromBar. So the key addresses a SLOT and the input path finds whatever the
+	// loadout put there; nothing anywhere looks an ability up by what it does, and the same ability
+	// answers a different number just by being granted into a different slot.
+	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Ability_Slot1);
+	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Ability_Slot2);
+	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Ability_Slot3);
+	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Ability_Slot4);
 
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InitState_Spawned);
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(InitState_DataAvailable);

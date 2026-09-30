@@ -867,15 +867,17 @@ void AProsperitocracyBloodBlade::SecondaryAction_Implementation()
 		return;
 	}
 
-	// THE LOADOUT LENT IT THE ABILITY; THE ABILITY IS THE MOVE. The slot is the weapon's and it was
-	// dressed from a loadout's four ability slots, so which move this is belongs to what the player took
-	// in and never to this class. A null slot is a real answer — a loadout that lends this blade no move
-	// means the right press does nothing — and it is said out loud, because a press that does nothing
-	// and a press that is broken look the same from the outside.
+	// THE MOVE IS THE ANSWER, and the answer has two halves in one order: what the player TOOK IN for
+	// this slot takes over, and with nothing taken in the blade's OWN stands — the DASH, which the
+	// Reclaimer has from the first moment the blade is in hand and which is not one of the four at all.
+	// That order belongs to GetSecondPressAbility, so this class never learns which of the two it got.
+	//
+	// Still said out loud when there is no answer at all: a press that does nothing and a press that is
+	// broken look the same from the outside.
 	const TSubclassOf<UProsperitocracyGameplayAbility> SecondPress = GetSecondPressAbility();
 	if (!SecondPress)
 	{
-		UE_LOG(LogProsperitocracy, Log, TEXT("[Blade] %s: no loadout lent this blade a right-click move, so the press does nothing."), *GetName());
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Blade] %s: nothing to do on the right press — no loadout took a move for this slot and this blade has no move of its own."), *GetName());
 		return;
 	}
 

@@ -164,6 +164,24 @@ bool AProsperitocracyCharacter::ReloadTheWeaponInHand()
 	return true;
 }
 
+bool AProsperitocracyCharacter::PrimaryActionTheWeaponInHand()
+{
+	// The left mouse button, on exactly the same terms as the reload and the right press below: the
+	// thing in hand answers for itself. A gun's primary action is its shot, the blade's is its swing,
+	// and a thing with neither answers with nothing at all. Nothing here learns which of them it asked
+	// — and nothing has to ask whether the thing in hand is a gun BEFORE the thing in hand may answer,
+	// which is what had a sword unable to swing: the press was gated on a weapon's own nature by a
+	// character graph, and a melee's primary action was never reached at all.
+	AProsperitocracyWeapon* Weapon = GetGunWeaponInHand();
+	if (!Weapon)
+	{
+		return false;
+	}
+
+	Weapon->PrimaryAction();
+	return true;
+}
+
 bool AProsperitocracyCharacter::SecondaryActionTheWeaponInHand()
 {
 	// The right mouse button, on exactly the same terms as the reload above: the thing in hand answers
@@ -495,6 +513,41 @@ void AProsperitocracyCharacter::SetupPlayerInputComponent(UInputComponent* Playe
 		Input->BindAction(DrawHolsterAction, ETriggerEvent::Canceled, this,
 			&AProsperitocracyCharacter::OnDrawHolsterReleased);
 	}
+
+	// THE FOUR NUMBERS, on the same terms as everything above: which asset means what is the blueprint's
+	// to say, and all four are wired identically because the only thing that tells them apart is the
+	// slot each one stands for — which is the tag its handlers hand over, not anything here.
+	//
+	// The release is bound to CANCELED as well as COMPLETED for the same reason R's is: a key that is
+	// interrupted must still read as let go, or a held ability would sit there waiting for an input that
+	// is never coming.
+	if (AbilitySlot1Action)
+	{
+		Input->BindAction(AbilitySlot1Action, ETriggerEvent::Started, this, &AProsperitocracyCharacter::OnAbilitySlot1Started);
+		Input->BindAction(AbilitySlot1Action, ETriggerEvent::Completed, this, &AProsperitocracyCharacter::OnAbilitySlot1Released);
+		Input->BindAction(AbilitySlot1Action, ETriggerEvent::Canceled, this, &AProsperitocracyCharacter::OnAbilitySlot1Released);
+	}
+
+	if (AbilitySlot2Action)
+	{
+		Input->BindAction(AbilitySlot2Action, ETriggerEvent::Started, this, &AProsperitocracyCharacter::OnAbilitySlot2Started);
+		Input->BindAction(AbilitySlot2Action, ETriggerEvent::Completed, this, &AProsperitocracyCharacter::OnAbilitySlot2Released);
+		Input->BindAction(AbilitySlot2Action, ETriggerEvent::Canceled, this, &AProsperitocracyCharacter::OnAbilitySlot2Released);
+	}
+
+	if (AbilitySlot3Action)
+	{
+		Input->BindAction(AbilitySlot3Action, ETriggerEvent::Started, this, &AProsperitocracyCharacter::OnAbilitySlot3Started);
+		Input->BindAction(AbilitySlot3Action, ETriggerEvent::Completed, this, &AProsperitocracyCharacter::OnAbilitySlot3Released);
+		Input->BindAction(AbilitySlot3Action, ETriggerEvent::Canceled, this, &AProsperitocracyCharacter::OnAbilitySlot3Released);
+	}
+
+	if (AbilitySlot4Action)
+	{
+		Input->BindAction(AbilitySlot4Action, ETriggerEvent::Started, this, &AProsperitocracyCharacter::OnAbilitySlot4Started);
+		Input->BindAction(AbilitySlot4Action, ETriggerEvent::Completed, this, &AProsperitocracyCharacter::OnAbilitySlot4Released);
+		Input->BindAction(AbilitySlot4Action, ETriggerEvent::Canceled, this, &AProsperitocracyCharacter::OnAbilitySlot4Released);
+	}
 }
 
 void AProsperitocracyCharacter::OnCycleSlot(const FInputActionValue& Value)
@@ -541,6 +594,50 @@ void AProsperitocracyCharacter::OnDrawHolsterReleased()
 		GetWorldTimerManager().ClearTimer(DrawHolsterHoldTimer);
 		ReloadTheWeaponInHand();
 	}
+}
+
+// THE FOUR NUMBERS. Every one of the eight says nothing but which slot it speaks for — the key is the
+// SLOT, so what it runs is whatever that loadout put there, and a body that swapped its abilities
+// answers the new ones without a line of this changing.
+void AProsperitocracyCharacter::OnAbilitySlot1Started() { PressAbilitySlot(ProsperitocracyGameplayTags::InputTag_Ability_Slot1); }
+void AProsperitocracyCharacter::OnAbilitySlot1Released() { ReleaseAbilitySlot(ProsperitocracyGameplayTags::InputTag_Ability_Slot1); }
+void AProsperitocracyCharacter::OnAbilitySlot2Started() { PressAbilitySlot(ProsperitocracyGameplayTags::InputTag_Ability_Slot2); }
+void AProsperitocracyCharacter::OnAbilitySlot2Released() { ReleaseAbilitySlot(ProsperitocracyGameplayTags::InputTag_Ability_Slot2); }
+void AProsperitocracyCharacter::OnAbilitySlot3Started() { PressAbilitySlot(ProsperitocracyGameplayTags::InputTag_Ability_Slot3); }
+void AProsperitocracyCharacter::OnAbilitySlot3Released() { ReleaseAbilitySlot(ProsperitocracyGameplayTags::InputTag_Ability_Slot3); }
+void AProsperitocracyCharacter::OnAbilitySlot4Started() { PressAbilitySlot(ProsperitocracyGameplayTags::InputTag_Ability_Slot4); }
+void AProsperitocracyCharacter::OnAbilitySlot4Released() { ReleaseAbilitySlot(ProsperitocracyGameplayTags::InputTag_Ability_Slot4); }
+
+void AProsperitocracyCharacter::PressAbilitySlot(const FGameplayTag& Number)
+{
+	// THE ONE THING A NUMBER KEY DOES: hand the slot's number to the ability system's own input door,
+	// which looks the granted spec up by tag and runs whatever the loadout put in that slot. Nothing
+	// here knows an ability, a class or a handle — and a slot the loadout left empty answers nothing,
+	// because nothing carries its tag. That is the door's answer, not a branch of ours.
+	//
+	// The press is also what makes the key HELD: the door records it, so an ability that cares (a strike
+	// showing its range while the key is down, and firing when it comes up) can ask.
+	UProsperitocracyAbilitySystemComponent* AbilitySystemComponent = Cast<UProsperitocracyAbilitySystemComponent>(UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(this));
+	if (!AbilitySystemComponent)
+	{
+		return;
+	}
+
+	AbilitySystemComponent->AbilityInputTagPressed(Number);
+}
+
+void AProsperitocracyCharacter::ReleaseAbilitySlot(const FGameplayTag& Number)
+{
+	// The other half, and the reason it exists at all: an ability that answers this key is told the key
+	// is no longer down, so "let go and it happens" is the ability's own read of a real release rather
+	// than a timer guessing that the player meant to let go.
+	UProsperitocracyAbilitySystemComponent* AbilitySystemComponent = Cast<UProsperitocracyAbilitySystemComponent>(UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(this));
+	if (!AbilitySystemComponent)
+	{
+		return;
+	}
+
+	AbilitySystemComponent->AbilityInputTagReleased(Number);
 }
 
 void AProsperitocracyCharacter::BeginAttack(const FVector& LineDirection, float DistanceCm, float TravelSeconds, float Seconds)

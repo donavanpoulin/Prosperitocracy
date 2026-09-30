@@ -185,6 +185,20 @@ public:
 	bool ReloadTheWeaponInHand();
 
 	/**
+	 * Do whatever the LEFT mouse button means for this body's weapon — the one door that press needs.
+	 *
+	 * The same shape as the two doors below, and for the same reason: the body asks the thing in its
+	 * hand and learns nothing else about it. On a gun the answer is a SHOT; on the blade it is a SWING.
+	 * Neither is the character's business, and nothing outside the weapon has to know which of them the
+	 * player is holding — which is exactly how a sword came to be unable to swing at all: the press was
+	 * gated on "is the thing in hand a gun", a question about a WEAPON asked by a character graph.
+	 *
+	 * False when there is nothing in hand: a button with nothing behind it does nothing.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	bool PrimaryActionTheWeaponInHand();
+
+	/**
 	 * Do whatever the right mouse button means for this body's weapon — the one door that press needs.
 	 *
 	 * The same shape as the reload door above, and for the same reason: the body asks the thing in its
@@ -314,6 +328,27 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Input")
 	TObjectPtr<UInputAction> DrawHolsterAction;
+
+	/**
+	 * THE FOUR BAR KEYS (1–4), one action each, in bar order.
+	 *
+	 * The same shape as the wheel and R above, and for the same reason: the blueprint says which asset
+	 * means what and nothing here spells a key or a path. The order IS the numbering — the first of
+	 * these is the ability in the loadout's first slot — and none of the four names an ability: each
+	 * hands the ability system the NUMBER of the slot it stands for, and whatever that loadout granted
+	 * in the slot is what answers.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Input")
+	TObjectPtr<UInputAction> AbilitySlot1Action;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Input")
+	TObjectPtr<UInputAction> AbilitySlot2Action;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Input")
+	TObjectPtr<UInputAction> AbilitySlot3Action;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Input")
+	TObjectPtr<UInputAction> AbilitySlot4Action;
 
 	/**
 	 * The body has been told which stance to hold: the thing that came out declared it.
@@ -667,6 +702,25 @@ protected:
 
 	/** Live while R is down inside the window. A finished handle means the hold already happened. */
 	FTimerHandle DrawHolsterHoldTimer;
+
+	/**
+	 * A bar key went down, and came up. Eight lines of nothing beyond that, because a number key has
+	 * exactly ONE job — saying which slot it stands for — and no per-key behaviour to keep in step with
+	 * anything: the numbering lives in the tag each pair hands over, and the pair at the bottom is what
+	 * actually touches the game.
+	 */
+	void OnAbilitySlot1Started();
+	void OnAbilitySlot1Released();
+	void OnAbilitySlot2Started();
+	void OnAbilitySlot2Released();
+	void OnAbilitySlot3Started();
+	void OnAbilitySlot3Released();
+	void OnAbilitySlot4Started();
+	void OnAbilitySlot4Released();
+
+	/** THE ONE THING A NUMBER KEY DOES: the press hands the slot's number over, the release takes it back. */
+	void PressAbilitySlot(const FGameplayTag& Number);
+	void ReleaseAbilitySlot(const FGameplayTag& Number);
 
 	/** This body's own tick, which is where the aim's turn and a live attack are driven. */
 	virtual void Tick(float DeltaSeconds) override;

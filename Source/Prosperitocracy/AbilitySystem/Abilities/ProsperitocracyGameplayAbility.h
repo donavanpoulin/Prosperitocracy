@@ -186,6 +186,12 @@ public:
 	 */
 	FGameplayTag GetSecondPressOfSlot() const { return ServesSecondPressOfSlot; }
 
+	/**
+	 * The tag that says this ability is fired from the ability BAR (see FiresFromBar below). Empty for
+	 * everything no number key answers — a passive ability, or one that lives on another input.
+	 */
+	FGameplayTag GetFiresFromBar() const { return FiresFromBar; }
+
 	UE_API void TryActivateAbilityOnSpawn(const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilitySpec& Spec) const;
 
 	// Returns true if the requested activation group is a valid transition.
@@ -250,6 +256,22 @@ protected:
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Ability", meta = (Categories = "Prosperitocracy.Weapon.Slot"))
 	FGameplayTag ServesSecondPressOfSlot;
+
+	/**
+	 * THE BAR TAG — Ability.Behavior.FiresFromBar, or empty.
+	 *
+	 * It is the one thing that decides whether a NUMBER KEY does anything for this ability: set, and the
+	 * loadout that grants it stamps the number of the slot it was granted in onto that grant, so 1–4
+	 * fire it. Empty, and no number ever reaches it — the honest answer for BOTH a passive ability and
+	 * one that has taken another input over (the Reclaimer's replaces the right-press dash; the field
+	 * above is what records which input that is).
+	 *
+	 * It lives HERE and not on the granted spec because it is what the ABILITY is, and it travels with
+	 * the class wherever it is granted. WHERE it sits in the bar is the LOADOUT's, and that — the slot's
+	 * number — is the half stamped at grant time.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Prosperitocracy|Ability", meta = (Categories = "Ability.Behavior"))
+	FGameplayTag FiresFromBar;
 
 	// The ability's GAS home (see AProsperitocracyStatHostActor): every stat the ability's block
 	// carries is a GAS attribute on this host's own ASC — the ONE evaluator. Spawned on give (or
