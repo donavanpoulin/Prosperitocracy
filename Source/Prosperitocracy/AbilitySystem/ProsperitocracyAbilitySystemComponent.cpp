@@ -39,6 +39,18 @@ void UProsperitocracyAbilitySystemComponent::TickComponent(float DeltaTime, ELev
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	// SAID OUT LOUD whenever there is a press in hand and this tick is about to look at it: "the key did
+	// nothing" must never again be able to mean "the tick never ran" or "the tick looked elsewhere" — those
+	// are the two silences this line tells apart, and it prints the actor-info state it found.
+	if (!InputPressedSpecHandles.IsEmpty())
+	{
+		UE_LOG(LogProsperitocracy, Log,
+			TEXT("[Bar] the tick has %d press(es) in hand — actor info %s, locally controlled %s."),
+			InputPressedSpecHandles.Num(),
+			AbilityActorInfo.IsValid() ? TEXT("valid") : TEXT("MISSING"),
+			(AbilityActorInfo.IsValid() && AbilityActorInfo->IsLocallyControlled()) ? TEXT("yes") : TEXT("no"));
+	}
+
 	// ONLY WHERE THE KEYS ARE. The input handles below are only ever fed from a LOCAL player's keys, so a
 	// copy of this component with no keyboard behind it — the same body on someone else's machine — has
 	// nothing to process and never activates anything off its own tick. That is the split the ported
@@ -62,6 +74,17 @@ void UProsperitocracyAbilitySystemComponent::EndPlay(const EEndPlayReason::Type 
 
 void UProsperitocracyAbilitySystemComponent::InitAbilityActorInfo(AActor* InOwnerActor, AActor* InAvatarActor)
 {
+	// THE TICK'S OWN STATE, said out loud once when the body comes up — because a component whose flags say
+	// "tick me every frame" and which is never ticked is the exact silence this input path dies of: the
+	// engine is asked here, not guessed at.
+	UE_LOG(LogProsperitocracy, Log,
+		TEXT("[Bar] %s comes up: canEverTick %s, startWithTickEnabled %s, tickEnabledNow %s, tickFunctionRegistered %s."),
+		*GetName(),
+		PrimaryComponentTick.bCanEverTick ? TEXT("yes") : TEXT("no"),
+		PrimaryComponentTick.bStartWithTickEnabled ? TEXT("yes") : TEXT("no"),
+		IsComponentTickEnabled() ? TEXT("yes") : TEXT("no"),
+		PrimaryComponentTick.IsTickFunctionRegistered() ? TEXT("yes") : TEXT("no"));
+
 	FGameplayAbilityActorInfo* ActorInfo = AbilityActorInfo.Get();
 	check(ActorInfo);
 	check(InOwnerActor);
@@ -229,6 +252,17 @@ void UProsperitocracyAbilitySystemComponent::AbilityInputTagPressed(const FGamep
 	// reaches an ability the loadout granted a bar tag onto, so a slot holding a passive — or an empty
 	// one — reads as zero here rather than as a key that went missing.
 	UE_LOG(LogProsperitocracy, Log, TEXT("[Bar] %s down — %d abilities answer it."), *InputTag.ToString(), Answered);
+
+	// AND THE PRESS ACTS ON ITSELF. Recording a press and waiting for a tick to consume it is a hop this
+	// game puts in exactly one place, and it is the hop that died: a number key that banks a press and never
+	// starts anything is what "the key did nothing" looked like. Every other input reaches its ability the
+	// moment it lands — the melee, the right press, the reload — so the bar does too: the same door that
+	// recorded the press asks the ability system to act on it, here, in the same frame. The tick still calls
+	// the same pass for anything HELD; it just finds nothing pressed left to start.
+	if (Answered > 0)
+	{
+		ProcessAbilityInput(/*DeltaTime=*/ 0.0f, /*bGamePaused=*/ false);
+	}
 }
 
 void UProsperitocracyAbilitySystemComponent::AbilityInputTagReleased(const FGameplayTag& InputTag)
@@ -251,6 +285,13 @@ void UProsperitocracyAbilitySystemComponent::AbilityInputTagReleased(const FGame
 	// Logged for the same reason the press is: an ability that should have happened on let-go and did not
 	// has to be told apart from a key whose release never arrived at all.
 	UE_LOG(LogProsperitocracy, Log, TEXT("[Bar] %s up — %d abilities answer it."), *InputTag.ToString(), Answered);
+
+	// The other half of the same rule: "let go and it happens" IS the release, so it happens now rather than
+	// on a tick — a let-go waiting for a tick it never gets is a key the player has to press twice.
+	if (Answered > 0)
+	{
+		ProcessAbilityInput(/*DeltaTime=*/ 0.0f, /*bGamePaused=*/ false);
+	}
 }
 
 bool UProsperitocracyAbilitySystemComponent::TryActivateAbilityByInputTag(const FGameplayTag& InputTag)
@@ -340,6 +381,16 @@ void UProsperitocracyAbilitySystemComponent::ProcessAbilityInput(float DeltaTime
 	//
 	for (const FGameplayAbilitySpecHandle& AbilitySpecHandle : AbilitiesToActivate)
 	{
+		// SAID OUT LOUD, because THIS is the half that starts an ability: a key that records a press and an
+		// ability that never begins are one silence in the world, and this line is the difference. It prints
+		// on the tick the press is acted on — before anything can refuse.
+		if (const FGameplayAbilitySpec* AbilitySpec = FindAbilitySpecFromHandle(AbilitySpecHandle))
+		{
+			UE_LOG(LogProsperitocracy, Log,
+				TEXT("[Bar] the tick is starting %s — the press was recorded and this is the door that acts on it."),
+				*GetNameSafe(AbilitySpec->Ability));
+		}
+
 		TryActivateAbility(AbilitySpecHandle);
 	}
 

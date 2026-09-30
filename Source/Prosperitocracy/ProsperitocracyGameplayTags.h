@@ -76,6 +76,13 @@ namespace ProsperitocracyGameplayTags
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Damage_Type_Impact);
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Damage_Type_Piercing);
 
+	// THE EXPLOSION MARK (Design/explosions.md). A tag on a thing's STAT BLOCK, and that block plus
+	// this tag is the ENTIRE hook-up: carrying it is what enrols the thing in the one explosion pass —
+	// the ball, the damage and its falloff, the push, the shake and the sound — so hooking up a new
+	// explosive is putting one tag on its block and nothing else anywhere. Presence is scope, as
+	// everywhere else in this project: no tag, no bang.
+	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Explosive);
+
 	// Fire modes — tags on weapons, NOT stats (Design/weapons.md): player-only, no perks, no evaluator.
 	// Every ranged weapon carries exactly one; anything without a fire-mode tag isn't a gun.
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Weapon_FireMode_FullAuto);

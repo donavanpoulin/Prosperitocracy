@@ -2,6 +2,8 @@
 
 #include "Stats/ProsperitocracyStatTable.h"
 
+#include "ProsperitocracyGameplayTags.h"
+
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyStatTable)
 
 void UProsperitocracyStatTable::BuildCanonicalStats(TArray<FProsperitocracyStatTableEntry>& OutEntries)
@@ -84,4 +86,11 @@ bool UProsperitocracyStatTable::Carries(EProsperitocracyStat Stat) const
 	}
 
 	return false;
+}
+
+bool UProsperitocracyStatTable::IsExplosive() const
+{
+	// THE MARK, asked of the block that carries it (Design/explosions.md). Presence is scope: the
+	// tag is either on the block or it is not, and nothing has a second place to say otherwise.
+	return Marks.HasTag(ProsperitocracyGameplayTags::Explosive);
 }

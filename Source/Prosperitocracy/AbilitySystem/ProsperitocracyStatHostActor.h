@@ -47,6 +47,10 @@ public:
 	 * Push every (stat, base) in the thing's stat block into the set as attribute bases
 	 * (the same act as HealthComponent feeding Health). Presence-is-scope: a stat absent
 	 * from the block keeps its base 0.
+	 *
+	 * The block is KEPT (StatBlockAsset below), because this host is then the thing's own answer to
+	 * "what am I" — the rows it carries, the statuses it applies, the marks it wears — and whoever
+	 * holds the host asks IT rather than carrying a second copy of the answer alongside.
 	 */
 	void InitializeFromStatBlock(const UProsperitocracyStatTable* StatBlock);
 
@@ -111,6 +115,12 @@ public:
 	virtual float GetDistanceAttenuation(float Distance, const FGameplayTagContainer* SourceTags = nullptr, const FGameplayTagContainer* TargetTags = nullptr) const override;
 
 	virtual void GetDamageLines(TArray<FProsperitocracyDamageLine>& OutLines) const override;
+
+	/** The block this host was dressed from (StatBlockAsset). Null until it is dressed. */
+	virtual const UProsperitocracyStatTable* GetStatBlock() const override { return StatBlockAsset; }
+
+	/** FINAL value of a stat on this host's own ASC — the ONE evaluator (see GetStatFinal below). */
+	virtual float GetStatFinalValue(EProsperitocracyStat Stat) const override { return GetStatFinal(Stat); }
 	//~End of IProsperitocracyAbilitySourceInterface
 
 	/**
@@ -135,4 +145,16 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, Category = "Prosperitocracy|Stat")
 	TObjectPtr<UProsperitocracyThingStatSet> ThingStatSet;
+
+	/**
+	 * The block this host was dressed from, kept so the host can answer WHAT THE THING IS
+	 * (GetStatBlock above) and so a derived row can be worked out from it — the one place a mark
+	 * (Design/explosions.md's explosion tag) is read, because the mark lives on the block.
+	 *
+	 * A pointer to CONST, exactly as a status holds the block of the status it is carrying: this is a
+	 * read of what the thing is, never a way to edit it — and the bases above are still the thing's
+	 * numbers, so nothing reads this for a value.
+	 */
+	UPROPERTY(Transient)
+	TObjectPtr<const UProsperitocracyStatTable> StatBlockAsset;
 };

@@ -133,7 +133,13 @@ public:
 
 	/** FINAL value of a stat through the ability's GAS home (its host ASC's aggregator —
 	 * (base + Σflat) × Σpercent, the ONE evaluator). Absent stat = 0 (presence-is-scope). */
-	float GetStatFinalValue(EProsperitocracyStat Stat) const;
+	virtual float GetStatFinalValue(EProsperitocracyStat Stat) const override;
+
+	/**
+	 * The ability's own block — what the ability IS: its rows, the statuses it applies, and any mark it
+	 * wears. Null for an ability with no block of its own (see StatBlock below).
+	 */
+	virtual const UProsperitocracyStatTable* GetStatBlock() const override { return StatBlock; }
 
 	/**
 	 * Stamps the ability's GAS-evaluated damage lines (from its stat host — the ONE evaluator)

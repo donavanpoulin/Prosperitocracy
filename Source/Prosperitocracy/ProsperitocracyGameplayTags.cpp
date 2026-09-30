@@ -59,6 +59,8 @@ namespace ProsperitocracyGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Damage_Type_Impact, "Damage.Type.Impact", "Impact damage type. One of the ONLY two damage types (blunt melee, explosions, grenades, push, mech stomp, vehicle ram, thrown objects).");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Damage_Type_Piercing, "Damage.Type.Piercing", "Piercing damage type. One of the ONLY two damage types (sword, bullets, lasers, fire, turrets, drones, burn).");
 
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Explosive, "Explosive", "The explosion mark (Design/explosions.md): a thing whose stat block carries it goes through the ONE explosion pass — the ball, the damage and its falloff, the push, the shake, the sound — with nothing set up per explosive. No tag, no bang.");
+
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Weapon_FireMode_FullAuto, "Prosperitocracy.Weapon.FireMode.FullAuto", "Ranged weapon fire mode: fires continuously while the trigger is held (a tag on the weapon, not a stat).");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Weapon_FireMode_SemiAuto, "Prosperitocracy.Weapon.FireMode.SemiAuto", "Ranged weapon fire mode: one shot per trigger press (a tag on the weapon, not a stat).");
 

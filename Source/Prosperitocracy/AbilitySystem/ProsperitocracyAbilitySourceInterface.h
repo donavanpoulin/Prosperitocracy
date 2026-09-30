@@ -9,8 +9,10 @@
 
 class UObject;
 class UPhysicalMaterial;
+class UProsperitocracyStatTable;
 struct FGameplayTagContainer;
 struct FProsperitocracyDamageLine;
+enum class EProsperitocracyStat : uint8;
 
 /** Base interface for anything acting as a ability calculation source */
 UINTERFACE()
@@ -41,4 +43,25 @@ class IProsperitocracyAbilitySourceInterface
 	virtual void GetDamageLines(TArray<FProsperitocracyDamageLine>& OutLines) const
 	{
 	}
+
+	/**
+	 * The thing's STAT BLOCK — what it IS: the rows it carries, the statuses it applies, and any mark
+	 * it wears (Design/explosions.md's explosion tag).
+	 *
+	 * It lives on this interface because a source that cannot say what it IS forces its caller to
+	 * bring its own copy of the answer — and two copies of "which thing is this" is exactly how a mark
+	 * ends up on one block while the numbers resolve from another. One question, asked of the thing.
+	 */
+	virtual const UProsperitocracyStatTable* GetStatBlock() const = 0;
+
+	/**
+	 * FINAL value of one of the thing's stats, through its own GAS home's aggregator —
+	 * (base + Σflat) × Σpercent, the ONE evaluator. An absent stat is 0 (presence-is-scope).
+	 *
+	 * A source answers for its own numbers rather than handing a caller a block to read a raw base off:
+	 * a raw-base read is a build-blocking violation everywhere in this project, and a consumer of a
+	 * thing — the explosion pass measuring a ball off the thing's Range — needs the evaluated number
+	 * like every other reader does.
+	 */
+	virtual float GetStatFinalValue(EProsperitocracyStat Stat) const = 0;
 };

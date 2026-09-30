@@ -3,6 +3,7 @@
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
 
 #include "AbilitySystem/Attributes/ProsperitocracyThingStatSet.h"
+#include "AbilitySystem/Explosions/ProsperitocracyExplosionStatics.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyGameplayEffectContext.h"
 #include "ProsperitocracyGameplayTags.h"
@@ -39,6 +40,10 @@ void AProsperitocracyStatHostActor::InitializeFromStatBlock(const UProsperitocra
 	{
 		return;
 	}
+
+	// Kept, so this host can answer what the thing IS (GetStatBlock) and so a derived row can be
+	// worked out from the block. It is not a second source of numbers: the bases below are those.
+	StatBlockAsset = StatBlock;
 
 	for (const FProsperitocracyStatTableEntry& Entry : StatBlock->StatEntries)
 	{
@@ -109,9 +114,14 @@ float AProsperitocracyStatHostActor::GetStatFinal(EProsperitocracyStat Stat) con
 
 float AProsperitocracyStatHostActor::GetDistanceAttenuation(float Distance, const FGameplayTagContainer* SourceTags, const FGameplayTagContainer* TargetTags) const
 {
-	// The host's Range/Falloff stats, evaluated by its own aggregator — the ONE universal
-	// falloff (Design/damage.md): full until Falloff, linear to 0 at Range. Absent = no falloff.
-	return UProsperitocracyStatSystemStatics::ComputeDistanceAttenuation(Distance, GetStatFinal(EProsperitocracyStat::Range), GetStatFinal(EProsperitocracyStat::Falloff));
+	// The ONE falloff read for a thing, and the ONE home of the rules it runs on: a gun's own Falloff
+	// row is where its ramp starts, and an EXPLOSION's is the rule — its Range is the WIDTH of its ball,
+	// and its ramp starts halfway out to that edge, with no number authored for it anywhere.
+	//
+	// Read LIVE off this host's final rows, per hit: that is what makes a Range perk move an explosion's
+	// ball and its ramp together, with nothing derived stored on the host to go stale.
+	return ProsperitocracyExplosionHandling::ComputeAttenuation(StatBlockAsset, Distance,
+		GetStatFinal(EProsperitocracyStat::Range), GetStatFinal(EProsperitocracyStat::Falloff));
 }
 
 void AProsperitocracyStatHostActor::GetDamageLines(TArray<FProsperitocracyDamageLine>& OutLines) const

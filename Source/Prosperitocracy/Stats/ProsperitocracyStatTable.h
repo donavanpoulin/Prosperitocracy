@@ -12,6 +12,8 @@
 
 struct FProsperitocracyStatTableEntry;
 
+class AProsperitocracyBlastVisual;
+
 /**
  * FProsperitocracyStatTableEntry
  *
@@ -120,6 +122,37 @@ public:
 	FGameplayTag Slot;
 
 	FGameplayTag GetSlot() const { return Slot; }
+
+	/**
+	 * THE MARKS a thing carries — tags that are neither a stat (those are StatEntries) nor an identity
+	 * like FireMode and Slot above (each of which is ONE tag with a meaning of its own).
+	 *
+	 * The explosion mark lives here (Design/explosions.md). A thing's block plus that mark is the
+	 * ENTIRE wiring: carrying it is what enrols the thing in the one explosion pass, and nothing is
+	 * set up per explosive anywhere. Presence is scope, exactly as everywhere else in this project.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Marks", meta = (Categories = "Explosive"))
+	FGameplayTagContainer Marks;
+
+	/**
+	 * THE BANG'S LOOK — the actor this thing puts up when it explodes, or null for a thing whose bang has
+	 * no picture yet. It is DATA on the block, exactly as the armour's three colour rows are a look carried
+	 * on a block (Design/armor.md).
+	 *
+	 * Some explosions are firey, some are shrapnel and shatter: which one a thing is is the THING's answer,
+	 * held in the one place its numbers already live. The one explosion pass puts up whatever the block
+	 * points at and never learns which it is — so hooking up a new explosive is choosing its look in the
+	 * same breath as choosing its range.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Blast")
+	TSubclassOf<AProsperitocracyBlastVisual> BlastVisual;
+
+	/**
+	 * Whether this block carries the explosion mark — the one question the explosion pass asks of a
+	 * thing. Asked HERE, on the block, so the question and what answers it cannot drift apart.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Marks")
+	bool IsExplosive() const;
 
 	/**
 	 * Builds the canonical default entry list for the universal stat table — every stat-ID

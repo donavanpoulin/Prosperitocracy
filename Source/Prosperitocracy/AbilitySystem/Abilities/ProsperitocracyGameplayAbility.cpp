@@ -14,6 +14,7 @@
 #include "ProsperitocracyAbilitySimpleFailureMessage.h"
 // CUT (2026-09-16): GameFramework/GameplayMessageSubsystem.h — the Lyra plugin (decision at box 1.4a).
 #include "AbilitySystem/ProsperitocracyAbilitySourceInterface.h"
+#include "AbilitySystem/Explosions/ProsperitocracyExplosionStatics.h"
 #include "AbilitySystem/ProsperitocracyDamageStatics.h"
 #include "AbilitySystem/ProsperitocracyGameplayEffectContext.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
@@ -107,6 +108,14 @@ void UProsperitocracyGameplayAbility::NativeOnAbilityFailedToActivate(const FGam
 			// box 1.4a, exactly like the health set's damage verb. The lookup stays and the failure
 			// is logged on our own channel until our own messages port carries it instead.
 			UE_LOG(LogProsperitocracyAbilitySystem, Warning, TEXT("Ability %s failed to activate [%s]: %s"), *GetPathName(), *Reason.ToString(), *pUserFacingMessage->ToString());
+		}
+		else
+		{
+			// AND EVERY REASON IS SAID OUT LOUD, mapped message or not: a refusal that logs nothing reads
+			// as a key that went missing, which is the one thing this path exists to prevent.
+			UE_LOG(LogProsperitocracyAbilitySystem, Warning,
+				TEXT("Ability %s failed to activate [%s] — no user-facing message is mapped for that reason."),
+				*GetPathName(), *Reason.ToString());
 		}
 		
 		if (const UAnimMontage* pMontage = FailureTagToAnimMontage.FindRef(Reason))
@@ -516,9 +525,12 @@ void UProsperitocracyGameplayAbility::AddDamageLinesToContext(FGameplayEffectCon
 
 float UProsperitocracyGameplayAbility::GetDistanceAttenuation(float Distance, const FGameplayTagContainer* SourceTags, const FGameplayTagContainer* TargetTags) const
 {
-	// The ability's Range/Falloff stats, evaluated by its GAS home — the ONE universal falloff
-	// (Design/damage.md): full until Falloff, linear to 0 at Range. Absent stats = no falloff.
-	return UProsperitocracyStatSystemStatics::ComputeDistanceAttenuation(Distance, GetStatFinalValue(EProsperitocracyStat::Range), GetStatFinalValue(EProsperitocracyStat::Falloff));
+	// The ONE falloff read, off the ability's GAS home: a gun-like ability's own Falloff row is where its
+	// ramp starts, and an ability whose block carries the EXPLOSION MARK runs on the explosion's rule —
+	// its Range is the width of its ball and its ramp starts halfway out to the edge, worked out live
+	// from the final Range so a Range perk moves both together.
+	return ProsperitocracyExplosionHandling::ComputeAttenuation(StatBlock, Distance,
+		GetStatFinalValue(EProsperitocracyStat::Range), GetStatFinalValue(EProsperitocracyStat::Falloff));
 }
 
 void UProsperitocracyGameplayAbility::SetStatHostAsAbilitySource(FGameplayEffectContextHandle& Context)

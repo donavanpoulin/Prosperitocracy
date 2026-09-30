@@ -15,7 +15,9 @@
 #include "HAL/IConsoleManager.h"
 #include "UObject/UObjectGlobals.h"
 
+#include "Character/ProsperitocracyCharacter.h"
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
+#include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "Classes/ProsperitocracyClass.h"
 #include "ProsperitocracyGameplayTags.h"
 #include "ProsperitocracyLogChannels.h"
@@ -1027,4 +1029,63 @@ namespace ProsperitocracyDevHurt
 		TEXT("a player has no armour for one to bite on. Run it both ways against one weave to hear each ")
 		TEXT("resist answer for itself."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleHurtCommand));
+
+	// -------------------------------------------------------------------------------------------------
+	// THE BAR'S OWN DOOR, WITHOUT A KEYBOARD — `Prosperitocracy.Ability <1-4>`.
+	//
+	// A number key is the ONE input in this game that no other door reaches: the melee, the right-click
+	// move and the reload are each called straight on the thing in hand, while a number is RECORDED by the
+	// ability system and only acted on by its tick. That second path is the one that can go wrong in
+	// silence, so this command walks it exactly as the key does — it presses and releases the slot on the
+	// body, through the same calls the input binding makes — and says out loud that it did.
+	// -------------------------------------------------------------------------------------------------
+	void HandleAbilityCommand(const TArray<FString>& Args, UWorld* World)
+	{
+		APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
+		AProsperitocracyCharacter* Body = PlayerController ? Cast<AProsperitocracyCharacter>(PlayerController->GetPawn()) : nullptr;
+		if (!Body)
+		{
+			Report(TEXT("no body — this only works while the game is running (PIE)."));
+			return;
+		}
+
+		const int32 Number = (Args.Num() > 0) ? FCString::Atoi(*Args[0]) : 1;
+		if (Number < 1 || Number > 4)
+		{
+			Report(TEXT("the bar has four numbers — 1 to 4."));
+			return;
+		}
+
+		static const FGameplayTag BarNumbers[] =
+		{
+			ProsperitocracyGameplayTags::InputTag_Ability_Slot1,
+			ProsperitocracyGameplayTags::InputTag_Ability_Slot2,
+			ProsperitocracyGameplayTags::InputTag_Ability_Slot3,
+			ProsperitocracyGameplayTags::InputTag_Ability_Slot4
+		};
+
+		// The press and the let-go, through the ability system's own input door — the very call the body's
+		// 1–4 bindings make, and nothing activated directly. A command that does nothing therefore means
+		// the bar's own path does nothing, which is the whole reason this exists rather than a shortcut
+		// straight to the ability.
+		UProsperitocracyAbilitySystemComponent* AbilitySystemComponent =
+			Cast<UProsperitocracyAbilitySystemComponent>(UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Body));
+		if (!AbilitySystemComponent)
+		{
+			Report(TEXT("that body has no ability system — nothing to press on."));
+			return;
+		}
+
+		AbilitySystemComponent->AbilityInputTagPressed(BarNumbers[Number - 1]);
+		AbilitySystemComponent->AbilityInputTagReleased(BarNumbers[Number - 1]);
+
+		Report(FString::Printf(TEXT("bar slot %d pressed and let go through the same door the key uses — the log says what answered and what started."), Number));
+	}
+
+	static FAutoConsoleCommandWithWorldAndArgs AbilityCommand(
+		TEXT("Prosperitocracy.Ability"),
+		TEXT("Press a bar slot exactly as its number key does: Prosperitocracy.Ability <1-4>. It goes through the ")
+		TEXT("BODY's own press/let-go calls and activates nothing directly, so it tests the one input path no ")
+		TEXT("other door in the game reaches — the ability system recording a press and its tick acting on it."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleAbilityCommand));
 }

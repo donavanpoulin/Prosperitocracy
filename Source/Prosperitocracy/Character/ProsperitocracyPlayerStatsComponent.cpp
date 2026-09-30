@@ -1020,6 +1020,35 @@ void UProsperitocracyPlayerStatsComponent::NotifyShotFired(float DragPercent, fl
 	}
 }
 
+//~ Being thrown by a blast -----------------------------------------------------------------------
+
+void UProsperitocracyPlayerStatsComponent::NotifyBlastShove(const FVector& ShoveVelocityCmS)
+{
+	if (ShoveVelocityCmS.IsNearlyZero())
+	{
+		return;
+	}
+
+	// THE BODY THAT HAS LEGS TO BE THROWN ON. A blast catches whatever its ball reaches; only a body
+	// with a movement component has anywhere to put a shove, and a wall, a prop or a part is caught and
+	// dealt to without being thrown — which is the honest answer rather than a silent failure.
+	ACharacter* Body = Cast<ACharacter>(GetOwner());
+	if (!Body)
+	{
+		return;
+	}
+
+	// A THROW, NOT A SPEED. The engine's own launch ADDS to whatever the body was already doing (both
+	// overrides false), so a man running is knocked off his line rather than stopped dead — and a shove
+	// with any upwardness in it takes him off his feet, which is what a blast at them does. Nothing here
+	// decides how hard: the explosion worked that out from the damage it did, and this is the body's own
+	// door for being thrown by it.
+	Body->LaunchCharacter(ShoveVelocityCmS, /*bXYOverride=*/ false, /*bZOverride=*/ false);
+
+	UE_LOG(LogProsperitocracy, Log, TEXT("%s on %s: thrown by a blast — %.0f cm/s along %s"),
+		*GetName(), *GetNameSafe(Body), ShoveVelocityCmS.Size(), *ShoveVelocityCmS.GetSafeNormal().ToCompactString());
+}
+
 //~ The picture's shake ---------------------------------------------------------------------------
 
 void UProsperitocracyPlayerStatsComponent::NotifyViewShake(float ShakeDegrees)
