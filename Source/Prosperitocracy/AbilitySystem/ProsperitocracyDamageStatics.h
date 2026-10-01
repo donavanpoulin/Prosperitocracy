@@ -63,6 +63,23 @@ public:
 		UAbilitySystemComponent* SourceAbilitySystemComponent, const UProsperitocracyStatTable* SourceStatBlock,
 		TSubclassOf<UGameplayEffect> DamageEffectClass);
 
+	/**
+	 * Put every STATUS this thing's block names onto a body it is TOUCHING — the fire's door
+	 * (PLANS/incendiary-strike.md §4: "no hit, no gate, no pen question").
+	 *
+	 * The same list, the same blocks and the same one status component as ApplyEffectsToHit above; the
+	 * ONE difference is the question it does not ask. A hit has to have DONE something for its statuses
+	 * to land, because a shot that bounced off a plate should set nothing alight. A fire is not a hit and
+	 * has no damage to bounce: standing in it is the whole of the reason, so nothing here reads a damage
+	 * number, a pen, a resist or an armour.
+	 *
+	 * It is a second door rather than a flag on the first because the two are different questions, and a
+	 * flag would make "did this count as a hit" something a caller could get wrong.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Damage")
+	static void ApplyStatusesOnContact(AActor* HitActor, UAbilitySystemComponent* SourceAbilitySystemComponent,
+		const UProsperitocracyStatTable* SourceStatBlock, TSubclassOf<UGameplayEffect> DamageEffectClass);
+
 	/** True if the context holds a valid effect context (a source stamped it / lines were added). */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Damage")
 	static bool IsContextValid(FGameplayEffectContextHandle Context);

@@ -13,6 +13,7 @@
 struct FProsperitocracyStatTableEntry;
 
 class AProsperitocracyBlastVisual;
+class UProsperitocracyFireStatTable;
 
 /**
  * FProsperitocracyStatTableEntry
@@ -146,6 +147,19 @@ public:
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Blast")
 	TSubclassOf<AProsperitocracyBlastVisual> BlastVisual;
+
+	/**
+	 * THE FIRE THIS THING LEAVES BURNING — the fire block it points at when it goes off, or null for a
+	 * thing whose bang leaves no fire (PLANS/incendiary-strike.md §4).
+	 *
+	 * DATA, ON THE BLOCK, in the same breath as the bang's look above: a firey explosive leaves fire, a
+	 * shrapnel one does not, and that difference needs no line of code anywhere. The one explosion pass
+	 * puts up whatever fire this names, at the place the bang happened — and the fire's own block owns
+	 * everything about it (how wide it burns, how long, what it puts on what it catches, what it looks
+	 * like), so a flamethrower, a barrel or a second strike leaves fire by naming one, and nothing else.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
+	TSoftObjectPtr<UProsperitocracyFireStatTable> Fire;
 
 	/**
 	 * Whether this block carries the explosion mark — the one question the explosion pass asks of a

@@ -3,6 +3,8 @@
 #include "AbilitySystem/Explosions/ProsperitocracyExplosionStatics.h"
 
 #include "AbilitySystem/Explosions/ProsperitocracyBlastVisual.h"
+#include "AbilitySystem/Explosions/ProsperitocracyFireField.h"
+#include "AbilitySystem/Explosions/ProsperitocracyFireStatTable.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyAbilitySourceInterface.h"
@@ -245,6 +247,52 @@ if (Block->BlastVisual)
 			*GetNameSafe(Block));
 	}
 }
+
+// ---------------------------------------------------------------------------------------------------
+// STAGE 7 — THE FIRE IT LEAVES. A bang leaves fire on the ground by NAMING a fire on its block, in the
+// same breath as naming its look — so a firey explosive burns the ground and a shrapnel one does not, and
+// neither needs a line of code. Everything a fire then does is the fire's own block's business: its
+// circle, its clock, the Burn it applies and what it looks like (PLANS/incendiary-strike.md §4).
+//
+// A thing with no fire named here is not a thing that failed to leave one: presence is scope, exactly as
+// it is for a mark, a status or a bang's look.
+//
+// ASKED OF THE PATH, NEVER OF THE OBJECT (2026-09-30, and it cost a whole play test): `if (Block->Fire)`
+// reads `TSoftObjectPtr::operator bool`, which is `IsValid()` — "is the object LOADED" — not "is a fire
+// named". Nothing loads a fire block until something asks for it, so that test was false for a fire that
+// was named all along and the whole stage was skipped WITHOUT ONE WORD IN THE LOG, because a thing that
+// names no fire is silent by design. Presence is `IsNull()` — the path — and the load is the next step,
+// where a path that cannot be loaded says so out loud.
+// ---------------------------------------------------------------------------------------------------
+	if (!Block->Fire.IsNull())
+	{
+		UProsperitocracyFireStatTable* FireBlock = Block->Fire.LoadSynchronous();
+		if (FireBlock)
+		{
+			FActorSpawnParameters FireParams;
+			FireParams.Owner = Instigator;
+			FireParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+			AProsperitocracyFireField* TheFire = World->SpawnActor<AProsperitocracyFireField>(
+				AProsperitocracyFireField::StaticClass(), Place, FRotator::ZeroRotator, FireParams);
+			if (TheFire)
+			{
+				TheFire->LightTheGround(FireBlock, Instigator, DamageEffectClass);
+			}
+			else
+			{
+				UE_LOG(LogProsperitocracy, Warning,
+					TEXT("[Fire] %s names a fire that could not be spawned — the bang left no ground burning."),
+					*GetNameSafe(Block));
+			}
+		}
+		else
+		{
+			UE_LOG(LogProsperitocracy, Warning,
+				TEXT("[Fire] %s names a fire block that could not be loaded — the bang left no ground burning."),
+				*GetNameSafe(Block));
+		}
+	}
 
 	// One line per bang, and it lists what the ball caught: a horde in the ball is how a blast is read
 	// from outside the game, since one ball can catch many bodies at once.

@@ -94,3 +94,45 @@ void UProsperitocracyDamageStatics::ApplyEffectsToHit(FGameplayEffectContextHand
 		Statuses->ApplyStatus(Applied.StatusTag, StatusBlock, SourceAbilitySystemComponent, DamageEffectClass, Hit);
 	}
 }
+
+void UProsperitocracyDamageStatics::ApplyStatusesOnContact(AActor* HitActor,
+	UAbilitySystemComponent* SourceAbilitySystemComponent, const UProsperitocracyStatTable* SourceStatBlock,
+	TSubclassOf<UGameplayEffect> DamageEffectClass)
+{
+	if (!HitActor || !SourceAbilitySystemComponent || !SourceStatBlock || SourceStatBlock->AppliedEffects.Num() == 0)
+	{
+		return;
+	}
+
+	// The same one component that owns statuses on a body, so any body that can carry one carries this
+	// the same way a burn off a bullet does.
+	UProsperitocracyStatusComponent* Statuses = HitActor->FindComponentByClass<UProsperitocracyStatusComponent>();
+	if (!Statuses)
+	{
+		return;
+	}
+
+	// THE HIT A FIRE IS: the body itself, at no particular place. There is no bullet hole and no part
+	// involved — the fire reached the body and nothing narrower, which is also why its Burn faces the
+	// target as a whole and no armour answers it. The exposure decides where its number comes up, the
+	// same branch a burn's tick already runs on.
+	const FHitResult TouchedTheBodyItself;
+
+	for (const FProsperitocracyAppliedEffect& Applied : SourceStatBlock->AppliedEffects)
+	{
+		const UProsperitocracyStatTable* StatusBlock = Applied.StatBlock.LoadSynchronous();
+		if (!StatusBlock)
+		{
+			// Same authoring bug, same warning: a thing naming a status with no block has no numbers.
+			UE_LOG(LogProsperitocracy, Warning, TEXT("[Status] %s names the status %s with no block — nothing applied."),
+				*GetNameSafe(SourceStatBlock), *Applied.StatusTag.ToString());
+			continue;
+		}
+
+		// Applied AGAIN, every time it is asked: a body standing in fire keeps being set alight, and the
+		// status's own no-stacking rule is what decides whether that refreshes what it carries — nothing
+		// here counts applications.
+		Statuses->ApplyStatus(Applied.StatusTag, StatusBlock, SourceAbilitySystemComponent, DamageEffectClass,
+			TouchedTheBodyItself);
+	}
+}
