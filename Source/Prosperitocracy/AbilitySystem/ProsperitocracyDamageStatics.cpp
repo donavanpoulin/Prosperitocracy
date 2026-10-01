@@ -129,9 +129,10 @@ void UProsperitocracyDamageStatics::ApplyStatusesOnContact(AActor* HitActor,
 			continue;
 		}
 
-		// Applied AGAIN, every time it is asked: a body standing in fire keeps being set alight, and the
-		// status's own no-stacking rule is what decides whether that refreshes what it carries — nothing
-		// here counts applications.
+		// Applied AGAIN, every time it is asked: a body standing in fire keeps being set alight. What that
+		// does to a status the body is ALREADY carrying is the status component's business, and its
+		// answer is his rule (2026-10-01): the one already on the body keeps its clock, and the fire
+		// lights it again the moment that one expires.
 		Statuses->ApplyStatus(Applied.StatusTag, StatusBlock, SourceAbilitySystemComponent, DamageEffectClass,
 			TouchedTheBodyItself);
 	}

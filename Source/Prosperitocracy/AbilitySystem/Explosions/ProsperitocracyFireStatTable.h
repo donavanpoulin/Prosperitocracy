@@ -21,9 +21,9 @@ class UNiagaraSystem;
  *   - it carries no damage of its own. A fire hurts nothing: it applies the Burn, the same way a gun
  *     applies one (his rule, restated twice).
  *
- * What is left here is only what a FIRE has that a gun does not: the flames it is made of, how far
- * apart they lie, how deep they sit in the ground, how they go out, and the ceiling on how many a
- * single fire may lay.
+ * What is left here is only what a FIRE has that a gun does not: THE ONE EFFECT it is, how thickly its
+ * flames stand on the ground, how deep they sit in the surface, how they go out, and the ceiling on how
+ * much fire it may ask for.
  *
  * NAMING ONE IS HOW ANYTHING LEAVES FIRE: a thing's block points at the fire it leaves
  * (UProsperitocracyStatTable::Fire), so the strike today and a flamethrower or a barrel tomorrow are
@@ -36,56 +36,64 @@ class UProsperitocracyFireStatTable : public UProsperitocracyStatTable
 
 public:
 	/**
-	 * THE FLAMES — the fire's pictures, as its own list.
+	 * THE FIRE ITSELF — ONE effect for the whole patch, and not a list of flames to scatter.
 	 *
-	 * A list and not one, because a fire of twenty-odd flames must not read as twenty-odd copies: the
-	 * flames alternate down this list, spot by spot. They are Niagara systems rather than actors
-	 * because that is what the packs ship (every floor fire in Free_Fire is a system, and there is no
-	 * per-fire blueprint to point at) — and NOTHING reads them: the flames are the look, and the thing
-	 * that catches a body is the circle below, never a mesh.
+	 * It is ONE because a fire is one fire: a fire laid as a field of separate little fires costs a
+	 * light, a sim and a clock for every one of them, and a wider Range then means MORE FIRES rather
+	 * than a wider fire (2026-10-01, and the reason this file changed shape). This one effect is made of
+	 * the pack's own parts — the flame, the ash, the haze, the ground card, the lights — with the spread
+	 * put in by us, and everything it does is driven by the rows below plus the numbers our code feeds
+	 * it: how wide its circle is, and how many flames a second it is asking for.
+	 *
+	 * It is a soft pointer so a fire block can be read without dragging the effect in with it, and the
+	 * load happens where the fire is laid, out loud if it fails. The path it ships with is ours
+	 * (`/Game/Abilities/NS_FireField`) and it is DATA: re-point it on this block and a fire burns with a
+	 * different effect, with no code anywhere.
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
-	TArray<TSoftObjectPtr<UNiagaraSystem>> Flames;
+	TSoftObjectPtr<UNiagaraSystem> FireLook =
+		TSoftObjectPtr<UNiagaraSystem>(FSoftObjectPath(TEXT("/Game/Abilities/NS_FireField.NS_FireField")));
 
 	/**
-	 * [TUNE] MINE — how far apart the flames are laid, in meters, before the ceiling thins them.
+	 * [TUNE] MINE — how thickly the flames stand on the ground: flame cards a second, PER SQUARE METRE.
 	 *
-	 * This is the ONE density knob, and it is what a fire's count comes off: the flames lie on an even
-	 * spread one to a cell this wide, so a wider fire lays more of them and nothing authors "how many".
-	 * A floor fire is about 0.5 m across (his number, 2026-09-30), so this sits above that: the flames
-	 * read as separate fires burning in the same patch of ground, never as one texture.
+	 * This is the ONE density knob, and it is where a fire's count comes from: a wider circle asks for
+	 * more flames off this number and nothing authors "how many". 53 is the number the effect was
+	 * approved at — a 12 m circle (113 m²) asking for 6,000 cards a second, with each card living about
+	 * four fifths of a second, so about 4,800 of them are alight at once.
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
-	float SpacingMeters = 1.2f;
+	float FlamesASquareMetreASecond = 53.0f;
 
 	/**
-	 * [TUNE] MINE — how deep in the surface each flame sits, in cm, along the surface's own normal.
+	 * [TUNE] MINE — the MOST flames a second one fire may ask for, however wide its circle grows.
 	 *
-	 * A fire's origin is not its middle: the pack's system hangs somewhere above the ground it means to
-	 * burn, so every flame is pushed into the surface by this. His to move, and his to place once — the
+	 * Past it the fire does not grow thicker, it just covers more ground: the same ceiling his rule asks
+	 * for, the look giving under load and never the fire — the circle, the Burn and the clock are the
+	 * same either way.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
+	int32 MostFlamesASecond = 12000;
+
+	/**
+	 * [TUNE] MINE — how deep in the surface the flame sits, in cm, along the surface's own normal.
+	 *
+	 * A fire's origin is not its middle: the effect hangs somewhere above the ground it means to burn,
+	 * so the whole picture is pushed into the surface by this. His to move, and his to place once — the
 	 * number cannot be read off the file, it is set by looking at one flame in the world.
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
 	float SinkCm = 5.0f;
 
 	/**
-	 * [TUNE] MINE — how long the flames take to go out, in seconds, measured back from the END of the
+	 * [TUNE] MINE — how long the fire takes to burn DOWN, in seconds, measured back from the END of the
 	 * fire's Duration. INSIDE the Duration, never after it (his rule, 2026-09-30): the ground catches
-	 * people for the whole of the fire's life, the going-out included, so this changes the look and
+	 * people for the whole of the fire's life, the burning down included, so this changes the look and
 	 * nothing else.
+	 *
+	 * The burning down is the fire thinning ITSELF — one fire asking for less and less fire, its flames
+	 * going out on their own as it goes — rather than a field of little fires stopping one at a time.
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
 	float FadeSeconds = 3.0f;
-
-	/** [TUNE] MINE — how long ONE flame takes to shrink away once its own moment comes. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
-	float FlameGoesOutSeconds = 0.4f;
-
-	/**
-	 * [TUNE] MINE — the MOST flames one fire may lay. Past it the same circle is covered thinner
-	 * (a wider spread), because the look is what gives under load and never the fire: fewer flames
-	 * still read as burning ground, while a flame taken away leaves bare ground that still burns you.
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
-	int32 MostFlamesInOneFire = 200;
 };

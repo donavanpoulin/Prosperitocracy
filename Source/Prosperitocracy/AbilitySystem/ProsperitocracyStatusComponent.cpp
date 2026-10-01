@@ -140,22 +140,6 @@ float UProsperitocracyStatusComponent::GetTickInterval(const FProsperitocracyLiv
 	return (Rate > 0.0f) ? (1.0f / Rate) : 0.0f;
 }
 
-float UProsperitocracyStatusComponent::GetStatusValue(const FProsperitocracyLiveStatus& Live, float RemainingSeconds) const
-{
-	// The dominant-instance comparison needs ONE number per status, and it is the same number read two
-	// ways — both of them the damage or the time still to come, never a different currency:
-	//   - a status that ticks is worth the damage still to come: Rate x Piercing Damage x time left;
-	//   - a status that only lasts is worth the time left.
-	if (DoesTick(Live))
-	{
-		return GetStatusStat(Live, EProsperitocracyStat::Rate)
-			* GetStatusStat(Live, EProsperitocracyStat::PiercingDamage)
-			* RemainingSeconds;
-	}
-
-	return RemainingSeconds;
-}
-
 void UProsperitocracyStatusComponent::ApplyStatus(const FGameplayTag& StatusTag, const UProsperitocracyStatTable* Block,
 	UAbilitySystemComponent* SourceAbilitySystemComponent, TSubclassOf<UGameplayEffect> DamageEffectClass, const FHitResult& Hit)
 {
@@ -202,40 +186,28 @@ void UProsperitocracyStatusComponent::ApplyStatus(const FGameplayTag& StatusTag,
 		return;
 	}
 
-	const float NewValue = GetStatusValue(Prepared, Duration);
-
-	// No stacking: the dominant instance wins, decided now, at the moment the new one lands. The new
-	// instance is worth its FULL value (it has all of its time left); the one already there is worth
-	// only what it has left.
+	// NO STACKING, AND NO TAKING OVER EITHER (his rule, 2026-10-01). A body keeps the status it is
+	// carrying until that one EXPIRES, and only then can the next one start: the burn runs its own clock
+	// and deals its own ticks, and a fire that keeps setting a body alight lights it again the moment the
+	// last one runs out.
+	//
+	// What this replaces, and why it had to go: the older rule kept whichever instance was worth more —
+	// the newcomer's whole value against what was LEFT of the one on the body — and a winner RESET the
+	// clock. Standing in fire re-applies every fifth of a second, so every re-application beat the burn
+	// left on the body and pushed its first tick back again: a body turned on screen and took no damage
+	// at all until it walked out. And a stronger thing in the room overrode every burn in it, which is
+	// the balance he called out. A status that is carried is not re-decided.
 	FProsperitocracyLiveStatus* Live = FindLive(StatusTag);
-	// Whether the body was ALREADY carrying this status, asked once: a re-application strengthens what
-	// is there and keeps the look it already has — a body that is already burning does not light a
-	// second fire on itself.
-	const bool bAlreadyCarried = (Live != nullptr);
 	if (Live)
 	{
-		const float RemainingValue = GetStatusValue(*Live, GetSecondsLeft(*Live, Now));
-		if (NewValue <= RemainingValue)
-		{
-			// The instance already on the body is worth more than the one arriving: it stays, and the
-			// newcomer is thrown away — a weaker hit does not shorten a stronger status.
-			NewHost->Destroy();
-			return;
-		}
-
-		// The newcomer wins: it takes the entry over, and the numbers move to its block.
-		Live->Block = Block;
-		Live->Host->InitializeFromStatBlock(Block);
-		Live->SourceAbilitySystemComponent = SourceAbilitySystemComponent;
-		Live->DamageEffectClass = DamageEffectClass;
-		Live->Hit = Hit;
+		// The instance on the body keeps its block, its numbers, its clock and its look; nothing about it
+		// moves and the arriving one is thrown away.
 		NewHost->Destroy();
+		return;
 	}
-	else
-	{
-		LiveStatuses.Add(Prepared);
-		Live = &LiveStatuses.Last();
-	}
+
+	LiveStatuses.Add(Prepared);
+	Live = &LiveStatuses.Last();
 
 	Live->EndTime = Now + Duration;
 	// A ticking status's first tick comes one interval after it lands, not on the same frame: N ticks
@@ -250,12 +222,10 @@ void UProsperitocracyStatusComponent::ApplyStatus(const FGameplayTag& StatusTag,
 		TargetAbilitySystemComponent->SetLooseGameplayTagCount(StatusTag, 1);
 	}
 
-	// The status's own look goes on with it — once, at the moment it lands. This is the only place a
-	// look is ever put on a body, so any body that can carry a burn wears it the same way.
-	if (!bAlreadyCarried)
-	{
-		BeginStatusEffect(*Live);
-	}
+	// The status's own look goes on with it — once, at the moment it lands, and there is only ever one
+	// landing now that a status is never taken over. This is the only place a look is ever put on a
+	// body, so any body that can carry a burn wears it the same way.
+	BeginStatusEffect(*Live);
 
 	ProsperitocracyStatus::Report(StatusTag, /*OnScreenKey=*/ 0x9010,
 		FString::Printf(TEXT("%s on %s — %.1fs"), *StatusTag.ToString(), *Owner->GetName(), Duration));

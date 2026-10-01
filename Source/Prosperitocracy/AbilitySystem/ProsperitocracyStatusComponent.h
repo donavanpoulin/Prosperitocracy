@@ -97,10 +97,13 @@ struct FProsperitocracyLiveStatus
  *
  * Behaviour a status has, beyond its numbers:
  *
- *   - **No stacking.** Reapplied, the dominant instance wins, and dominant is decided at the moment it
- *     lands: the new instance's full value against the current instance's remaining value. For a
- *     ticking status the value is the damage still to come (Rate x Piercing Damage x time left); for a
- *     status that only lasts, it is the time left.
+ *   - **No stacking, and no taking over either** (his rule, 2026-10-01). A body keeps the status it is
+ *     carrying until that one EXPIRES; while one is on, the same status landing again does nothing at
+ *     all - no refresh, no reset, no comparison - and the next application starts a fresh one the
+ *     moment the last runs out. Universal: every status, every body, every source.
+ *     What this replaced: the newcomer's whole value against what was LEFT of the one on the body,
+ *     with a winner that reset the clock - and a fire re-applying every fifth of a second reset it
+ *     before the burn's first tick could ever land, so a body burned and took no damage at all.
  *   - **A tick's damage is a normal Piercing damage line**, through the same pen-gate → resist path as
  *     a bullet, from the status's own block (its Penetration against the part it caught). It carries no
  *     falloff, because the block carries no Range/Falloff — presence is scope, not a special case.
@@ -149,13 +152,6 @@ private:
 
 	/** Seconds left on a status, never negative. */
 	float GetSecondsLeft(const FProsperitocracyLiveStatus& Live, float Now) const;
-
-	/**
-	 * What a status is worth for the no-stacking comparison: the damage still to come for a status that
-	 * ticks, the seconds left for one that only lasts. One number, either way — the same act decides
-	 * both statuses, because which one applies IS presence-is-scope on the block.
-	 */
-	float GetStatusValue(const FProsperitocracyLiveStatus& Live, float RemainingSeconds) const;
 
 	/** Does this status tick damage? True when its block carries Rate and Piercing Damage. */
 	static bool DoesTick(const FProsperitocracyLiveStatus& Live);
