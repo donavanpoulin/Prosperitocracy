@@ -10,13 +10,18 @@
 #include "Animation/AnimMontage.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/ChildActorComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/CollisionProfile.h"
 #include "EnhancedInputComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/SpringArmComponent.h"
 #include "InputAction.h"
+#include "PhysicsEngine/BodyInstance.h"
+#include "PhysicsEngine/PhysicalAnimationComponent.h"
 #include "ProsperitocracyGameplayTags.h"
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStat.h"
@@ -47,6 +52,11 @@ AProsperitocracyCharacter::AProsperitocracyCharacter()
 	// that every body that can carry a status — this one and the damage targets — carries the same
 	// component, and a status applied to either goes through the same code.
 	Statuses = CreateDefaultSubobject<UProsperitocracyStatusComponent>(TEXT("Statuses"));
+
+	// THE PHYSICAL ANIMATION COMPONENT — the standard's smooth entry into the ragdoll (see the namespace
+	// at the top of the header). Created here so every body that can be thrown carries one, player and
+	// enemy alike, and pointed at this body's mesh in BeginPlay.
+	PhysicalAnimation = CreateDefaultSubobject<UPhysicalAnimationComponent>(TEXT("PhysicalAnimation"));
 
 	// A live attack is driven per frame (see Tick), so this body has to tick. Asked for here rather
 	// than left to whichever blueprint happens to have it switched on: the attack's own clock is
@@ -902,6 +912,16 @@ void AProsperitocracyCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// A LIMP BODY IS THE PHYSICS STACK'S AND NOTHING ELSE'S. The force is waiting to go on, the body is
+	// tumbling, and then it gets up — so the whole of this body's tick is that one pass until he is back
+	// on his feet. His aim is turning nothing (the pose is the physics'), his legs are off, and his attack
+	// already let go of him (GoLimp), so nothing below it has anything to do and none of it runs.
+	if (bBodyLimp)
+	{
+		TickLimpBody(DeltaSeconds);
+		return;
+	}
+
 	// WHERE HE IS FACING IS THE AIM'S, always, and the aim comes round at his own rate. The one thing
 	// that takes it over is a live attack: a swing goes along its line and looks along it until it is
 	// over, so the aim wears the blade's line for the whole of it — and the gun, the arms and the
@@ -1086,3 +1106,355 @@ float AProsperitocracyCharacter::GetBodyResist_Implementation(const FGameplayEff
 
 	return Stats->GetStat(UProsperitocracyStatSystemStatics::GetResistStatForDamageType(DamageType));
 }
+
+//~ BODIES THROWN — Epic's own physics stack, and the whole of it on this body -------------------------
+//
+// The doc — "Physics Driven Animation in Unreal Engine" (UE 5.8) — and the tutorial that goes with it are
+// quoted line by line in the namespace at the top of the header, and this is where each of those lines
+// lives. Nothing here is hand-rolled: the two documented nodes, the engine's own named collision presets,
+// the engine's own settled answer, and the standard's "impulse on the hit bone".
+//
+// NOTHING ABOUT A BLAST IS SPECIAL-CASED HERE, and that is the whole reason it lives on the body: a
+// grenade, a rocket, a mech stomp, a barrel and an ability's blast all bring the same thing (a speed), so
+// all of them get the same body and a new explosive is wired to this by dealing damage and by nothing else.
+
+namespace
+{
+	/**
+	 * THE MESH THAT TAKES THE PHYSICS — the body's ANIMATED mesh.
+	 *
+	 * On this rig that is the hidden Mannequin, and simulating it is what a player SEES: the visible body
+	 * retargets off it (`RetargetPoseFromMesh`, which reads this component's bone transforms every
+	 * frame), so this mesh's pose IS the pose on screen. The visible body's own component is never
+	 * simulated — it is the picture, not the thing being thrown.
+	 */
+	USkeletalMeshComponent* GetThrowableMesh(const AActor* Body)
+	{
+		const ACharacter* Character = Cast<ACharacter>(Body);
+		return Character ? Character->GetMesh() : nullptr;
+	}
+}
+
+void AProsperitocracyCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+
+	USkeletalMeshComponent* BodyMesh = GetThrowableMesh(this);
+
+	// THE CAMERA GOES INSIDE THE MESH — the standard's fix for the one thing every ragdoll tutorial runs
+	// into: a camera hanging off the capsule stays behind the moment the body is thrown, so you watch the
+	// room instead of watching the man. The boom keeps its own offset; only what it hangs from changes,
+	// and in normal play the mesh and the capsule move together, so nothing about the camera changes.
+	if (BodyMesh)
+	{
+		if (USpringArmComponent* Boom = FindComponentByClass<USpringArmComponent>())
+		{
+			if (Boom->GetAttachParent() != BodyMesh)
+			{
+				const FTransform BoomOffset = Boom->GetRelativeTransform();
+				Boom->AttachToComponent(BodyMesh, FAttachmentTransformRules::KeepRelativeTransform);
+				Boom->SetRelativeTransform(BoomOffset);
+
+				UE_LOG(LogProsperitocracy, Log, TEXT("[Thrown] %s: the camera boom hangs off the mesh now, so it follows the body when it is thrown."), *GetName());
+			}
+		}
+	}
+
+	// THE PHYSICAL ANIMATION COMPONENT is pointed at this body's mesh, once.
+	if (PhysicalAnimation && BodyMesh)
+	{
+		PhysicalAnimation->SetSkeletalMeshComponent(BodyMesh);
+	}
+}
+
+float AProsperitocracyCharacter::GetThrowingWeightLbs() const
+{
+	// WHAT THIS BODY WEIGHS, off its OWN row, read FINAL through the one evaluator — the same value the
+	// movement and the turn read, and the same one a weight perk moves. Nothing here adds the kit up
+	// itself: the sum has one home (the row) and this is a read of a stat like any other.
+	const UProsperitocracyPlayerStatsComponent* Stats = GetStats(this);
+	return Stats ? FMath::Max(0.0f, Stats->GetStat(EProsperitocracyStat::CarriedWeight)) : 0.0f;
+}
+
+float AProsperitocracyCharacter::GetThrowWeightDamping() const
+{
+	// His rule, one shape: heavier is thrown less. Never above one, so a blast's own cap is still the
+	// ceiling on any throw, and never zero, so no body is ever thrown by nothing.
+	const float Reference = ProsperitocracyBodiesThrown::WeightDampingReferenceLbs;
+	return Reference / (Reference + GetThrowingWeightLbs());
+}
+
+void AProsperitocracyCharacter::ThrowTheBody(const FVector& ShoveVelocityCmS, const FVector& HitPointWorld)
+{
+	if (ShoveVelocityCmS.IsNearlyZero())
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* BodyMesh = GetThrowableMesh(this);
+
+	// THE DOC'S FIRST REQUIREMENT, and the only reason this body cannot be thrown: "the use of physics on
+	// a Skeletal Mesh in any form requires that the mesh have a Physics Asset set up and applied to it".
+	if (!BodyMesh || !BodyMesh->GetPhysicsAsset())
+	{
+		UE_LOG(LogProsperitocracy, Warning, TEXT("[Thrown] %s cannot be thrown: %s has no physics asset applied to it (the doc's own requirement)."),
+			*GetName(), *GetNameSafe(BodyMesh));
+		return;
+	}
+
+	const float WeightLbs = GetThrowingWeightLbs();
+	const float Damping = GetThrowWeightDamping();
+	const FVector Throw = ShoveVelocityCmS * Damping;
+
+	// THE HIT BONE — the standard's "impulse on the hit bone". A ball catches a body's COLLISION, which on
+	// a character is its capsule and a capsule has no bones, so the bone is the one NEAREST the point the
+	// ball touched; with nothing to aim at, the pelvis, which is the standard's own default.
+	const FName HitBone = HitPointWorld.IsNearlyZero()
+		? FName(ProsperitocracyBodiesThrown::BeginAtBoneName)
+		: BodyMesh->FindClosestBone(HitPointWorld, /*BoneLocation=*/nullptr, /*IgnoreScale=*/0.0f, /*bRequirePhysicsAsset=*/true);
+
+	const FName Bone = (HitBone == NAME_None) ? FName(ProsperitocracyBodiesThrown::BeginAtBoneName) : HitBone;
+
+	if (bBodyLimp)
+	{
+		// HIT AGAIN WHILE LIMP: the force lands where the body lies. Woken first, so it cannot land on a
+		// body the world had already put to sleep; the hold before the snap is abandoned because the body
+		// is moving again.
+		BodyMesh->WakeAllRigidBodies();
+		BodyMesh->AddImpulse(Throw, Bone, /*bVelChange=*/true);
+
+		bBodyResting = false;
+		RestingSeconds = 0.0f;
+
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Thrown] %s is hit again while limp: %.0f cm/s on '%s' (%.0f lb, damping x%.2f)."),
+			*GetName(), Throw.Size(), *Bone.ToString(), WeightLbs, Damping);
+		return;
+	}
+
+	// THE FORCE WAITS ONE TICK (see the state block in the header): at a blend weight of zero the
+	// animation still writes the bodies every frame, and a velocity put on in that same frame is written
+	// straight back out again. It goes on the first tick the weight has left zero.
+	PendingThrow = Throw;
+	PendingThrowBone = Bone;
+	bThrowPending = true;
+
+	GoLimp();
+
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Thrown] %s is blasted: %.0f cm/s of the blast's %.0f, after %.0f lb (weight damping x%.2f) — limp on %s, force on '%s'."),
+		*GetName(), Throw.Size(), ShoveVelocityCmS.Size(), WeightLbs, Damping, *BodyMesh->GetName(), *Bone.ToString());
+}
+
+void AProsperitocracyCharacter::GoLimp()
+{
+	USkeletalMeshComponent* BodyMesh = GetThrowableMesh(this);
+	if (!BodyMesh)
+	{
+		return;
+	}
+
+	// THE ATTACK LETS GO OF HIM FIRST (ours): a live attack drives his LOCATION along its line every frame
+	// and refuses his own movement, and a limp body is not running anywhere. Released rather than ended, so
+	// the ground he has already covered is the ground he keeps; the move's picture comes off with it.
+	if (bAttackLive)
+	{
+		ReleaseMovementLock();
+	}
+	if (bFacingHeld)
+	{
+		ReleaseFacing();
+	}
+	EndMovePicture();
+
+	// THE COLLISIONS, together, exactly as the standard does it: the capsule is switched off so the man's
+	// own collision cannot fight the ragdoll, and the mesh takes the engine's own "Ragdoll" preset so its
+	// bodies collide with the world. IT IS NEVER SET TO NO COLLISION AT ALL — Epic's own correction in the
+	// tutorial: "No Collision" makes the physics system stop tracking the body's velocity and the character
+	// loses its momentum; it is the engine's named presets that carry the right responses.
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		Movement->StopMovementImmediately();
+		Movement->SetMovementMode(MOVE_None);
+	}
+
+	BodyMesh->SetCollisionProfileName(TEXT("Ragdoll"));
+
+	// THE DOC'S TWO NODES, from the pelvis. Every body below it — the root included, because a root that
+	// does not simulate is dragged by the character instead of falling free — starts simulating, and the
+	// blend weight starts at NOTHING (the animation's pose) and is ramped by this body's tick, applied by
+	// the animation blueprint's node every frame.
+	BodyMesh->SetSimulatePhysics(true);
+	BodyMesh->SetAllBodiesBelowSimulatePhysics(FName(ProsperitocracyBodiesThrown::BeginAtBoneName), /*bNewSimulate=*/true, /*bIncludeSelf=*/true);
+
+	PhysicsBlendWeight = 0.0f;
+	BodyMesh->SetAllBodiesBelowPhysicsBlendWeight(FName(ProsperitocracyBodiesThrown::BeginAtBoneName), PhysicsBlendWeight, /*bSkipCustomPhysicsType=*/false, /*bIncludeSelf=*/true);
+	BodyMesh->WakeAllRigidBodies();
+
+	bBodyLimp = true;
+	bBodyResting = false;
+	RestingSeconds = 0.0f;
+
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Thrown] %s goes limp: '%s' takes the Ragdoll preset, every body below '%s' is simulating, blend weight %.1f and climbing."),
+		*GetName(), *BodyMesh->GetName(), ProsperitocracyBodiesThrown::BeginAtBoneName, PhysicsBlendWeight);
+}
+
+void AProsperitocracyCharacter::TickLimpBody(float DeltaSeconds)
+{
+	USkeletalMeshComponent* BodyMesh = GetThrowableMesh(this);
+	if (!BodyMesh)
+	{
+		// The mesh went away underneath a limp body (a teardown, a respawn): there is nothing left to
+		// simulate and nobody left to get up, so the state goes with it rather than ticking over nothing.
+		bBodyLimp = false;
+		return;
+	}
+
+	// THE BLEND WEIGHT, ramped here and APPLIED BY THE ANIMATION BLUEPRINT every tick (the doc's own node,
+	// reading GetBodyPhysicsBlendWeight): 0 is the animation's pose, 1 is the physics'.
+	PhysicsBlendWeight = FMath::Min(1.0f, PhysicsBlendWeight + DeltaSeconds / ProsperitocracyBodiesThrown::PhysicsBlendSeconds);
+
+	// THE FORCE, on the first tick the weight has left zero (see the state block in the header).
+	if (bThrowPending && PhysicsBlendWeight > 0.0f)
+	{
+		BodyMesh->AddImpulse(PendingThrow, PendingThrowBone, /*bVelChange=*/true);
+		bThrowPending = false;
+
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Thrown] %s takes the force: %.0f cm/s on '%s'."),
+			*GetName(), PendingThrow.Size(), *PendingThrowBone.ToString());
+	}
+
+	// THE PHYSICAL ANIMATION DRIVE lets go of him across the blend: a full pull while the weight is still
+	// low, nothing at all once the physics owns the pose. That is the standard's smooth entry — the body is
+	// caught rather than snapped into, and the joints stop being held the moment the ragdoll is real.
+	if (PhysicalAnimation)
+	{
+		const float LettingGo = 1.0f - PhysicsBlendWeight;
+
+		FPhysicalAnimationData Drive;
+		Drive.bIsLocalSimulation = false;
+		Drive.OrientationStrength = ProsperitocracyBodiesThrown::PhysicalDriveOrientation * LettingGo;
+		Drive.AngularVelocityStrength = ProsperitocracyBodiesThrown::PhysicalDriveAngularVelocity * LettingGo;
+		Drive.PositionStrength = ProsperitocracyBodiesThrown::PhysicalDrivePosition * LettingGo;
+		Drive.VelocityStrength = ProsperitocracyBodiesThrown::PhysicalDriveVelocity * LettingGo;
+
+		PhysicalAnimation->ApplyPhysicalAnimationSettingsBelow(FName(ProsperitocracyBodiesThrown::BeginAtBoneName), Drive, /*bIncludeSelf=*/true);
+	}
+
+	// HAS IT COME TO REST — the engine's own answer, and no number of ours: every body asleep is a body that
+	// has sat below the solver's own sleep threshold long enough. Asked every frame, because it is one cheap
+	// call and a body that has stopped should not wait on a clock of ours to be noticed.
+	if (!bBodyResting && !BodyMesh->IsAnyRigidBodyAwake())
+	{
+		FBodyInstance* RootBody = BodyMesh->GetBodyInstance(NAME_None);
+		RestLocation = RootBody ? RootBody->GetUnrealWorldTransform().GetLocation() : GetActorLocation();
+		bBodyResting = true;
+		RestingSeconds = 0.0f;
+
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Thrown] %s has come to rest at %s — held there %.2fs, then up (the get-up clip we do not own is this hold)."),
+			*GetName(), *RestLocation.ToCompactString(), ProsperitocracyBodiesThrown::GetUpHoldSeconds);
+		return;
+	}
+
+	// THE HOLD, and then the get-up: ours, where the standard blends the weight back down into a get-up
+	// montage.
+	if (bBodyResting)
+	{
+		RestingSeconds += DeltaSeconds;
+		if (RestingSeconds >= ProsperitocracyBodiesThrown::GetUpHoldSeconds)
+		{
+			GetTheBodyUp();
+		}
+	}
+}
+
+void AProsperitocracyCharacter::GetTheBodyUp()
+{
+	USkeletalMeshComponent* BodyMesh = GetThrowableMesh(this);
+	if (!BodyMesh)
+	{
+		bBodyLimp = false;
+		return;
+	}
+
+	// WHERE HE STOPPED IS WHERE HE GETS UP — never where the blast caught him. The standard's own re-anchor:
+	// the capsule is moved to the ragdoll, never the ragdoll to the capsule.
+	const FVector Stopped = RestLocation;
+
+	// THE DRIVE OFF, AND THE PHYSICS OFF: nothing holds the joints any more, every body below the pelvis
+	// stops simulating, and the mesh goes back to the preset it lives in — "CharacterMesh", never a mesh
+	// with no collision at all (Epic's own correction: that is the state that loses the tracked velocity).
+	if (PhysicalAnimation)
+	{
+		PhysicalAnimation->ApplyPhysicalAnimationSettingsBelow(FName(ProsperitocracyBodiesThrown::BeginAtBoneName), FPhysicalAnimationData(), /*bIncludeSelf=*/true);
+	}
+
+	BodyMesh->SetAllBodiesBelowSimulatePhysics(FName(ProsperitocracyBodiesThrown::BeginAtBoneName), /*bNewSimulate=*/false, /*bIncludeSelf=*/true);
+	BodyMesh->SetSimulatePhysics(false);
+	BodyMesh->SetCollisionProfileName(TEXT("CharacterMesh"));
+
+	// THE POSE IS THE ANIMATION'S AGAIN, all at once — the snap. The standard blends this down to 0.0 into a
+	// get-up montage; we own no get-up clip, so his call stands: locked in place, then up.
+	PhysicsBlendWeight = 0.0f;
+	BodyMesh->SetAllBodiesBelowPhysicsBlendWeight(FName(ProsperitocracyBodiesThrown::BeginAtBoneName), PhysicsBlendWeight, /*bSkipCustomPhysicsType=*/false, /*bIncludeSelf=*/true);
+
+	// THE CAPSULE'S COLLISION COMES BACK — the engine's own "Pawn" preset, which is QueryAndPhysics and
+	// blocks what a pawn blocks.
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionProfileName(TEXT("Pawn"));
+	}
+
+	// AND HE STANDS ON THE GROUND UNDER HIMSELF. He stopped on a floor, a step or a slope and the capsule
+	// has to land on THAT, so the ground is asked for straight down from where he stopped; and the shrug
+	// when there is nothing under him (a body stopped on a ledge or in the air) is to stand at the height he
+	// stopped at rather than fall through the world.
+	const float HalfHeight = GetCapsuleComponent() ? GetCapsuleComponent()->GetScaledCapsuleHalfHeight() : 88.0f;
+	FVector StandAt = Stopped;
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(BodiesThrownGetUp), /*bTraceComplex=*/false, this);
+	FHitResult Ground;
+	if (GetWorld() && GetWorld()->LineTraceSingleByChannel(Ground, Stopped + FVector(0.0f, 0.0f, 50.0f), Stopped - FVector(0.0f, 0.0f, 300.0f), ECC_Visibility, Params))
+	{
+		StandAt.Z = Ground.ImpactPoint.Z;
+	}
+	StandAt.Z += HalfHeight;
+
+	const FVector Before = GetActorLocation();
+	SetActorLocation(StandAt, /*bSweep=*/false);
+
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		Movement->SetMovementMode(MOVE_Walking);
+	}
+
+	bBodyLimp = false;
+	bBodyResting = false;
+	RestingSeconds = 0.0f;
+	bThrowPending = false;
+	PendingThrow = FVector::ZeroVector;
+	PendingThrowBone = NAME_None;
+	RestLocation = FVector::ZeroVector;
+
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Thrown] %s is up: stopped at %s, stood at %s (moved %.0f cm) — the get-up is the snap, no clip is owned."),
+		*GetName(), *Stopped.ToCompactString(), *StandAt.ToCompactString(), FVector::Dist(Before, StandAt));
+}
+
+//~ BODIES THROWN — owed, and named --------------------------------------------------------------------
+//
+// - NOT REPLICATED. Nothing about a limp body is sent to anyone: this is the single-player shape, and a
+//   second player would watch a man stand still while he was thrown. The damage and the burn above it
+//   already replicate; the throw is the half that does not, and it is named here rather than discovered in
+//   a co-op test.
+// - THE BLEND WEIGHT'S OWN APPLICATION is the ANIMATION BLUEPRINT's: `GetBodyPhysicsBlendWeight` gives the
+//   number, the doc's node applies it below the pelvis every tick. That node is the one piece of this stack
+//   that is not in this file.
+// - HIS INPUT is untouched. His legs do nothing (the movement mode is off), but a fire press still fires,
+//   because nothing here takes his buttons away. Whether a limp body may shoot is his call.
+// - THE NUMBERS THAT ARE MINE, all `[TUNE]`, all in the namespace at the top of the header and all his to
+//   move: the blend time, the hold before the snap, the weight reference, and the physical drive strengths.
+//   Everything else is the engine's own — the sleep threshold that decides "come to rest", the collision
+//   presets, and the physics asset.

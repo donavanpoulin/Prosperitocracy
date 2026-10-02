@@ -14,6 +14,7 @@ class AProsperitocracyWeapon;
 class UChildActorComponent;
 class UInputAction;
 class UInputComponent;
+class UPhysicalAnimationComponent;
 class UProsperitocracyPlayerStatsComponent;
 class UProsperitocracyStatusComponent;
 class USkeletalMeshComponent;
@@ -101,6 +102,88 @@ namespace ProsperitocracyBodyAimHandling
 namespace ProsperitocracyEquipInput
 {
 	constexpr float HoldSeconds = 0.25f;
+}
+
+/**
+ * BODIES THROWN — the one physics stack every thrown body in the game goes through, built to the letter
+ * of Epic's own documentation ("Physics Driven Animation in Unreal Engine", UE 5.8 docs; the same nodes
+ * the "Ragdolling and how to recover from it" tutorial uses).
+ *
+ * WHAT THE DOC SAYS, and where each sentence lives:
+ *   - "the use of physics on a Skeletal Mesh in any form requires that the mesh have a Physics Asset set
+ *     up and applied to it" → ThrowTheBody refuses a body with none, out loud.
+ *   - "the two primary tools you will need are the Set All Bodies Simulate Physics and Set All Bodies
+ *     Below Physics Blend Weight nodes" → GoLimp and the animation blueprint's event graph.
+ *   - "Set All Bodies Below Simulate Physics … will recurse down the bone chain from a given bone" →
+ *     applied from `BeginAtBoneName` (the pelvis), and the ROOT is included, because a root that does not
+ *     simulate is dragged by the character instead of falling free.
+ *   - "Set All Bodies Below Physics Blend Weight … At a value of 1.0, the given bone and all those below
+ *     it are completely driven by physics. At a value of 0.0, the Skeletal Mesh has returned to its
+ *     original keyframe animation." → `PhysicsBlendWeight` is ours; the NODE is in the ABP
+ *     (`GetBodyPhysicsBlendWeight`), "generally placed within your character's Animation Blueprint Event
+ *     Graph", driven every tick, up to 1.0 and back down to 0.0.
+ *   - Epic's own correction in the tutorial (mesh collision "No Collision" loses the body's momentum,
+ *     "Query Only" keeps the physics tracking it) → the mesh is never left with no collision; it carries
+ *     the engine's own named presets: Ragdoll while it simulates, CharacterMesh back when it is up.
+ *
+ * WHAT IS OURS, and nothing else is: the TRIGGER (a blast's shove handed over by the one explosion
+ * pass), the WEIGHT DAMPING (his rule — heavier is thrown less), and the no-clip GET-UP (freeze where it
+ * stopped, then snap upright), because we own no get-up clip — that is where the standard blends the
+ * weight back down into a get-up montage with a pose snapshot.
+ */
+namespace ProsperitocracyBodiesThrown
+{
+	/**
+	 * The bone the doc's nodes start from — "starting at a given bone and moving recursively down the bone
+	 * chain". It is the skeleton's root physics body, and on every humanoid rig the project owns that bone
+	 * is the pelvis (read off `PA_Mannequin`: its first body is `pelvis`). The day a rig's root body is
+	 * named something else, this is the one line that moves.
+	 */
+	inline const TCHAR* BeginAtBoneName = TEXT("pelvis");
+
+	/**
+	 * How long the physics blend weight takes to travel, in seconds — the ramp the doc asks for ("often,
+	 * you will want to drive this node at each tick so that you can smoothly animate the Physics Blend
+	 * Weight value"). Ours, because the doc names the shape and not a number; a tenth to a third of a
+	 * second is the standard range. MINE, `[TUNE]`.
+	 */
+	constexpr float PhysicsBlendSeconds = 0.2f;
+
+	/**
+	 * THE LOCK-IN BEAT, in seconds — ours, and where a get-up CLIP would go.
+	 *
+	 * His get-up, exactly as he called it: "missing get up can be replaced with a locked in place nothing
+	 * then snap to being up". The body holds the pose it stopped in for this long and then snaps upright;
+	 * the standard blends the weight back down into a get-up montage here instead. MINE, `[TUNE]`.
+	 */
+	constexpr float GetUpHoldSeconds = 0.6f;
+
+	/**
+	 * THE WEIGHT DAMPING — the one number his rule needs, in pounds.
+	 *
+	 * His rule (2026-09-30): "YES YOUR total weight FINAL with perks DECREASES the velocity you are thrown
+	 * in ragdoll" — heavier is thrown less. The throw is the blast's own speed times `Reference / (Reference
+	 * + the body's weight)`: one at nothing carried, a half at the reference, less for every pound after.
+	 * It never exceeds one (a blast's own cap still owns the ceiling) and never reaches zero.
+	 *
+	 * MINE, `[TUNE]` — CALIBRATED AGAINST THE KITS WE HAVE, as he asked: Anchor loadout 2 21 lb → 0.50 of
+	 * the blast's speed, loadout 1 30 lb → 0.41, loadout 3 53 lb → 0.28.
+	 */
+	constexpr float WeightDampingReferenceLbs = 21.0f;
+
+	/**
+	 * THE PHYSICAL ANIMATION DRIVE — the standard's smooth entry (the jitter thread's named fix: "this
+	 * issue can be resolved by using the new PhysicsAnim UActorComponent").
+	 *
+	 * While the body is limp the component holds the joints toward the pose they were in and then lets go:
+	 * the drive starts at full and fades to nothing across the blend, so the body is caught by the physics
+	 * rather than snapped into it. The four strengths are the standard active-ragdoll ratios (a strong
+	 * orientation pull, a weaker position pull, weaker still on the velocities). MINE, `[TUNE]`.
+	 */
+	constexpr float PhysicalDriveOrientation = 500.0f;
+	constexpr float PhysicalDriveAngularVelocity = 50.0f;
+	constexpr float PhysicalDrivePosition = 100.0f;
+	constexpr float PhysicalDriveVelocity = 10.0f;
 }
 
 UCLASS()
@@ -463,6 +546,38 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Attack")
 	bool IsSwingLocked() const { return bAttackLive; }
+
+	/**
+	 * THROWN — this body takes a blast's shove and goes limp on it. THE one door every thrown body in
+	 * the game comes through.
+	 *
+	 * `ShoveVelocityCmS` is the blast's OWN number (its strength IS the damage that came off this body,
+	 * with the pen gate and the falloff already inside it — `Design/explosions.md`), `HitPointWorld` is
+	 * where the ball touched this body, and the force goes on the bone nearest that point — the standard's
+	 * "impulse on the hit bone" (falling back on the pelvis, which is what the standard uses when there is
+	 * nothing better to aim at). The WEIGHT damping is this body's own, read FINAL.
+	 *
+	 * A body already limp is hit again rather than ignored: the impulse lands on it where it lies.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Bodies Thrown")
+	void ThrowTheBody(const FVector& ShoveVelocityCmS, const FVector& HitPointWorld);
+
+	/** Whether this body is limp right now — thrown, and not yet back on its feet. */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Bodies Thrown")
+	bool IsBodyLimp() const { return bBodyLimp; }
+
+	/**
+	 * THE PHYSICS BLEND WEIGHT — the number the ANIMATION BLUEPRINT'S EVENT GRAPH drives the mesh with
+	 * every tick, through the doc's own node (`Set All Bodies Below Physics Blend Weight`, from the
+	 * pelvis). 0 = the animation's pose, 1 = the physics'. The doc: *"often, you will want to drive this
+	 * node at each tick so that you can smoothly animate the Physics Blend Weight value."*
+	 *
+	 * The NODE is the blueprint's; the NUMBER is the body's, so there is one writer and the ramp and the
+	 * physics can never disagree about where the blend is.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Bodies Thrown")
+	float GetBodyPhysicsBlendWeight() const { return PhysicsBlendWeight; }
+
 	/**
 	 * How far into aiming down sights we are: 0 = hipfire, 1 = fully aiming.
 	 *
@@ -721,6 +836,65 @@ protected:
 	/** THE ONE THING A NUMBER KEY DOES: the press hands the slot's number over, the release takes it back. */
 	void PressAbilitySlot(const FGameplayTag& Number);
 	void ReleaseAbilitySlot(const FGameplayTag& Number);
+
+	/**
+	 * THE PHYSICS STACK's state on this body, and the whole of it: whether it is limp, where the physics
+	 * blend weight is (the animation blueprint's node reads this every tick), the force waiting to go on,
+	 * whether the body has come to rest, and the hold before the snap.
+	 *
+	 * `PendingThrow` waits ONE tick on purpose: at a blend weight of zero the animation still writes the
+	 * bodies every frame, so an impulse landing in that same frame is written straight back out again. The
+	 * force goes on the first tick the weight has left zero.
+	 */
+	bool bBodyLimp = false;
+	float PhysicsBlendWeight = 0.0f;
+	FVector PendingThrow = FVector::ZeroVector;
+	FName PendingThrowBone = NAME_None;
+	bool bThrowPending = false;
+	bool bBodyResting = false;
+	float RestingSeconds = 0.0f;
+	FVector RestLocation = FVector::ZeroVector;
+
+	/**
+	 * THE PHYSICAL ANIMATION COMPONENT — the standard's smooth entry (see the namespace above). It holds
+	 * the joints toward the pose they were in and lets go across the blend, so the body is caught by the
+	 * physics instead of snapped into it.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Prosperitocracy|Bodies Thrown")
+	TObjectPtr<UPhysicalAnimationComponent> PhysicalAnimation;
+
+	/** One frame of a limp body: the weight, the force, the wait for it to stop, and the get-up. */
+	void TickLimpBody(float DeltaSeconds);
+
+	/** Make this body limp — the doc's transition: the collisions, the bodies simulating, the drive. */
+	void GoLimp();
+
+	/**
+	 * Put the body back up: the physics off, the collision back, the man standing WHERE HE STOPPED (the
+	 * standard's own re-anchor — the capsule is moved to the ragdoll, never the other way round), and the
+	 * clip we do not own swapped out for his snap.
+	 */
+	void GetTheBodyUp();
+
+	/** What this body WEIGHS for a throw, in pounds — its carried weight, read FINAL through the one
+	 * evaluator, perks included, exactly as the movement and the turn read it. */
+	float GetThrowingWeightLbs() const;
+
+	/**
+	 * How much of a blast's throw this body's own weight keeps — his rule, one shape, nothing else.
+	 *
+	 * Heavier = thrown less, and the number is `WeightDampingReferenceLbs` (see the namespace above).
+	 * One home for the arithmetic, read by the throw and by the log line that explains it, so the two
+	 * can never disagree about what threw a body how hard.
+	 */
+	float GetThrowWeightDamping() const;
+
+	/**
+	 * The rig's setup for the physics stack, done ONCE: the standard's camera fix (the boom moves inside
+	 * the mesh, or the camera detaches from the body the moment it is thrown) and the physical animation
+	 * component is pointed at this body's mesh.
+	 */
+	virtual void BeginPlay() override;
 
 	/** This body's own tick, which is where the aim's turn and a live attack are driven. */
 	virtual void Tick(float DeltaSeconds) override;

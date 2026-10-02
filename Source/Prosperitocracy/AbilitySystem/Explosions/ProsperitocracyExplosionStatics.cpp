@@ -175,6 +175,11 @@ void UProsperitocracyExplosionStatics::DetonateExplosion(IProsperitocracyAbility
 // STAGE 4 — THE SHOVE. It is the pipeline's OWN number, reused (his rule): what came off that body,
 // with the gate and the falloff already inside it, turned into a speed and capped so a big blast cannot
 // send you to space. The outer ball does less damage, so it shoves you less far, by construction.
+//
+// THE BODY DOES THE THROWING: this hands over a speed and the place the ball touched, and a body
+// answers by going limp and being thrown by it (Design/explosions.md -> "Bodies thrown"). What a BODY
+// is worth is the body's own — its weight damps the throw inside that door — so nothing here is per-body
+// and nothing here is per-explosive.
 // ---------------------------------------------------------------------------------------------------
 		const float DamageThatCameOff = TypedContext->GetLandedDamage();
 		const float ShoveSpeed = FMath::Min(DamageThatCameOff * ProsperitocracyExplosionHandling::ShoveSpeedPerDamagePoint,
@@ -183,7 +188,7 @@ void UProsperitocracyExplosionStatics::DetonateExplosion(IProsperitocracyAbility
 		{
 			if (UProsperitocracyPlayerStatsComponent* BodyStats = Target.Actor->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
 			{
-				BodyStats->NotifyBlastShove(Target.Direction * ShoveSpeed);
+				BodyStats->NotifyBlastShove(Target.Direction * ShoveSpeed, Target.Point);
 				++ShovedCount;
 			}
 		}
