@@ -103,6 +103,70 @@ namespace ProsperitocracyEquipInput
 	constexpr float HoldSeconds = 0.25f;
 }
 
+/**
+ * BODIES THROWN — a body caught by a blast goes limp and is thrown, done the way Epic's own page says
+ * and no other way: "Physics Driven Animation in Unreal Engine" (UE 5.8 documentation).
+ *
+ * WHERE THE WORK HAPPENS, in Epic's words: "the two primary tools you will need are the Set All Bodies
+ * Simulate Physics and Set All Bodies Below Physics Blend Weight nodes, which will generally be placed
+ * within your character's Animation Blueprint Event Graph." So BOTH nodes live in the animation
+ * blueprint's event graph (Locomotion) and NOWHERE ELSE — nothing in this file calls either of them.
+ * What this file owns is the state that node is driven with:
+ *
+ *   * "Get the name of the bone that was hit" — the bone the throw goes on.
+ *   * the doc's own requirement: "the use of physics on a Skeletal Mesh in any form requires that the
+ *     mesh have a Physics Asset set up and applied to it" — refused out loud without one.
+ *   * THE ONE NUMBER, animated here and applied by that node every tick: "At a value of 1.0, the given
+ *     bone and all those below it are completely driven by physics. At a value of 0.0, the Skeletal Mesh
+ *     has returned to its original keyframe animation. Often, you will want to drive this node at each
+ *     tick so that you can smoothly animate the Physics Blend Weight value." One clock, so the body's
+ *     state and the number the node applies cannot disagree.
+ *   * the exit: "Once the reaction is complete and the Physics Blend Weight returns to 0, you should use
+ *     the Set All Bodies Below Simulate Physics node once more to deactivate the simulation" — the body
+ *     says when it has let go, the node makes that call.
+ *
+ * WHAT IS OURS, and the whole of it: the TRIGGER (a blast's shove, handed over by the one explosion pass)
+ * and THE WEIGHT DAMPING — his rule, "heavier is thrown less" — the ONLY number here Epic's page does not
+ * answer. It shapes the SPEED before it goes on the hit bone and it touches nothing else.
+ *
+ * NOT DONE, and named rather than quietly skipped: there is no get-up animation (his call, 2026-10-02), so
+ * the weight returns to 0 and the animation owns him again; and the capsule, the collisions and the camera
+ * are UNTOUCHED, because Epic's page says nothing about any of them.
+ */
+namespace ProsperitocracyBodiesThrown
+{
+	/**
+	 * The bone the doc's nodes start from — "starting at a given bone and moving recursively down the bone
+	 * chain". The root of the chain on this rig is the pelvis (`PA_Mannequin`'s first body), and starting
+	 * there is what makes the WHOLE man go limp rather than one limb.
+	 */
+	inline const TCHAR* BeginAtBoneName = TEXT("pelvis");
+
+	/**
+	 * How long the weight takes to travel, in seconds, both ways — "quickly animate this going up to 1.0
+	 * and then back down to 0.0". The doc names the shape and not a number. MINE, `[TUNE]`.
+	 */
+	constexpr float PhysicsBlendSeconds = 0.2f;
+
+	/**
+	 * How long he lies where he stopped before the weight is let go. There is no get-up clip to play (his
+	 * call), so this wait is the whole of the get-up for now. MINE, `[TUNE]`.
+	 */
+	constexpr float GetUpHoldSeconds = 0.6f;
+
+	/**
+	 * THE WEIGHT DAMPING — the one number in the whole stack that is ours.
+	 *
+	 * His rule (2026-09-30): "YES YOUR total weight FINAL with perks DECREASES the velocity you are thrown
+	 * in ragdoll". The blast's own speed times `Reference / (Reference + his carried weight)`: one at
+	 * nothing carried, a half at the reference, less for every pound after. It never exceeds one, so the
+	 * blast's own cap stays the ceiling, and it never reaches zero.
+	 *
+	 * MINE, `[TUNE]`, calibrated against the kits we have: 21 lb → 0.50, 30 lb → 0.41, 53 lb → 0.28.
+	 */
+	constexpr float WeightDampingReferenceLbs = 21.0f;
+}
+
 UCLASS()
 class AProsperitocracyCharacter : public ACharacter, public IAbilitySystemInterface, public IProsperitocracyDamageReceiver
 {
@@ -494,6 +558,70 @@ public:
 	virtual USkeletalMeshComponent* GetBodyMesh_Implementation() const;
 
 	/**
+	 * THE BODY IS CAUGHT BY A BLAST AND THROWN — the one door every thrown body in the game comes through.
+	 *
+	 * `ShoveVelocityCmS` is the explosion's own number (the damage that came off this body, turned into a
+	 * speed by the explosion pass); `HitPointWorld` is where the ball touched, and the throw goes on the
+	 * bone nearest it, which is Epic's own first step: "Get the name of the bone that was hit."
+	 *
+	 * Nothing here makes him limp: the simulation and the blend are the ANIMATION BLUEPRINT's nodes (see
+	 * `ProsperitocracyBodiesThrown` above). This door states the state those nodes read.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Body")
+	void ThrowTheBody(const FVector& ShoveVelocityCmS, const FVector& HitPointWorld);
+
+	/** Whether this body is limp — the animation blueprint's switch for simulating, and the body's own state. */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Body")
+	bool IsBodyLimp() const { return bBodyLimp; }
+
+	/**
+	 * THE NUMBER THE ANIMATION BLUEPRINT'S BLEND-WEIGHT NODE IS DRIVEN WITH, every tick: 0 is the
+	 * animation's pose, 1 is the physics'. Animated by this body, applied by that node, read nowhere else.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Body")
+	float GetBodyPhysicsBlendWeight() const { return PhysicsBlendWeight; }
+
+	/**
+	 * Whether the physics should be simulating AT ALL — true while he is limp and, on the way out, until
+	 * the weight has finished coming back down. Epic's own last line: "Once the reaction is complete and
+	 * the Physics Blend Weight returns to 0, you should use the Set All Bodies Below Simulate Physics node
+	 * once more to deactivate the simulation." The switch is the node's; this is its input.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Body")
+	bool ShouldBodySimulatePhysics() const;
+
+	/**
+	 * ONE FRAME, and only the frame the simulation state changed — the edge Epic's own simulate node is
+	 * called on.
+	 *
+	 * The page calls that node ONCE to activate the simulation and ONCE more to deactivate it; it is the
+	 * WEIGHT node that is driven at each tick. The engine's own code says why that matters:
+	 * `FBodyInstance::SetInstanceSimulatePhysics` forces the body's `PhysicsBlendWeight` to 1 (or 0) and then
+	 * `UpdateInstanceSimulatePhysics` **wakes the body** — `WakeUp_AssumesLocked`, `BodyInstance.cpp:2600-2611`.
+	 * A body told to simulate every frame is therefore a body that can never fall asleep, and a ragdoll whose
+	 * bodies never sleep jitters where it lies and never counts as stopped — which is exactly what "stuck
+	 * jittering, never gets up" is. Driving both nodes every frame was the mistake; this is the edge that
+	 * lets the blueprint call the simulate node on the transition, as the page does.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Body")
+	bool DidBodySimulateJustChange() const { return bBodySimulateJustChanged; }
+
+	/**
+	 * THE BONE EPIC'S TWO NODES START FROM — "starting at a given bone and moving recursively down the bone
+	 * chain". The chain's own start on this rig is the pelvis (`PA_Mannequin`'s first body), and starting
+	 * there is what makes the WHOLE man go limp: the doc's own example starts at the bone that was HIT
+	 * because its example is a stagger of one limb, and a body thrown by a blast is the whole chain. The
+	 * bone the FORCE lands on is still the hit bone (`ThrowTheBody`); this is the bone the physics starts
+	 * from.
+	 *
+	 * It is handed over from here rather than typed into the animation blueprint so the bone's name has ONE
+	 * home — which is the same move the doc describes: "Transfer that bone name into the Character's
+	 * Animation Blueprint for the Event Graph to use."
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Body")
+	FName GetBodyPhysicsBoneName() const;
+
+	/**
 	 * The loadout has just been dressed — at spawn, and after EVERY change to what this character
 	 * carries: a class, a loadout, a gun, a weave, a colour.
 	 *
@@ -721,6 +849,69 @@ protected:
 	/** THE ONE THING A NUMBER KEY DOES: the press hands the slot's number over, the release takes it back. */
 	void PressAbilitySlot(const FGameplayTag& Number);
 	void ReleaseAbilitySlot(const FGameplayTag& Number);
+
+	/**
+	 * A THROWN BODY'S STATE, and the whole of it: whether he is limp, where the weight is (the animation
+	 * blueprint's node applies this number every tick), the force waiting to go on, whether he has come to
+	 * rest, and how long he has been lying there.
+	 *
+	 * The force waits ONE frame on purpose: at a weight of zero the animation still writes the bodies every
+	 * frame, so an impulse landing in that same frame is written straight back out again. It goes on the
+	 * first frame the weight has left zero.
+	 */
+	bool bBodyLimp = false;
+	float PhysicsBlendWeight = 0.0f;
+	FVector PendingThrow = FVector::ZeroVector;
+	FName PendingThrowBone = NAME_None;
+	bool bThrowPending = false;
+	bool bBodyResting = false;
+	float RestingSeconds = 0.0f;
+
+	/**
+	 * THE MESH'S COLLISION WHILE HE IS LIMP — and this one is the ENGINE's requirement, not the page's.
+	 *
+	 * A skeletal mesh on a character wears the engine's own `CharacterMesh` profile, which the engine ships
+	 * as `CollisionEnabled=QueryOnly` (`Config/BaseEngine.ini`). With no physics collision there is NO physics
+	 * state and NO valid bodies: the engine refuses the impulse ("has to have 'CollisionEnabled' set to
+	 * 'Query and Physics' or 'Physics only' if you'd like to AddImpulse"), refuses to put the bodies in the
+	 * scene (`Invalid Bodies : Make sure collision is enabled or root bone has body in PhysicsAsset`,
+	 * `SkeletalMeshComponentPhysics.cpp`), and the blend then reads bones that do not exist — which is a pose
+	 * frozen on one frame and a body that vanishes. So while he is limp the mesh wears the profile the engine
+	 * ships FOR a simulating mesh, the `Ragdoll` preset (`QueryAndPhysics`, `PhysicsBody`, ignoring Pawn and
+	 * Visibility), and what it replaced is remembered here and given back when he is up.
+	 */
+	FName CollisionProfileBeforeLimp;
+
+	/**
+	 * THE CAPSULE THE MESH LETS GO OF WHILE HE IS LIMP, and where the mesh sat inside it.
+	 *
+	 * A simulating mesh must not be dragged by a moving parent: moving a component that has simulating
+	 * bodies TELEPORTS those bodies with it, so a mesh left attached to a capsule that is being moved has
+	 * its ragdoll pinned in place — a pose frozen where the blast caught him, with the character still able
+	 * to walk. So the mesh is detached for the whole of the limp (keeping its world transform, because the
+	 * physics owns it now), the capsule follows the BODY instead, and this is what `GetTheBodyUp` puts back:
+	 * the parent, and the transform the mesh sat at inside it.
+	 */
+	TObjectPtr<USceneComponent> LimpAttachParent;
+	FTransform MeshTransformBeforeLimp = FTransform::Identity;
+
+	/** The simulation state's own edge, and where it was last frame (see `DidBodySimulateJustChange`). */
+	bool bBodySimulateJustChanged = false;
+	bool bBodyWasSimulating = false;
+
+	/** One frame of a limp body: the weight's travel, the force, the wait for him to stop, the let-go. */
+	void TickLimpBody(float DeltaSeconds);
+
+	/** The reaction is over: the weight is let go back to 0, and the animation owns him again. */
+	void GetTheBodyUp();
+
+	/** What this body WEIGHS for a throw, in pounds — read FINAL through the one evaluator, as the
+	 * movement and the turn read it. */
+	float GetThrowingWeightLbs() const;
+
+	/** How much of a blast's throw his own weight keeps — ONE home for the arithmetic, read by the throw
+	 * and by the line that explains it, so the two cannot disagree about it. OURS, the only one. */
+	float GetThrowWeightDamping() const;
 
 	/** This body's own tick, which is where the aim's turn and a live attack are driven. */
 	virtual void Tick(float DeltaSeconds) override;

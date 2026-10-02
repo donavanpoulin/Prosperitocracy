@@ -183,7 +183,10 @@ void UProsperitocracyExplosionStatics::DetonateExplosion(IProsperitocracyAbility
 		{
 			if (UProsperitocracyPlayerStatsComponent* BodyStats = Target.Actor->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
 			{
-				BodyStats->NotifyBlastShove(Target.Direction * ShoveSpeed);
+				// THE PLACE GOES WITH THE THROW: the body lands the force on the bone nearest where the ball
+				// touched it, which is Epic's own first step for a hit reaction ("Get the name of the bone
+				// that was hit" — BODIES THROWN on the character).
+				BodyStats->NotifyBlastShove(Target.Direction * ShoveSpeed, Target.Point);
 				++ShovedCount;
 			}
 		}
