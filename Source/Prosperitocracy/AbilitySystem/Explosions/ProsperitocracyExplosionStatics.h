@@ -76,6 +76,20 @@ namespace ProsperitocracyExplosionHandling
 	constexpr float MaxShoveSpeedCmS = 2000.0f;
 
 	/**
+	 * HOW FAR PAST THE POINT IT CAUGHT THE BLAST'S RAY REACHES, in cm.
+	 *
+	 * Epic's own first step for a hit reaction is "Get the name of the bone that was hit", and a ball has
+	 * no bullet hole to read one off: so the bang fires its own ray from the middle of the ball out
+	 * through the point it caught, and the bone that ray meets on the way out is the bone the blast hit.
+	 * This is how far past that point the ray is aimed, so it leaves through the surface instead of
+	 * stopping short of it — a body is caught where the ball's surface meets it, and the bone behind that
+	 * point is the one the force belongs on.
+	 *
+	 * Nothing is derived from it and nothing is tuned by it: it is the length of one probe.
+	 */
+	constexpr float BoneTracePastCm = 20.0f;
+
+	/**
 	 * WHERE A THING'S DAMAGE STARTS FALLING OFF, given its own FINAL rows — the ONE door both a gun and
 	 * an explosion reach the universal falloff through.
 	 *

@@ -276,22 +276,18 @@ public:
 	void NotifyShotFired(float DragPercent, float CarryPercent, const FVector& ShotDirection);
 
 	/**
-	 * THROWN BY A BLAST: one shove, in cm/s, along the direction the blast HIT this body from.
+	 * THROWN BY A BLAST: one shove, in cm/s, along the direction the blast HIT this body from, and the
+	 * bone the bang's own ray met leaving the body.
 	 *
 	 * A blast does not push a man along his own line the way a shot does — it throws him off the ball's
-	 * surface, so this is a THROW and not a speed: the engine's own launch, which adds to whatever the
-	 * body was already doing instead of stopping him dead, and takes him off his feet when the shove
-	 * goes upward. Nothing is decided here: the size and the direction are the EXPLOSION's, worked out
-	 * where the bang happened (its strength IS the damage that came off this body — Design/explosions.md),
-	 * and this is only the body's own door for being thrown by it.
-	 *
-	 * OWED, AND KNOWN: WEIGHT does not damp this yet. His rule that being heavier is thrown less is
-	 * written for BODIES THROWN — the ragdoll pass — which is parked, and inventing a second home for it
-	 * before that lands would be two rules for one thing. One word from him and the carried weight knocks
-	 * the shove down here, through this same door.
+	 * surface, so this is a THROW and not a speed. Nothing is decided here: the size and the direction
+	 * are the EXPLOSION's, worked out where the bang happened (its strength IS the damage that came off
+	 * this body — Design/explosions.md), and the BODY answers for what it does with it —
+	 * `AProsperitocracyCharacter::ThrowThisBody` takes the man off his feet and lets the physics have
+	 * him, damped by his own weight. This component only carries the bang to the body.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Stats")
-	void NotifyBlastShove(const FVector& ShoveVelocityCmS);
+	void NotifyBlastShove(const FVector& ShoveVelocityCmS, FName HitBoneName);
 
 	/**
 	 * THE PICTURE'S DOOR: the thing that just acted hands over its own Shake row, read FINAL, and the

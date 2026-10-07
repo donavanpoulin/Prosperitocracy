@@ -172,9 +172,16 @@ void UProsperitocracyExplosionStatics::DetonateExplosion(IProsperitocracyAbility
 		UProsperitocracyDamageStatics::ApplyEffectsToHit(Context, Target.Actor, SourceAbilitySystemComponent, Block, DamageEffectClass);
 
 // ---------------------------------------------------------------------------------------------------
-// STAGE 4 — THE SHOVE. It is the pipeline's OWN number, reused (his rule): what came off that body,
-// with the gate and the falloff already inside it, turned into a speed and capped so a big blast cannot
-// send you to space. The outer ball does less damage, so it shoves you less far, by construction.
+// STAGE 4 — THE SHOVE, as a THROW. It is the pipeline's OWN number, reused (his rule): what came off
+// that body, with the gate and the falloff already inside it, turned into a speed and capped so a big
+// blast cannot send you to space. The outer ball does less damage, so it shoves you less far, by
+// construction.
+//
+// AND THE BONE THE BLAST HIT travels with it, because the force has to land somewhere (Epic's own first
+// step for a hit reaction: "Get the name of the bone that was hit"). A ball has no bullet hole to read
+// one off, so its own ray is fired from the middle out through the point it caught, and the bone that
+// ray meets ON THE WAY OUT is the bone the blast hit. A part with no bones — a wall, a barrel — answers
+// with none, and the body the shove lands on decides what to do about that.
 // ---------------------------------------------------------------------------------------------------
 		const float DamageThatCameOff = TypedContext->GetLandedDamage();
 		const float ShoveSpeed = FMath::Min(DamageThatCameOff * ProsperitocracyExplosionHandling::ShoveSpeedPerDamagePoint,
@@ -183,7 +190,19 @@ void UProsperitocracyExplosionStatics::DetonateExplosion(IProsperitocracyAbility
 		{
 			if (UProsperitocracyPlayerStatsComponent* BodyStats = Target.Actor->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
 			{
-				BodyStats->NotifyBlastShove(Target.Direction * ShoveSpeed);
+				FName HitBone = NAME_None;
+				if (Target.Part)
+				{
+					FHitResult BoneHit;
+					const FVector RayEnd = Target.Point + Target.Direction * ProsperitocracyExplosionHandling::BoneTracePastCm;
+					FCollisionQueryParams BoneParams(TEXT("BlastHitBone"), /*bTraceComplex=*/ true, Instigator);
+					if (Target.Part->LineTraceComponent(BoneHit, Place, RayEnd, BoneParams))
+					{
+						HitBone = BoneHit.BoneName;
+					}
+				}
+
+				BodyStats->NotifyBlastShove(Target.Direction * ShoveSpeed, HitBone);
 				++ShovedCount;
 			}
 		}

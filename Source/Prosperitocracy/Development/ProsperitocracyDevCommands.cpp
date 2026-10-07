@@ -1088,4 +1088,62 @@ namespace ProsperitocracyDevHurt
 		TEXT("BODY's own press/let-go calls and activates nothing directly, so it tests the one input path no ")
 		TEXT("other door in the game reaches — the ability system recording a press and its tick acting on it."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleAbilityCommand));
+
+	// -------------------------------------------------------------------------------------------------
+	// THE THROW ON DEMAND — `Prosperitocracy.Push [cm/s]`.
+	//
+	// A blast is the only thing that throws a body today, and lining one up is a lot of work for one
+	// look at the ragdoll: a strike, a place, a target. This asks the SAME door a blast asks — the
+	// body's own throw — so what comes on screen is the real thing rather than a harness: limp, the
+	// force on the body, the tumble, the get-up. No explosion, no ball, no damage, no fire, no status.
+	//
+	// The number is the shove in cm/s, and it is the same number the explosion pass hands over — the
+	// body damps it by what the man carries exactly as it does for a bang.
+	// -------------------------------------------------------------------------------------------------
+	namespace Push
+	{
+		/** [TUNE] The shove used when no number is typed, in cm/s. A man runs at 600. */
+		constexpr float DefaultSpeedCmS = 900.0f;
+
+		/** [TUNE] How much of the shove is UP, so he leaves his feet rather than skidding: 0.5 is ~27°. */
+		constexpr float Lift = 0.5f;
+	}
+
+	void HandlePushCommand(const TArray<FString>& Args, UWorld* World)
+	{
+		APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
+		AProsperitocracyCharacter* Body = PlayerController ? Cast<AProsperitocracyCharacter>(PlayerController->GetPawn()) : nullptr;
+		if (!Body)
+		{
+			ProsperitocracyDev::Report(TEXT("Push"), 0, TEXT("no body — this only works while the game is running (PIE)."));
+			return;
+		}
+
+		const float Speed = (Args.Num() > 0) ? FCString::Atof(*Args[0]) : Push::DefaultSpeedCmS;
+		if (Speed <= 0.0f)
+		{
+			ProsperitocracyDev::Report(TEXT("Push"), 0, TEXT("the number is a shove in cm/s and it has to be more than nothing — try 900."));
+			return;
+		}
+
+		// THE DIRECTION IS HIS OWN FACING with a lift in it: a bang at his feet takes him up and out of
+		// the way he was standing, and that is the throw a man can read at a glance.
+		const float Facing = Body->GetAimRotation().Yaw;
+		const FVector Shove = (FRotator(0.0f, Facing, 0.0f).Vector() + FVector(0.0f, 0.0f, Push::Lift)).GetSafeNormal() * Speed;
+
+		// NO BONE NAMED: the force lands on the bone the whole body hangs from, which is exactly what the
+		// body does with a bang that caught nothing in particular.
+		Body->ThrowThisBody(Shove, NAME_None);
+
+		ProsperitocracyDev::Report(TEXT("Push"), 0, FString::Printf(
+			TEXT("thrown at %.0f cm/s along %.0f° — through the blast's own door, so limp and the way up come with it. The log has the timeline."),
+			Speed, Facing));
+	}
+
+	static FAutoConsoleCommandWithWorldAndArgs PushCommand(
+		TEXT("Prosperitocracy.Push"),
+		TEXT("Throw yourself exactly as a blast does and nothing else: Prosperitocracy.Push [cm/s], default 900. ")
+		TEXT("It calls the BODY's own throw — the same door the explosion pass calls — so it is the real ragdoll: ")
+		TEXT("limp, the force on the body, the tumble, the get-up. No explosion, no damage, no fire, no status."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandlePushCommand));
 }

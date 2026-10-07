@@ -1,0 +1,11 @@
+{
+ "FileVersion": 3,
+ "Version": 1,
+ "VersionName": "1.0",
+ "FriendlyName": "ALS GetUp source",
+ "Description": "The ALS mannequin skeleton, its mesh and its two get-up animations \u2014 the retarget source for the player get-up.",
+ "Category": "Animation",
+ "CanContainContent": true,
+ "IsBetaVersion": false,
+ "Installed": true
+}
