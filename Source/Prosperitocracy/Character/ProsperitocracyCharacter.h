@@ -885,6 +885,27 @@ protected:
 	bool bGetUpStandingPlayed = false;
 
 	/**
+	 * THE RIG'S FRAME IS A VALUE THAT WALKS, NEVER A STEP. True from the way up until it has finished
+	 * walking from the frame the physics left him in onto the standing one.
+	 *
+	 * `BodyFrameFrom` is that frame (the mesh's own place and tilt as the ragdoll left them), and the
+	 * facing is walked with it — from the yaw the actor already had, to the one the clip needs. Both
+	 * ends are a man lying on the floor, so nothing jumps in between: the rig settles while the pose
+	 * blends out of the ragdoll pose, which is the blend that was missing.
+	 */
+	bool bBodyFrameIsHandingOver = false;
+	float BodyFrameHandover = 0.0f;
+	FTransform BodyFrameFrom = FTransform::Identity;
+	float BodyFacingFrom = 0.0f;
+	float BodyFacingTo = 0.0f;
+
+	/**
+	 * HELD AFTER THE RISE, before the facing is let go. The pose is still blending into the idle pose
+	 * for this long after the last clip ends, and a yaw released on that frame is a cut, not a blend.
+	 */
+	float BodyFacingHeldSeconds = 0.0f;
+
+	/**
 	 * The multiply the thing in his hands puts on that turn, off its own Weight: one at an empty hand,
 	 * one step down for every pound it weighs, floored.
 	 *

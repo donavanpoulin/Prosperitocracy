@@ -86,6 +86,15 @@ namespace ProsperitocracyBodyThrown
 	constexpr float GetUpBlendSeconds = 0.15f;
 
 	/**
+	 * HOW LONG THE RIG'S OWN FRAME TAKES TO WALK FROM THE RAGDOLL'S ONTO THE STANDING ONE.
+	 *
+	 * The same window the pose blends over, on purpose: the frame and the pose are handed over together,
+	 * so the man settles onto the floor into the get-up instead of being re-oriented in one frame under
+	 * a pose that has not moved yet. [TUNE]
+	 */
+	constexpr float FrameHandoverSeconds = 0.2f;
+
+	/**
 	 * WHEN A THROWN BODY COUNTS AS STOPPED: below this speed, for this long.
 	 *
 	 * Getting up is decided by SPEED and never by a clock: how long a body rolls is the physics'
@@ -1246,22 +1255,18 @@ void AProsperitocracyCharacter::GetThisBodyUp()
 	{
 		const FVector Standing = WhereThisBodyIsStanding();
 
-		// ALS'S OWN LINE, and the whole of the facing: the character is turned to the pelvis's LYING yaw,
-		// less half a turn for a man on his back — the pelvis's forward lies along the ground pointing
-		// the way his head does, so that yaw IS the way he lies, his rig's own mounts already inside it.
-		// Nothing here reads the pelvis while he is STANDING: upright, its forward points at the sky and
-		// its yaw means nothing, which is why the old standing "twist" was ~180° of pure noise.
-		const float StandingYaw = bOnHisBack ? PelvisRotation.Yaw - 180.0f : PelvisRotation.Yaw;
+		// THE TWO FRAMES, AND THE FACING: the frame the physics left him in, and the frame the clip is
+		// authored for (read at the throw, while nothing was wrong with it). The facing is the body's own
+		// answer — the pelvis's lying yaw, less half a turn for a man on his back. ALL THREE ARE WALKED
+		// onto the standing frame by his own tick (see Tick), never written in one frame.
+		BodyFrameFrom = Body->GetRelativeTransform();
+		BodyFacingFrom = GetActorRotation().Yaw;
+		BodyFacingTo = bOnHisBack ? PelvisRotation.Yaw - 180.0f : PelvisRotation.Yaw;
+		BodyFrameHandover = 0.0f;
+		bBodyFrameIsHandingOver = true;
+		BodyFacingHeldSeconds = 0.0f;
 
-		SetActorLocationAndRotation(Standing, FRotator(0.0f, StandingYaw, 0.0f),
-			/*bSweep=*/ false, nullptr, ETeleportType::TeleportPhysics);
-
-		// AND THE BODY COMES HOME INTO THE RIG: the place and the tilt the mesh sits in when nothing is
-		// wrong with it, which the physics took from it and nothing was ever giving back. Handed over
-		// AFTER the move, so the man stands UPRIGHT exactly where he stopped — and the clip plays from
-		// there and ends there, instead of playing inside a lying man's tilt and leaving him at his
-		// lying angle for the rest of the session.
-		Body->SetRelativeTransform(BodyStandingTransform, /*bSweep=*/ false, nullptr, ETeleportType::TeleportPhysics);
+		SetActorLocation(Standing, /*bSweep=*/ false, nullptr, ETeleportType::TeleportPhysics);
 	}
 
 	UE_LOG(LogProsperitocracy, Log,
@@ -1377,35 +1382,74 @@ void AProsperitocracyCharacter::Tick(float DeltaSeconds)
 		return;
 	}
 
-	// AND THE RISE OWNS HIM UNTIL IT IS DONE — BOTH halves of it: the clip he came up on, and then the
-	// kneel-to-standing that follows it in the same slot. The animation is the authority while it runs,
-	// and his own aim and legs are his again the frame the SECOND half ends — never in between, which
-	// would leave a man kneeling on the floor with his legs already his own.
+	// THE FRAME WALKS, OVER THE SAME WINDOW THE POSE BLENDS OVER — from the frame the physics left him
+	// in onto the standing frame the clip is authored for, once, on the way out of a throw. On its first
+	// frame he is exactly what the physics left, frame and pose together; one window later he is exactly
+	// the standing frame. Nothing here is written in a single frame: that is what a snap is, and the
+	// pose blend cannot hide it, because a frame is not a pose.
+	if (bBodyFrameIsHandingOver)
+	{
+		BodyFrameHandover = FMath::Min(
+			BodyFrameHandover + DeltaSeconds / ProsperitocracyBodyThrown::FrameHandoverSeconds, 1.0f);
+		const float Alpha = BodyFrameHandover;
+
+		if (USkeletalMeshComponent* Body = GetMesh())
+		{
+			const FTransform Standing(
+				FQuat::Slerp(BodyFrameFrom.GetRotation(), BodyStandingTransform.GetRotation(), Alpha),
+				FMath::Lerp(BodyFrameFrom.GetLocation(), BodyStandingTransform.GetLocation(), Alpha),
+				FMath::Lerp(BodyFrameFrom.GetScale3D(), BodyStandingTransform.GetScale3D(), Alpha));
+			Body->SetRelativeTransform(Standing, /*bSweep=*/ false, nullptr, ETeleportType::TeleportPhysics);
+		}
+
+		SetActorRotation(FRotator(0.0f,
+			BodyFacingFrom + FMath::FindDeltaAngleDegrees(BodyFacingFrom, BodyFacingTo) * Alpha, 0.0f));
+
+		bBodyFrameIsHandingOver = BodyFrameHandover < 1.0f;
+	}
+
+	// AND THE RISE OWNS THE POSE UNTIL IT IS DONE — BOTH halves of it. Two things happen in here that
+	// are not the pose, and neither of them is allowed to be a step: the rig's own frame is WALKED onto
+	// the standing one, and the second half is laid OVER the end of the first instead of being started
+	// after it has finished.
 	if (bGetUpPlaying)
 	{
 		UAnimInstance* Anim = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
 		const UAnimMontage* Playing = GetUpMontage.Get();
+
 		if (!Playing || !Anim || !Anim->Montage_IsPlaying(Playing))
 		{
-			// THE SECOND HALF, the moment the first is over — and he is still the animation's.
-			if (!bGetUpStandingPlayed && GetUpToStanding)
-			{
-				bGetUpStandingPlayed = true;
-				GetUpMontage = Anim->PlaySlotAnimationAsDynamicMontage(
-					GetUpToStanding, ProsperitocracyBodyThrown::GetUpSlot,
-					ProsperitocracyBodyThrown::GetUpBlendSeconds, ProsperitocracyBodyThrown::GetUpBlendSeconds);
-				bGetUpPlaying = GetUpMontage.IsValid();
-				if (bGetUpPlaying)
-				{
-					UE_LOG(LogProsperitocracy, Log,
-						TEXT("[Thrown] the rise is half done: the kneeling-to-standing takes over in the same slot"));
-					return;
-				}
-			}
-
+			// THE RISE IS OVER. The facing is held a moment longer, until the pose has finished blending
+			// into the idle pose — a yaw let go on this frame is a cut, not a blend.
 			bGetUpPlaying = false;
 			GetUpMontage = nullptr;
+			BodyFacingHeldSeconds = ProsperitocracyBodyThrown::FrameHandoverSeconds;
 		}
+		else if (!bGetUpStandingPlayed && GetUpToStanding &&
+			Playing->GetPlayLength() - Anim->Montage_GetPosition(Playing) <= ProsperitocracyBodyThrown::GetUpBlendSeconds)
+		{
+			// THE SECOND HALF, LAID OVER THE END OF THE FIRST: it starts while the first is still playing
+			// and cross-fades into the same slot, so the rise is never interrupted by the pose underneath
+			// it — which is exactly what two separate plays, one after the other, does.
+			bGetUpStandingPlayed = true;
+			GetUpMontage = Anim->PlaySlotAnimationAsDynamicMontage(
+				GetUpToStanding, ProsperitocracyBodyThrown::GetUpSlot,
+				ProsperitocracyBodyThrown::GetUpBlendSeconds, ProsperitocracyBodyThrown::GetUpBlendSeconds);
+			if (GetUpMontage.IsValid())
+			{
+				UE_LOG(LogProsperitocracy, Log,
+					TEXT("[Thrown] the rise is half done: the kneeling-to-standing takes over in the same slot"));
+			}
+		}
+
+		return;
+	}
+
+	// AND THE FACING IS STILL THE RISE'S until the pose has finished blending into idle. Then, and only
+	// then, the aim takes him and turns him where the player is looking.
+	if (BodyFacingHeldSeconds > 0.0f)
+	{
+		BodyFacingHeldSeconds -= DeltaSeconds;
 		return;
 	}
 
