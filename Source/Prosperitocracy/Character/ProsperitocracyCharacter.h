@@ -11,6 +11,7 @@
 #include "ProsperitocracyCharacter.generated.h"
 
 class AProsperitocracyWeapon;
+class UAnimSequenceBase;
 class UChildActorComponent;
 class UInputAction;
 class UInputComponent;
@@ -506,6 +507,94 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Prosperitocracy|Loadout")
 	void OnLoadoutDressed();
 
+	//~ Thrown by a blast — the standard ragdoll, and nothing else -----------------------------------
+
+	/**
+	 * THROWN BY A BLAST: this body goes limp and the bang takes it.
+	 *
+	 * ONE door, and the explosion pass is its only caller — the player today, the horde when it exists
+	 * — so a thing carrying the `Explosive` mark throws whatever its ball caught without a line of
+	 * code per explosive (`Design/explosions.md`). Nothing about how hard is decided here: the shove's
+	 * strength IS the damage that came off this body, and this is only the body's own door for being
+	 * thrown by it.
+	 *
+	 * WHAT IT DOES IS THE STANDARD, in the standard's order (Epic's "Physics Driven Animation"): the
+	 * man stops walking, the capsule stops colliding — so it can never fight the bodies inside it —
+	 * the body's own mesh becomes a physics body, and the force goes on the bone the blast hit. The
+	 * SIMULATION itself is switched on by the portrait's own two nodes in the animation blueprint,
+	 * which read this body's state (the four getters below) every frame; those two node names appear
+	 * nowhere in this file, because the animation blueprint is where Epic puts them.
+	 *
+	 * WEIGHT DAMPS THE THROW: heavier is thrown less, off the body's own FINAL weight, so the number
+	 * is the same Weight stat everything else reads rather than a second one kept for throwing.
+	 *
+	 * HitBoneName — the bone the blast hit, read by the bang itself (a trace, Epic's own first step).
+	 * A bone this body's simulating mesh does not know — a rig pointing at another skeleton's part —
+	 * puts the force on the bone the whole body hangs from instead, and says so in the log.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Body")
+	void ThrowThisBody(const FVector& ShoveVelocityCmS, FName HitBoneName);
+
+	/** True from the frame a blast throws this body until it is back on its feet. */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Body")
+	bool IsBodyLimp() const { return bBodyLimp; }
+
+	/**
+	 * How much of this body the physics owns right now: 0 = the animation has it, 1 = the bodies have
+	 * it completely.
+	 *
+	 * Driven EVERY TICK on the way in and on the way out, which is the whole reason it is a number and
+	 * not a switch (Epic: "quickly animate this going up to 1.0 and then back down to 0.0"). It is the
+	 * animation blueprint's blend-weight node that reads it.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Body")
+	float GetBodyPhysicsBlendWeight() const { return BodyPhysicsBlendWeight; }
+
+	/**
+	 * The EDGE the animation blueprint's simulate node reads: true the frame this body is thrown, false
+	 * the frame it comes round.
+	 *
+	 * An edge and not a level, deliberately: the simulation is switched ON and OFF once each, and never
+	 * driven every frame — a body woken every frame can never fall asleep, which is a body that twitches
+	 * where it lies.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Body")
+	bool ShouldBodySimulatePhysics() const { return bBodySimulating; }
+
+	/** Where the simulation starts: the bone the whole body hangs from, on this rig. */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Body")
+	FName GetBodyPhysicsBoneName() const { return BodyPhysicsBoneName; }
+
+	/**
+	 * True while the pose the physics left him in is still what the animation should be showing: the
+	 * whole time he is limp, and on through the get-up clip that blends out of it.
+	 *
+	 * That is what the animation graph asks before showing the SAVED pose instead of the locomotion
+	 * state machine — without it, the man snaps to a keyframe the frame the physics lets go.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Body")
+	bool IsBodyShowingTheRagdollPose() const { return bBodyLimp || bGetUpPlaying; }
+
+	/**
+	 * THE EDGE, CONSUMED ONCE: true on the frame the physics has to be switched ON, and false every
+	 * frame after it.
+	 *
+	 * Epic's own shape is an on/off switch used ONCE each way — "you can think of this node as an
+	 * on/off switch", and on the way out "use the Set All Bodies Below Simulate Physics node once more
+	 * to deactivate the simulation". Driving it every frame is what breaks the body: every call WAKES
+	 * the bodies (`FBodyInstance::UpdateInstanceSimulatePhysics`: "if (bStartAwake) WakeUp_AssumedLocked"),
+	 * so a body woken every frame can never fall asleep and the man jitters where he lies instead of
+	 * settling.
+	 *
+	 * The memory of "have we switched it on yet" therefore lives HERE, in one bool, and not in the
+	 * animation blueprint: the graph asks this question once per frame and gets `true` exactly once per
+	 * throw. It is not a getter in the honest sense — it answers and clears itself, which is the whole
+	 * of what an edge is — and it is BlueprintCallable rather than BlueprintPure so that reading it is
+	 * visibly a thing that happens, not a value that is.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Body")
+	bool TakeTheBodySimulationOnRequest();
+
 	/**
 	 * WHERE THIS MAN'S GUN IS POINTING — the one answer every reader asks.
 	 *
@@ -646,6 +735,154 @@ protected:
 	 * from it.
 	 */
 	void TickAimTurn(float DeltaSeconds);
+
+	//~ Thrown by a blast — one frame of it, and the way up -------------------------------------------
+
+	/**
+	 * One frame of a thrown body: the force landing, the weight, and the moment he has stopped.
+	 *
+	 * The whole of what the body's own half does while the physics has him. Three jobs and nothing
+	 * else: put the blast's force on once the bodies are ACTUALLY simulating (a frame after the ask —
+	 * the animation blueprint's own node is what switches them on); drive the blend weight every tick,
+	 * which is Epic's own line about the node; and watch him slow to a stop, which is what decides he
+	 * is getting up — by SPEED and never by a clock, because how long a body rolls is the physics'.
+	 */
+	void TickLimpBody(float DeltaSeconds);
+
+	/**
+	 * THE WAY UP: the physics is switched off, the player takes the body's place and its facing, the
+	 * body is put back into the rig's own frame, the pose the physics left him in is saved, and the
+	 * get-up clip takes over.
+	 *
+	 * The ORDER is the whole of it. The physics goes off FIRST, because a live ragdoll is carried by
+	 * every move the player makes — the move that is meant to catch up with him would shove him, and
+	 * that is the runaway the old attempt sailed away on. With the bodies dead, the player can be put
+	 * on the body's spot and the body's own place and tilt handed back to the rig, and only then is the
+	 * pose saved and the clip played — so the clip starts and ENDS where he is. The mesh keeps Query
+	 * Only, never No Collision (Epic's own correction to their tutorial: "No Collision" loses the
+	 * velocity the physics was tracking).
+	 */
+	void GetThisBodyUp();
+
+	/**
+	 * IS HE ON HIS BACK? ONE answer, asked of the body itself, and BOTH readers ask it: which of the two
+	 * get-up clips he wears, and whether his standing facing needs the half turn a man on his back wants.
+	 * Two tests anywhere is a clip and a facing that can disagree — a man coming up on the clip for the
+	 * other side, and pivoting a half turn while he does it.
+	 *
+	 * The question is asked of the pelvis's ROLL, which is ALS's own question (`Roll < 0` face-up on
+	 * their rig, turned over by their per-rig flag). It is NOT asked of the pelvis's forward direction:
+	 * flat on the ground, that direction lies flat WITH him — along the ground, toward his head — so its
+	 * height is nothing for a man on his back AND for a man on his front, and a test on it is decided by
+	 * noise.
+	 */
+	bool IsTheBodyOnItsBack() const;
+
+	/**
+	 * WHERE HE WOULD STAND IF HE STOOD UP RIGHT NOW: the floor under his pelvis, and nothing else.
+	 *
+	 * ONE answer for the two places that need it — the follow that walks the player under him while he
+	 * is limp, and the moment he actually stands — so the camera can never be following one place while
+	 * he gets up somewhere else. The downward trace stands the capsule ON the ground rather than in it,
+	 * which matters most while he is airborne: the player stays on the floor under him instead of
+	 * climbing after him.
+	 */
+	FVector WhereThisBodyIsStanding() const;
+
+	/**
+	 * THE PLAYER RIDES THE BODY: the actor is put where the body is, so the camera — which is on the
+	 * player and nowhere else — comes along for free.
+	 *
+	 * The move is deliberately one the ragdoll CANNOT FEEL, and that is the whole difference between
+	 * this and the attempt that sailed away: it is a PLAIN move, never a teleport. A teleport sets the
+	 * world pose of every body of a simulating ragdoll to follow the component — the engine's own
+	 * recovery code says so in as many words, "we are teleporting a simulated body" — so a player
+	 * catching up with the body shoves it by exactly the distance he just moved, every frame, in one
+	 * direction, for ever. On a plain move the simulating bodies are left alone; only the bodies the
+	 * animation is meant to own are moved. The man keeps the world, and the player comes to him.
+	 */
+	void ThePlayerRidesTheBody();
+
+	/**
+	 * [TUNE] THE MULTIPLY THE BLAST'S SHOVE IS THROWN WITH — heavier is thrown less.
+	 *
+	 * The body's OWN weight, read FINAL off its Carried Weight row: the same stat the aim's lag and the
+	 * movement already read, perks and all, so there is no second weight kept for throwing. The
+	 * lightest kit we ship is the reference and is thrown at the blast's full speed; every pound over
+	 * that costs a share of the throw, floored so a very heavy man is still moved.
+	 *
+	 * The numbers are picked off the kits that exist today and written down here BECAUSE THEY WILL MOVE
+	 * as the kits get heavier (his words): reference 21 lb, 2.5% less per pound over it, floored at a
+	 * quarter — so a 30 lb kit is thrown at 0.78 of the blast's speed and a 53 lb kit at a quarter.
+	 */
+	float GetThrowWeightMultiplier() const;
+
+	/** True from the frame a blast throws this body until it is back on its feet. */
+	bool bBodyLimp = false;
+
+	/** The EDGE the animation blueprint's simulate node reads — see ShouldBodySimulatePhysics. */
+	bool bBodySimulating = false;
+
+	/** The EDGE, LATCHED: set the frame a throw asks for the physics, taken once by the graph. */
+	bool bSimulationOnAsked = false;
+
+	/** True between a throw being asked for and the frame the force actually goes on. */
+	bool bThrowWaiting = false;
+
+	/** True while the get-up clip is playing: the saved pose is what the graph shows until it is over. */
+	bool bGetUpPlaying = false;
+
+	/** What the animation blueprint's blend-weight node is driven with, 0 → 1 in and 1 → 0 out. */
+	float BodyPhysicsBlendWeight = 0.0f;
+
+	/** How long he has been limp, and how long he has been still enough to be getting up. */
+	float BodyLimpSeconds = 0.0f;
+	float BodyRestSeconds = 0.0f;
+
+	/** Where the simulation starts: the bone the whole body hangs from, handed to the two nodes. */
+	FName BodyPhysicsBoneName = NAME_None;
+
+	/** The force and the bone it goes on, held for the frame it takes the bodies to start simulating. */
+	FVector PendingThrow = FVector::ZeroVector;
+	FName PendingThrowBone = NAME_None;
+
+	/**
+	 * THE BODY'S OWN PLACE IN THE RIG — read at the throw, on the last frame on which nothing is wrong
+	 * with it, because the way up has to hand exactly this back to the mesh (see GetThisBodyUp): the
+	 * physics leaves the mesh's own place and tilt with the ragdoll's, and a standing man drawn in that
+	 * is a man standing at his lying angle for the rest of the session.
+	 */
+	FTransform BodyStandingTransform = FTransform::Identity;
+
+	/** The get-up clip this body is wearing, so the body knows when it is over. */
+	TWeakObjectPtr<UAnimMontage> GetUpMontage;
+
+	/**
+	 * THE CLIPS THIS BODY COMES UP ON — the mannequin-skeleton pair that landed with the rest of the
+	 * Manny anims (`.../Blueprints/Animation/GetUp`), picked by which way he landed: on his front, or
+	 * on his back. Both EditDefaultsOnly, so a blueprint may name its own pair instead.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Prosperitocracy|Body")
+	TObjectPtr<UAnimSequenceBase> GetUpFromFront;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Prosperitocracy|Body")
+	TObjectPtr<UAnimSequenceBase> GetUpFromBack;
+
+	/**
+	 * THE SECOND HALF OF THE RISE — the kneeling-to-standing, which the flow asks for in as many words:
+	 * "the 2 anims play, up and then from kneeling to standing". It plays the moment the first half is
+	 * over, in the SAME slot, so the two are one rise and never a man left kneeling on the floor with
+	 * his legs already his own. ALS carries this half inside the get-up MONTAGE's own sections; our
+	 * copies of those montages carry the one clip, so the second is played after it instead — the one
+	 * substitution in this half, and it is named here because it is a substitution.
+	 *
+	 * This is the `ALS_CLF_to_N` clip: "to Neutral", the rise out of the kneel.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Prosperitocracy|Body")
+	TObjectPtr<UAnimSequenceBase> GetUpToStanding;
+
+	/** True once the kneeling-to-standing half has been played for the throw he is rising out of. */
+	bool bGetUpStandingPlayed = false;
 
 	/**
 	 * The multiply the thing in his hands puts on that turn, off its own Weight: one at an empty hand,

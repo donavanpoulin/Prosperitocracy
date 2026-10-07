@@ -8,10 +8,14 @@
 #include "AbilitySystem/ProsperitocracyStatusComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/AnimSequenceBase.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
+#include "CollisionQueryParams.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/ChildActorComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/World.h"
 #include "EnhancedInputComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -22,6 +26,7 @@
 #include "Stats/ProsperitocracyStat.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
 #include "TimerManager.h"
+#include "UObject/ConstructorHelpers.h"
 #include "Weapons/ProsperitocracyLoadoutComponent.h"
 #include "Weapons/ProsperitocracyWeapon.h"
 
@@ -41,6 +46,78 @@ namespace
 	}
 }
 
+namespace ProsperitocracyBodyThrown
+{
+	/**
+	 * THE BONE THE SIMULATION STARTS AT, on this rig.
+	 *
+	 * The bone the whole body hangs from, which is what makes the whole MAN go limp rather than one arm:
+	 * Epic's node "recursively activate[s] Physics Asset bodies on a Skeletal Mesh to begin simulating
+	 * physics starting at a given bone and moving recursively down the bone chain". `pelvis` is the
+	 * mannequin's own name for it — the body that simulates is SKM_Manny, and every other bone in the
+	 * body descends from this one.
+	 */
+	const FName SimulateFromBone(TEXT("pelvis"));
+
+	/**
+	 * THE SLOT THE GET-UP CLIP PLAYS IN: the animation blueprint's own slot, and the same one every
+	 * montage this body already plays goes into. The get-up clips are plain anim sequences, so they are
+	 * played in the slot rather than through a montage asset built for them.
+	 */
+	const FName GetUpSlot(TEXT("DefaultSlot"));
+
+	/**
+	 * THE NAME THE POSE IS SAVED UNDER when the physics lets go — Epic's own pose snapshot, which is
+	 * "the pose snapshot to blend from the last physical driven pose into a linear animation". Saved by
+	 * the way-up half below, read by the animation graph's node of this same name.
+	 */
+	const FName PoseSnapshot(TEXT("BodyLimpPose"));
+
+	/**
+	 * HOW LONG THE BODY TAKES TO HAND OVER TO THE PHYSICS, AND TO HAND BACK.
+	 *
+	 * Epic: "Generally, you want to quickly animate this going up to 1.0 and then back down to 0.0 so
+	 * that the physics reaction blends in and then back out." This is that 0.2 s — a blend and never a
+	 * snap, because a body that snaps into the physics reads as a glitch rather than as a hit.
+	 */
+	constexpr float PhysicsBlendSeconds = 0.2f;
+
+	/** The get-up clip's own blend in and out — short, because he is already moving when it starts. */
+	constexpr float GetUpBlendSeconds = 0.15f;
+
+	/**
+	 * WHEN A THROWN BODY COUNTS AS STOPPED: below this speed, for this long.
+	 *
+	 * Getting up is decided by SPEED and never by a clock: how long a body rolls is the physics'
+	 * business, and a timer would stand a man up in the middle of a tumble. A man runs at 600 cm/s, so
+	 * this is a body that has finished travelling. [TUNE]
+	 */
+	constexpr float StoppedSpeedCmS = 60.0f;
+	constexpr float StoppedForSeconds = 0.4f;
+
+	/**
+	 * [TUNE] WEIGHT DAMPING — heavier is thrown less.
+	 *
+	 * The reference is the LIGHTEST kit we ship today and it is thrown at the blast's full speed; every
+	 * pound over it costs a share of the throw, floored so a very heavy man is still moved. Written down
+	 * as numbers BECAUSE THEY WILL MOVE as the kits get heavier.
+	 */
+	constexpr float ThrowWeightReferenceLbs = 21.0f;
+	constexpr float ThrowWeightLossPerLb = 0.025f;
+	constexpr float ThrowWeightDampingMin = 0.25f;
+
+	/**
+	 * WHICH WAY THIS RIG'S PELVIS READS — ALS's own per-rig flag, kept at ALS's own default.
+	 *
+	 * "Is he on his back" is asked of the pelvis's ROLL, and a skeleton answers it in whichever direction
+	 * IT was authored: ALS reads `Roll < 0` as face-up on their rig, and this flag is how a rig that reads
+	 * the other way says so. ONE bit, in ONE place, and every reader goes through it (see
+	 * IsTheBodyOnItsBack), so the clip he comes up on and the half turn in his facing can never disagree.
+	 */
+	constexpr bool bReversedPelvis = false;
+
+}
+
 AProsperitocracyCharacter::AProsperitocracyCharacter()
 {
 	// The one place a status lives on this body. It is created here rather than in the blueprint so
@@ -58,6 +135,40 @@ AProsperitocracyCharacter::AProsperitocracyCharacter()
 	// made him instant and left only his arms pretending to be late. Nothing else turns him either
 	// (bOrientRotationToMovement stays off), so his aim is the ONE writer of his yaw.
 	bUseControllerRotationYaw = false;
+
+	// THE CLIPS THIS BODY COMES UP ON — the mannequin-skeleton pair that landed with the rest of the
+	// Manny anims, one for each way he can land. Named here rather than left to a blueprint so that a
+	// body thrown by a blast can ALWAYS get up, whichever blueprint it is wearing; both properties are
+	// EditDefaultsOnly, so a blueprint is still free to name its own pair instead. A path that does not
+	// resolve stays null and the way up says so out loud, which is a broken asset rather than a
+	// silent never-getting-up.
+	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GetUpFrontAsset(
+		TEXT("/Game/ThirdPerson/Blueprints/Animation/GetUp/ALS_CLF_GetUp_Front.ALS_CLF_GetUp_Front"));
+	if (GetUpFrontAsset.Succeeded())
+	{
+		GetUpFromFront = GetUpFrontAsset.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GetUpBackAsset(
+		TEXT("/Game/ThirdPerson/Blueprints/Animation/GetUp/ALS_CLF_GetUp_Back.ALS_CLF_GetUp_Back"));
+	if (GetUpBackAsset.Succeeded())
+	{
+		GetUpFromBack = GetUpBackAsset.Object;
+	}
+
+	// AND THE HALF THAT COMES AFTER EITHER OF THEM — out of the kneel and onto his feet.
+	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GetUpToStandingAsset(
+		TEXT("/Game/ThirdPerson/Blueprints/Animation/GetUp/ALS_CLF_to_N.ALS_CLF_to_N"));
+	if (GetUpToStandingAsset.Succeeded())
+	{
+		GetUpToStanding = GetUpToStandingAsset.Object;
+	}
+
+	// AND THE BONE THE SIMULATION STARTS AT IS NAMED FROM THE FIRST FRAME, never "none". The animation
+	// blueprint hands this name to both of the doc's nodes every time its chain runs, and "none" is a
+	// bone name the physics has never heard of — so the body owns it from birth and a throw only ever
+	// re-states it.
+	BodyPhysicsBoneName = ProsperitocracyBodyThrown::SimulateFromBone;
 }
 
 AActor* AProsperitocracyCharacter::GetGunInHand() const
@@ -898,9 +1009,405 @@ void AProsperitocracyCharacter::TickAimTurn(float DeltaSeconds)
 	}
 }
 
+//~ Thrown by a blast ------------------------------------------------------------------------------
+
+void AProsperitocracyCharacter::ThrowThisBody(const FVector& ShoveVelocityCmS, FName HitBoneName)
+{
+	USkeletalMeshComponent* Body = GetMesh();
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (!Body || !Movement)
+	{
+		// Said out loud, because a body that cannot be thrown and a body that was never asked look the
+		// same in the world: this one has no rig and nothing to hand to the physics.
+		UE_LOG(LogProsperitocracy, Warning, TEXT("[Thrown] %s cannot be thrown: %s"), *GetName(),
+			Body ? TEXT("no movement component") : TEXT("no skeletal mesh"));
+		return;
+	}
+
+	// THE BONE THE SIMULATION STARTS AT — the one the whole body hangs from. The FORCE goes on the bone
+	// the blast hit (Epic's own step one), and when that bone is not one this body's simulating mesh
+	// knows — the bang caught a part on another skeleton, which this rig can have — the force goes on
+	// this same bone instead of vanishing into a name the physics has never heard of.
+	const FName SimulateFrom = ProsperitocracyBodyThrown::SimulateFromBone;
+	const bool bBoneIsTheBodys = !HitBoneName.IsNone() && Body->GetBoneIndex(HitBoneName) != INDEX_NONE;
+	const FName ForceBone = bBoneIsTheBodys ? HitBoneName : SimulateFrom;
+
+	// THE THROW IS DAMPED BY WHAT HE IS CARRYING, worked out once, here, so every bang in the game
+	// throws him by the same rule however it was authored (see GetThrowWeightMultiplier).
+	const FVector Throw = ShoveVelocityCmS * GetThrowWeightMultiplier();
+
+	// A BANG WHILE HE IS ALREADY DOWN ADDS FORCE AND RE-RUNS NOTHING. A strike is many bangs and the
+	// shape has to hold for a barrage; the body is already limp, so the handover is not done twice —
+	// it simply takes the force, on the bone this one hit.
+	if (bBodyLimp)
+	{
+		Body->AddImpulse(Throw, ForceBone, /*bVelChange=*/ true);
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Thrown] is hit again while limp: %.0f cm/s on '%s'"),
+			Throw.Size(), *ForceBone.ToString());
+		return;
+	}
+
+	// FROM HERE IT IS THE STANDARD, in the standard's order, and both nodes the standard lives on are
+	// in the animation blueprint — which reads the state written right here, every frame:
+	//   IsBodyLimp / GetBodyPhysicsBlendWeight / ShouldBodySimulatePhysics / GetBodyPhysicsBoneName.
+	// THE BODY'S OWN PLACE IN THE RIG — read NOW, on the last frame on which nothing is wrong with it,
+	// because the way up hands exactly this back to the mesh. Nothing recomputes it later and nothing
+	// else keeps a copy: a second answer is a second thing that can disagree with the man on the screen.
+	BodyStandingTransform = Body->GetRelativeTransform();
+
+	// AND THE POSE HE IS LAST HIS OWN IS SAVED ON THE SAME FRAME. The animation graph shows that saved
+	// pose as the body of him for the whole of the reaction (see IsBodyShowingTheRagdollPose), so a
+	// snapshot left over from the LAST throw can never be what he is drawn as on the way into this one.
+	if (UAnimInstance* Anim = Body->GetAnimInstance())
+	{
+		Anim->SavePoseSnapshot(ProsperitocracyBodyThrown::PoseSnapshot);
+	}
+
+	bBodyLimp = true;
+	bBodySimulating = true;            // the EDGE: the simulate node is switched on, once
+	bSimulationOnAsked = true;         // and this is the once: the graph takes it, clears it, and is done
+	BodyLimpSeconds = 0.0f;
+	BodyRestSeconds = 0.0f;
+	BodyPhysicsBoneName = SimulateFrom;
+	BodyPhysicsBlendWeight = 0.0f;     // and the weight comes up from nothing, over the blend
+
+	// 1. THE MAN STOPS WALKING. A character that goes on walking DRAGS the mesh behind him, and that is
+	//    the whole of the "he goes limp and dips into the floor" family of ragdoll bugs.
+	Movement->SetMovementMode(MOVE_None);
+	Movement->Velocity = FVector::ZeroVector;
+
+	// 2. THE CAPSULE STOPS COLLIDING. It sits inside the body, so left answering queries it fights the
+	//    very bodies around it, every frame, forever.
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+
+	// 3. THE BODY BECOMES A PHYSICS BODY: its own object type and both kinds of collision, so what is
+	//    inside it collides with the world the way a thrown body does.
+	Body->SetCollisionObjectType(ECC_PhysicsBody);
+	Body->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+
+	// 4. AND THE FORCE IS HELD FOR ONE FRAME. The bodies are switched on by the animation blueprint's
+	//    own node, which reads the state above on its own update, so an impulse put on right now would
+	//    land on a body that is not simulating yet — TickLimpBody puts it on, once, on the next frame.
+	//    A VELOCITY CHANGE and not an impulse, deliberately: the number the explosion worked out IS the
+	//    speed the body gets, and the body's WEIGHT is what damps it, never the mass of a shape.
+	PendingThrow = Throw;
+	PendingThrowBone = ForceBone;
+	bThrowWaiting = true;
+
+	UE_LOG(LogProsperitocracy, Log,
+		TEXT("[Thrown] is blasted: %.0f cm/s on '%s' (the blast's own shove was %.0f, thrown at x%.2f of it) — limp from '%s': movement None, capsule collision off, mesh physics on"),
+		Throw.Size(), *ForceBone.ToString(), ShoveVelocityCmS.Size(), GetThrowWeightMultiplier(),
+		*SimulateFrom.ToString());
+}
+
+bool AProsperitocracyCharacter::TakeTheBodySimulationOnRequest()
+{
+	// THE EDGE, ANSWERED ONCE. A throw latches the request; the animation blueprint's chain asks once
+	// per frame while the body is limp and switches the simulation on the one frame this says yes.
+	// Nothing else has to remember anything — the memory is this bool, and it clears itself here.
+	if (!bSimulationOnAsked)
+	{
+		return false;
+	}
+
+	bSimulationOnAsked = false;
+	return true;
+}
+
+void AProsperitocracyCharacter::TickLimpBody(float DeltaSeconds)
+{
+	USkeletalMeshComponent* Body = GetMesh();
+	if (!Body)
+	{
+		// The rig went away under him — a teardown mid-air. There is nothing to drive and the body
+		// still has to be put back together, so this is not a way out of the way up.
+		GetThisBodyUp();
+		return;
+	}
+
+	// THE FORCE, one frame late, on a body that is actually simulating.
+	if (bThrowWaiting)
+	{
+		bThrowWaiting = false;
+		Body->AddImpulse(PendingThrow, PendingThrowBone, /*bVelChange=*/ true);
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Thrown] takes the force: %.0f cm/s on '%s'"),
+			PendingThrow.Size(), *PendingThrowBone.ToString());
+	}
+
+	BodyLimpSeconds += DeltaSeconds;
+
+	// THE WEIGHT, EVERY TICK — that is what makes the handover a blend instead of a snap, and it is
+	// Epic's own line about this node: "Often, you will want to drive this node at each tick."
+	const float WantedWeight = bBodySimulating ? 1.0f : 0.0f;
+	const float WeightStep = DeltaSeconds / FMath::Max(ProsperitocracyBodyThrown::PhysicsBlendSeconds, KINDA_SMALL_NUMBER);
+	BodyPhysicsBlendWeight = (WantedWeight > BodyPhysicsBlendWeight)
+		? FMath::Min(BodyPhysicsBlendWeight + WeightStep, WantedWeight)
+		: FMath::Max(BodyPhysicsBlendWeight - WeightStep, WantedWeight);
+
+	// AND THE PLAYER COMES ALONG. The camera is on the player and nowhere else, so moving the player to
+	// the body IS the follow — there is no second thing to keep in step with him and nothing to fake.
+	// His FACING is deliberately left alone here: it is written once, on the way up, because a facing
+	// written every frame from a rolling body is a man spinning on the spot for ever.
+	ThePlayerRidesTheBody();
+
+	// HAS HE STOPPED? By SPEED, never by a clock: how long a body rolls is the physics' business, and a
+	// timer would stand a man up in the middle of his own tumble.
+	const FVector Velocity = Body->GetPhysicsLinearVelocity(BodyPhysicsBoneName);
+	const bool bStopped = Velocity.SizeSquared() <= FMath::Square(ProsperitocracyBodyThrown::StoppedSpeedCmS);
+	BodyRestSeconds = bStopped ? (BodyRestSeconds + DeltaSeconds) : 0.0f;
+
+	// And the stop only counts once the body has actually been handed over: at the very start of the
+	// throw the bodies are not moving because they are not simulating YET, which is not a man at rest.
+	const bool bHandedOver = BodyLimpSeconds > ProsperitocracyBodyThrown::PhysicsBlendSeconds;
+
+	if (bHandedOver && BodyRestSeconds >= ProsperitocracyBodyThrown::StoppedForSeconds)
+	{
+		GetThisBodyUp();
+	}
+}
+
+void AProsperitocracyCharacter::GetThisBodyUp()
+{
+	USkeletalMeshComponent* Body = GetMesh();
+	UCapsuleComponent* Capsule = GetCapsuleComponent();
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+
+	// WHICH WAY HE LANDED picks the clip, through the body's own ONE answer — and the facing below is
+	// turned through that same answer, so the clip and the facing can never disagree about which way he
+	// is lying, which is a man coming up on the wrong clip and pivoting a half turn while he does it.
+	const FRotator PelvisRotation = Body ? Body->GetSocketRotation(BodyPhysicsBoneName) : GetActorRotation();
+	const bool bOnHisBack = IsTheBodyOnItsBack();
+	UAnimSequenceBase* GetUp = bOnHisBack ? GetUpFromBack : GetUpFromFront;
+
+	// AND THE PHYSICS IS SWITCHED OFF FIRST — before the player is moved, before anything is handed
+	// back. While the bodies are alive, every move the player makes CARRIES them: the engine teleports
+	// a simulating body along with its component ("we are teleporting a simulated body"), so the very
+	// move that is meant to catch up with the man shoves him by the same distance — every frame. That
+	// is the runaway. With the bodies dead they are simply where the physics left them, and no move of
+	// ours can reach them.
+	bBodyLimp = false;
+	bBodySimulating = false;           // the EDGE: the simulate node is switched off, once
+	BodyPhysicsBlendWeight = 0.0f;
+	if (Body)
+	{
+		Body->SetAllBodiesSimulatePhysics(false);
+		Body->SetCollisionObjectType(ECC_Pawn);
+		Body->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	}
+	if (Capsule)
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	}
+	if (Movement)
+	{
+		Movement->SetMovementMode(MOVE_Walking);
+	}
+
+	// EPIC'S RECOVERY IN ITS ORDER: the pose the physics left him in is SAVED first, so the animation
+	// blends out of where he actually is rather than from a keyframe, and the get-up clip then plays in
+	// the animation blueprint's own slot — the last physical pose and the clip, blended by the graph.
+	if (Body)
+	{
+		if (UAnimInstance* Anim = Body->GetAnimInstance())
+		{
+			Anim->SavePoseSnapshot(ProsperitocracyBodyThrown::PoseSnapshot);
+
+			if (GetUp)
+			{
+				// BOTH HALVES OF THE RISE START HERE AS ONE: the clip he comes up on, and the kneel-to-
+				// standing that follows it, which his own tick plays the moment this one is over.
+				bGetUpStandingPlayed = false;
+				GetUpMontage = Anim->PlaySlotAnimationAsDynamicMontage(
+					GetUp, ProsperitocracyBodyThrown::GetUpSlot,
+					ProsperitocracyBodyThrown::GetUpBlendSeconds, ProsperitocracyBodyThrown::GetUpBlendSeconds);
+				bGetUpPlaying = GetUpMontage.IsValid();
+			}
+			else
+			{
+				// A body with no clip cannot stand itself up, and saying so is the difference between a
+				// missing asset and a man who never gets off the floor.
+				UE_LOG(LogProsperitocracy, Warning,
+					TEXT("[Thrown] %s has no get-up clip named for the %s — he comes round without one. Name GetUpFromFront / GetUpFromBack on the body."),
+					*GetName(), bOnHisBack ? TEXT("back") : TEXT("front"));
+			}
+		}
+	}
+
+	// AND NOW THE PLAYER TAKES THE BODY'S PLACE — the ACTOR moves and the mesh never does: a man is
+	// drawn where the mesh sits in the rig, so moving the mesh onto the capsule would only put him back
+	// in the middle of the bang. The FACING is the body's own, turned back through the rig's twist that
+	// was read at the throw — and half a turn for a man on his back, whose pelvis points the other way
+	// from a man on his front. That is the difference between standing up facing where he lay and
+	// standing up facing sideways.
+	if (Body && Capsule)
+	{
+		const FVector Standing = WhereThisBodyIsStanding();
+
+		// ALS'S OWN LINE, and the whole of the facing: the character is turned to the pelvis's LYING yaw,
+		// less half a turn for a man on his back — the pelvis's forward lies along the ground pointing
+		// the way his head does, so that yaw IS the way he lies, his rig's own mounts already inside it.
+		// Nothing here reads the pelvis while he is STANDING: upright, its forward points at the sky and
+		// its yaw means nothing, which is why the old standing "twist" was ~180° of pure noise.
+		const float StandingYaw = bOnHisBack ? PelvisRotation.Yaw - 180.0f : PelvisRotation.Yaw;
+
+		SetActorLocationAndRotation(Standing, FRotator(0.0f, StandingYaw, 0.0f),
+			/*bSweep=*/ false, nullptr, ETeleportType::TeleportPhysics);
+
+		// AND THE BODY COMES HOME INTO THE RIG: the place and the tilt the mesh sits in when nothing is
+		// wrong with it, which the physics took from it and nothing was ever giving back. Handed over
+		// AFTER the move, so the man stands UPRIGHT exactly where he stopped — and the clip plays from
+		// there and ends there, instead of playing inside a lying man's tilt and leaving him at his
+		// lying angle for the rest of the session.
+		Body->SetRelativeTransform(BodyStandingTransform, /*bSweep=*/ false, nullptr, ETeleportType::TeleportPhysics);
+	}
+
+	UE_LOG(LogProsperitocracy, Log,
+		TEXT("[Thrown] is up: he stopped %.2fs in, standing at %.0f,%.0f,%.0f facing %.0f° on the %s clip (the body lay %.0f°, the pelvis rolled %.0f°) — simulation off, capsule back, weight back to 0"),
+		BodyLimpSeconds, GetActorLocation().X, GetActorLocation().Y, GetActorLocation().Z,
+		GetActorRotation().Yaw, bOnHisBack ? TEXT("back") : TEXT("front"),
+		PelvisRotation.Yaw, PelvisRotation.Roll);
+}
+
+bool AProsperitocracyCharacter::IsTheBodyOnItsBack() const
+{
+	// ASKED OF THE PELVIS'S ROLL, ONCE, and answered the same way for every reader — ALS's own question,
+	// at their own default: `Roll < 0` is face-up on their rig, and this rig's direction is the flag's
+	// business, not a call site's. The ROLL and not the forward direction, because a man flat on the
+	// ground has his pelvis's forward lying flat with him: its height is nothing whether he is on his
+	// back or on his front, so a test on it is decided by the smallest thing in the scene.
+	//
+	// Flat on his side is the one case neither question can answer, and a man settled on his side is
+	// served by either clip.
+	const USkeletalMeshComponent* Body = GetMesh();
+	const FRotator PelvisRotation = Body ? Body->GetSocketRotation(BodyPhysicsBoneName) : GetActorRotation();
+
+	return ProsperitocracyBodyThrown::bReversedPelvis ? PelvisRotation.Roll > 0.0f : PelvisRotation.Roll < 0.0f;
+}
+
+FVector AProsperitocracyCharacter::WhereThisBodyIsStanding() const
+{
+	// THE FLOOR UNDER THE PELVIS, AND NOTHING ELSE. The man's place is the body's place; the capsule's
+	// own middle sits half a body above the ground, so a downward trace is what stands him ON the floor
+	// instead of in it — and while he is still in the air it is what keeps the player down on the floor
+	// under him rather than climbing after him.
+	const USkeletalMeshComponent* Body = GetMesh();
+	if (!Body)
+	{
+		return GetActorLocation();
+	}
+
+	const FVector BodyLocation = Body->GetSocketLocation(BodyPhysicsBoneName);
+
+	const UCapsuleComponent* Capsule = GetCapsuleComponent();
+	if (!Capsule)
+	{
+		return BodyLocation;
+	}
+
+	const float HalfHeight = Capsule->GetScaledCapsuleHalfHeight();
+
+	FHitResult Ground;
+	FCollisionQueryParams GroundParams(TEXT("BodyGetUp"), /*bTraceComplex=*/ false, this);
+	const FVector TraceEnd = BodyLocation - FVector(0.0f, 0.0f, HalfHeight + 200.0f);
+	if (GetWorld() && GetWorld()->LineTraceSingleByChannel(Ground, BodyLocation, TraceEnd, ECC_Visibility, GroundParams))
+	{
+		return Ground.ImpactPoint + FVector(0.0f, 0.0f, HalfHeight);
+	}
+
+	// Nothing under him to stand on is not a reason to leave the player behind: the pelvis's own height
+	// is the answer, and the world decides the rest.
+	return BodyLocation;
+}
+
+void AProsperitocracyCharacter::ThePlayerRidesTheBody()
+{
+	USkeletalMeshComponent* Body = GetMesh();
+	USceneComponent* Root = GetRootComponent();
+	if (!Body || !Root)
+	{
+		return;
+	}
+
+	const FVector Delta = WhereThisBodyIsStanding() - GetActorLocation();
+	if (Delta.IsNearlyZero())
+	{
+		return;
+	}
+
+	// THE MOVE, AND WHY IT IS A PLAIN ONE. A teleport sets the world pose of every body of a simulating
+	// ragdoll to follow the component ("we are teleporting a simulated body"), so a player catching up
+	// with the body would shove it by exactly the distance he just moved — every frame, in one
+	// direction, for ever: that is the runaway. A PLAIN move touches none of the simulating bodies —
+	// only the bodies the animation is meant to own are moved — so the ragdoll's world is left exactly
+	// as the physics had it. The man keeps the world; the player comes to him.
+	// And the ROTATION is deliberately the one he already has, never the body's: a facing written every
+	// frame from a rolling body is a man spinning on the spot, and the camera already looks where the
+	// player looks, so nothing here has to turn anything.
+	Root->MoveComponent(Delta, Root->GetComponentQuat(), /*bSweep=*/ false, nullptr,
+		MOVECOMP_NoFlags, ETeleportType::None);
+}
+
+float AProsperitocracyCharacter::GetThrowWeightMultiplier() const
+{
+	// HEAVIER IS THROWN LESS, and the number is the body's OWN weight read FINAL off its Carried Weight
+	// row: the same Weight the aim's lag and the movement already read, perks and all, so there is no
+	// second weight kept for throwing. The lightest kit we ship is the reference and is thrown at the
+	// blast's full speed; every pound over it costs a share, floored so a very heavy man still moves.
+	const UProsperitocracyPlayerStatsComponent* Stats = GetStats(this);
+	const float Lbs = Stats ? FMath::Max(0.0f, Stats->GetStat(EProsperitocracyStat::CarriedWeight)) : 0.0f;
+	const float OverTheReference = FMath::Max(0.0f, Lbs - ProsperitocracyBodyThrown::ThrowWeightReferenceLbs);
+
+	return FMath::Clamp(1.0f - OverTheReference * ProsperitocracyBodyThrown::ThrowWeightLossPerLb,
+		ProsperitocracyBodyThrown::ThrowWeightDampingMin, 1.0f);
+}
+
 void AProsperitocracyCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	// A THROWN BODY'S FRAME BELONGS TO THE PHYSICS AND TO NOBODY ELSE. Nothing of his own may write his
+	// facing or his placement while he is limp — an actor being dragged around under a simulating body
+	// is exactly what pumps velocity into it every frame — so the whole of his tick is the limp half.
+	if (bBodyLimp)
+	{
+		TickLimpBody(DeltaSeconds);
+		return;
+	}
+
+	// AND THE RISE OWNS HIM UNTIL IT IS DONE — BOTH halves of it: the clip he came up on, and then the
+	// kneel-to-standing that follows it in the same slot. The animation is the authority while it runs,
+	// and his own aim and legs are his again the frame the SECOND half ends — never in between, which
+	// would leave a man kneeling on the floor with his legs already his own.
+	if (bGetUpPlaying)
+	{
+		UAnimInstance* Anim = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+		const UAnimMontage* Playing = GetUpMontage.Get();
+		if (!Playing || !Anim || !Anim->Montage_IsPlaying(Playing))
+		{
+			// THE SECOND HALF, the moment the first is over — and he is still the animation's.
+			if (!bGetUpStandingPlayed && GetUpToStanding)
+			{
+				bGetUpStandingPlayed = true;
+				GetUpMontage = Anim->PlaySlotAnimationAsDynamicMontage(
+					GetUpToStanding, ProsperitocracyBodyThrown::GetUpSlot,
+					ProsperitocracyBodyThrown::GetUpBlendSeconds, ProsperitocracyBodyThrown::GetUpBlendSeconds);
+				bGetUpPlaying = GetUpMontage.IsValid();
+				if (bGetUpPlaying)
+				{
+					UE_LOG(LogProsperitocracy, Log,
+						TEXT("[Thrown] the rise is half done: the kneeling-to-standing takes over in the same slot"));
+					return;
+				}
+			}
+
+			bGetUpPlaying = false;
+			GetUpMontage = nullptr;
+		}
+		return;
+	}
 
 	// WHERE HE IS FACING IS THE AIM'S, always, and the aim comes round at his own rate. The one thing
 	// that takes it over is a live attack: a swing goes along its line and looks along it until it is
