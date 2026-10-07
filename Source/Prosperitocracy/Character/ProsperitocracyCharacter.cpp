@@ -1233,6 +1233,16 @@ void AProsperitocracyCharacter::GetThisBodyUp()
 					GetUp, ProsperitocracyBodyThrown::GetUpSlot,
 					ProsperitocracyBodyThrown::GetUpBlendSeconds, ProsperitocracyBodyThrown::GetUpBlendSeconds);
 				bGetUpPlaying = GetUpMontage.IsValid();
+
+				// AND THE RISE'S OWN CLOCK STARTS ITS FIRST HALF HERE (see BodyRiseSecondsLeft): the
+				// clip's own length, which his tick counts down. The engine's answer about a clip
+				// "still playing" is a different question — it says no the moment the clip begins its
+				// own blend out, GetUpBlendSeconds before its last frame — so the rise keeps its own
+				// time and neither half of it can be cut short by that answer.
+				if (bGetUpPlaying)
+				{
+					BodyRiseSecondsLeft = GetUp->GetPlayLength();
+				}
 			}
 			else
 			{
@@ -1415,9 +1425,18 @@ void AProsperitocracyCharacter::Tick(float DeltaSeconds)
 	if (bGetUpPlaying)
 	{
 		UAnimInstance* Anim = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
-		const UAnimMontage* Playing = GetUpMontage.Get();
 
-		if (!Playing || !Anim || !Anim->Montage_IsPlaying(Playing))
+		// THE RISE IS COUNTED BY ITS OWN CLOCK AND BY NOTHING ELSE — never by asking the engine whether
+		// the clip is still "playing". A montage stops being reported as playing the moment it begins
+		// its own blend out at the end (the instance is no longer active — `AnimMontage.h`:
+		// `IsActive()` is "valid and not blending out"), which is GetUpBlendSeconds before the clip's
+		// last frame. So that answer called this rise finished early: the second half, which only
+		// starts inside that window, was never reached at all, and the pose was handed back under him
+		// while the clip was still fading out. The clip's length is a number this body already has, so
+		// the rise holds its own time and neither half can be skipped by anybody else's answer.
+		BodyRiseSecondsLeft -= DeltaSeconds;
+
+		if (BodyRiseSecondsLeft <= 0.0f)
 		{
 			// THE RISE IS OVER. The facing is held a moment longer, until the pose has finished blending
 			// into the idle pose — a yaw let go on this frame is a cut, not a blend.
@@ -1425,8 +1444,8 @@ void AProsperitocracyCharacter::Tick(float DeltaSeconds)
 			GetUpMontage = nullptr;
 			BodyFacingHeldSeconds = ProsperitocracyBodyThrown::FrameHandoverSeconds;
 		}
-		else if (!bGetUpStandingPlayed && GetUpToStanding &&
-			Playing->GetPlayLength() - Anim->Montage_GetPosition(Playing) <= ProsperitocracyBodyThrown::GetUpBlendSeconds)
+		else if (!bGetUpStandingPlayed && GetUpToStanding && Anim &&
+			BodyRiseSecondsLeft <= ProsperitocracyBodyThrown::GetUpBlendSeconds)
 		{
 			// THE SECOND HALF, LAID OVER THE END OF THE FIRST: it starts while the first is still playing
 			// and cross-fades into the same slot, so the rise is never interrupted by the pose underneath
@@ -1437,8 +1456,13 @@ void AProsperitocracyCharacter::Tick(float DeltaSeconds)
 				ProsperitocracyBodyThrown::GetUpBlendSeconds, ProsperitocracyBodyThrown::GetUpBlendSeconds);
 			if (GetUpMontage.IsValid())
 			{
+				// AND THE CLOCK CHANGES HANDS WITH THE CLIP: the kneeling-to-standing's own length,
+				// counted from the frame it takes over, so the rise ends when THAT clip ends. The number
+				// on the line is the overlap it was laid over the first half by.
 				UE_LOG(LogProsperitocracy, Log,
-					TEXT("[Thrown] the rise is half done: the kneeling-to-standing takes over in the same slot"));
+					TEXT("[Thrown] the rise is half done: the kneeling-to-standing takes over in the same slot, %.2fs of the get-up left"),
+					BodyRiseSecondsLeft);
+				BodyRiseSecondsLeft = GetUpToStanding->GetPlayLength();
 			}
 		}
 

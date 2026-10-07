@@ -885,6 +885,21 @@ protected:
 	bool bGetUpStandingPlayed = false;
 
 	/**
+	 * HOW MUCH OF THE RISE IS LEFT, IN SECONDS — the rise's OWN clock, and the only thing that says
+	 * when it is over.
+	 *
+	 * Asking the engine whether the clip is still playing is NOT the same question as whether the rise
+	 * has finished: a montage is reported as no longer playing the moment it begins its own blend out
+	 * at the end (`AnimMontage.h`: `IsActive()` is "valid and not blending out"), which is
+	 * `GetUpBlendSeconds` before the clip's last frame. So the engine's answer called the rise finished
+	 * early, the kneeling-to-standing half — which only starts inside that window — was never reached
+	 * at all, and the pose was handed back while the clip was still fading out. The clip's length is a
+	 * number this body already has, so the rise counts it down itself and no other answer can skip a
+	 * half of it.
+	 */
+	float BodyRiseSecondsLeft = 0.0f;
+
+	/**
 	 * THE RIG'S FRAME IS A VALUE THAT WALKS, NEVER A STEP. True from the way up until it has finished
 	 * walking from the frame the physics left him in onto the standing one.
 	 *
