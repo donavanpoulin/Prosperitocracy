@@ -566,14 +566,17 @@ public:
 	FName GetBodyPhysicsBoneName() const { return BodyPhysicsBoneName; }
 
 	/**
-	 * True while the pose the physics left him in is still what the animation should be showing: the
-	 * whole time he is limp, and on through the get-up clip that blends out of it.
+	 * IS THE POSE THE PHYSICS OWNS WHAT THE GRAPH SHOULD BE SHOWING? True for exactly as long as the
+	 * physics is driving him — the throw, and the hand-back at the end of it — and FALSE from the frame
+	 * the physics lets go, because from then on the animation under him is the get-up clip and the pose
+	 * he should land on when that clip fades out is the graph's own.
 	 *
-	 * That is what the animation graph asks before showing the SAVED pose instead of the locomotion
-	 * state machine — without it, the man snaps to a keyframe the frame the physics lets go.
+	 * `bGetUpPlaying` used to be in here, and that is what made the last of the rise a flash of the pose
+	 * he was LYING in: the clip faded out onto a saved pose from before the bang instead of onto idle.
+	 * The scope of this answer is the physics' ownership, and nothing else.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Body")
-	bool IsBodyShowingTheRagdollPose() const { return bBodyLimp || bGetUpPlaying; }
+	bool IsBodyShowingTheRagdollPose() const { return bBodyLimp; }
 
 	/**
 	 * THE EDGE, CONSUMED ONCE: true on the frame the physics has to be switched ON, and false every
@@ -746,23 +749,46 @@ protected:
 	 * the animation blueprint's own node is what switches them on); drive the blend weight every tick,
 	 * which is Epic's own line about the node; and watch him slow to a stop, which is what decides he
 	 * is getting up — by SPEED and never by a clock, because how long a body rolls is the physics'.
+	 *
+	 * The foot of it is the hand-back, which is a different thing from the flight: see TickTheHandBack.
 	 */
 	void TickLimpBody(float DeltaSeconds);
 
 	/**
-	 * THE WAY UP: the physics is switched off, the player takes the body's place and its facing, the
-	 * body is put back into the rig's own frame, the pose the physics left him in is saved, and the
-	 * get-up clip takes over.
+	 * HE HAS STOPPED, AND THE RISE BEGINS — and the whole of it is that the animation takes over while
+	 * the physics is STILL ON, and lets go by weight.
 	 *
-	 * The ORDER is the whole of it. The physics goes off FIRST, because a live ragdoll is carried by
-	 * every move the player makes — the move that is meant to catch up with him would shove him, and
-	 * that is the runaway the old attempt sailed away on. With the bodies dead, the player can be put
-	 * on the body's spot and the body's own place and tilt handed back to the rig, and only then is the
-	 * pose saved and the clip played — so the clip starts and ENDS where he is. The mesh keeps Query
-	 * Only, never No Collision (Epic's own correction to their tutorial: "No Collision" loses the
-	 * velocity the physics was tracking).
+	 * Three things happen here and NONE of them switches the physics off: the direction he went down in
+	 * is read once and written into the aim (the one place his facing is written); the get-up clip for
+	 * the side he landed on starts in the slot with no fade of its own; and the weight starts its way
+	 * down from 1 to 0 with that clip already playing underneath it. The pose he is lying in is still
+	 * the physics' own, so the weight is the ONLY thing that can blend him out of it — which is what the
+	 * standard says it is for, and exactly what switching the simulation off first throws away.
 	 */
 	void GetThisBodyUp();
+
+	/**
+	 * THE WEIGHT ON ITS WAY DOWN — the one window in which the last ragdoll pose melts into the get-up
+	 * instead of cutting to it. The frame the physics lets go is the END of this, never the start.
+	 */
+	void TickTheHandBack(float DeltaSeconds);
+
+	/**
+	 * THE PHYSICS LETS GO, at the end of the hand-back and not a frame before it: simulation off, the
+	 * capsule back, his movement his own again. Epic's own order, in their words: "once the reaction is
+	 * complete and the Physics Blend Weight returns to 0, you should use the Set All Bodies Below
+	 * Simulate Physics node once more to deactivate the simulation."
+	 */
+	void FinishTheHandOver();
+
+	/**
+	 * THE RISE'S OWN CLOCK, in ONE place and called from both halves of the rise: the clip's length is
+	 * counted down here, and the kneeling-to-standing takes the clock over when the first clip is nearly
+	 * done. `BodyRiseSecondsLeft` is the authority, so no answer from the engine about whether a clip is
+	 * "still playing" can skip the second half — that is a different question, and it says no 0.15 s
+	 * before the clip's last frame.
+	 */
+	void TickTheRise(float DeltaSeconds);
 
 	/**
 	 * IS HE ON HIS BACK? ONE answer, asked of the body itself, and BOTH readers ask it: which of the two
@@ -829,7 +855,7 @@ protected:
 	/** True between a throw being asked for and the frame the force actually goes on. */
 	bool bThrowWaiting = false;
 
-	/** True while the get-up clip is playing: the saved pose is what the graph shows until it is over. */
+	/** True from the frame he stops until the rise is over: the get-up clips are what he is drawn as. */
 	bool bGetUpPlaying = false;
 
 	/** What the animation blueprint's blend-weight node is driven with, 0 → 1 in and 1 → 0 out. */
@@ -847,12 +873,19 @@ protected:
 	FName PendingThrowBone = NAME_None;
 
 	/**
-	 * THE BODY'S OWN PLACE IN THE RIG — read at the throw, on the last frame on which nothing is wrong
-	 * with it, because the way up has to hand exactly this back to the mesh (see GetThisBodyUp): the
-	 * physics leaves the mesh's own place and tilt with the ragdoll's, and a standing man drawn in that
-	 * is a man standing at his lying angle for the rest of the session.
+	 * THE HAND-BACK — the physics letting go, and it is a BLEND, done by the weight and by nothing else.
+	 *
+	 * The standard's own order, in Epic's words: "you want to quickly animate this going up to 1.0 and
+	 * then back down to 0.0", and "once the reaction is complete and the Physics Blend Weight returns to
+	 * 0, you should use the Set All Bodies Below Simulate Physics node once more to deactivate the
+	 * simulation". So the frame he stops, the get-up clip starts AND the weight starts down together —
+	 * the animation is what the physics pose lands on — and the physics is switched off at the END of
+	 * that, never before it. `PhysicsBlendSeconds` is the window in, `GetUpHandOverSeconds` the window
+	 * out; a window run with the simulation already off blends nothing at all, and that is the cut that
+	 * used to be here instead.
 	 */
-	FTransform BodyStandingTransform = FTransform::Identity;
+	bool bBodyHandingBack = false;
+	float BodyHandOverSecondsLeft = 0.0f;
 
 	/** The get-up clip this body is wearing, so the body knows when it is over. */
 	TWeakObjectPtr<UAnimMontage> GetUpMontage;
@@ -900,25 +933,28 @@ protected:
 	float BodyRiseSecondsLeft = 0.0f;
 
 	/**
-	 * THE RIG'S FRAME IS A VALUE THAT WALKS, NEVER A STEP. True from the way up until it has finished
-	 * walking from the frame the physics left him in onto the standing one.
+	 * THE FACING HE COMES UP IN, AND THE FACING HIS FRAME IS ALREADY IN — the two ends of ONE walk.
 	 *
-	 * `BodyFrameFrom` is that frame (the mesh's own place and tilt as the ragdoll left them), and the
-	 * facing is walked with it — from the yaw the actor already had, to the one the clip needs. Both
-	 * ends are a man lying on the floor, so nothing jumps in between: the rig settles while the pose
-	 * blends out of the ragdoll pose, which is the blend that was missing.
+	 * A snap at a hand-over is a FRAME changing in a single frame, and no pose blend can fix that: a pose
+	 * is a pose, and the frame is what the whole man is drawn in. So the frame is WALKED — from exactly
+	 * what the physics left (the direction his own frame already had while he lay there) to the direction
+	 * the clip is authored for — over the SAME window the weight hands the pose over
+	 * (`GetUpHandOverSeconds`), one step per frame. The hand-over's first frame is then exactly what the
+	 * physics left, so nothing moves on it, and its last frame is exactly the clip's frame, so nothing is
+	 * left to write afterwards. `BodyRiseFacing` is that destination, and it is also what the whole rise
+	 * then holds.
+	 *
+	 * Riding the facing every frame off the body's own yaw is DELIBERATELY not done, and this is the
+	 * reason written down so it is not walked into a third time: on this rig the body's world yaw carries
+	 * the character's own (the mesh hangs off the capsule, and the mannequin's bone carries the mount
+	 * inside it), so writing the yaw from the pelvis every frame hands the turn back to itself and he
+	 * spins on the spot — measured, and a whole round was reverted for it.
+	 *
+	 * Letting go afterwards is the sword's own let-go: the aim's own turn picks him up from where he
+	 * actually is and carries him round to wherever he is looking, at the rate his load allows.
 	 */
-	bool bBodyFrameIsHandingOver = false;
-	float BodyFrameHandover = 0.0f;
-	FTransform BodyFrameFrom = FTransform::Identity;
+	float BodyRiseFacing = 0.0f;
 	float BodyFacingFrom = 0.0f;
-	float BodyFacingTo = 0.0f;
-
-	/**
-	 * HELD AFTER THE RISE, before the facing is let go. The pose is still blending into the idle pose
-	 * for this long after the last clip ends, and a yaw released on that frame is a cut, not a blend.
-	 */
-	float BodyFacingHeldSeconds = 0.0f;
 
 	/**
 	 * The multiply the thing in his hands puts on that turn, off its own Weight: one at an empty hand,
@@ -994,6 +1030,18 @@ protected:
 	/** THE ONE THING A NUMBER KEY DOES: the press hands the slot's number over, the release takes it back. */
 	void PressAbilitySlot(const FGameplayTag& Number);
 	void ReleaseAbilitySlot(const FGameplayTag& Number);
+
+	/**
+	 * HIS PLACEMENT IS HIS OWN AND NEVER THE PHYSICS' — set once, here, on the body that simulates.
+	 *
+	 * With the engine's own default, the mesh's own place and tilt are taken straight off the ragdoll
+	 * every physics step (`GetComponentTransformFromBodyInstance`), which is why the rise used to have to
+	 * walk his whole body back onto the standing frame by hand — a spin of an entire man in a fifth of a
+	 * second, under a clip that had already started, and that spin is the snap this replaces. Kinematic:
+	 * the physics drives his POSE and nothing else, so the pose is the only thing there is to blend out
+	 * of, and the blend is the weight's.
+	 */
+	virtual void BeginPlay() override;
 
 	/** This body's own tick, which is where the aim's turn and a live attack are driven. */
 	virtual void Tick(float DeltaSeconds) override;

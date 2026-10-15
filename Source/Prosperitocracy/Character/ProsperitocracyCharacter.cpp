@@ -67,9 +67,10 @@ namespace ProsperitocracyBodyThrown
 	const FName GetUpSlot(TEXT("DefaultSlot"));
 
 	/**
-	 * THE NAME THE POSE IS SAVED UNDER when the physics lets go — Epic's own pose snapshot, which is
-	 * "the pose snapshot to blend from the last physical driven pose into a linear animation". Saved by
-	 * the way-up half below, read by the animation graph's node of this same name.
+	 * THE NAME THE POSE IS SAVED UNDER — Epic's own pose snapshot, which is "the pose snapshot to blend
+	 * from the last physical driven pose into a linear animation". Saved on the frame a blast throws him
+	 * (the pose he was standing in, which is what the graph blends the PHYSICS into), and read by the
+	 * animation graph's node of this same name.
 	 */
 	const FName PoseSnapshot(TEXT("BodyLimpPose"));
 
@@ -82,17 +83,24 @@ namespace ProsperitocracyBodyThrown
 	 */
 	constexpr float PhysicsBlendSeconds = 0.2f;
 
-	/** The get-up clip's own blend in and out — short, because he is already moving when it starts. */
-	constexpr float GetUpBlendSeconds = 0.15f;
+	/**
+	 * HOW LONG THE WEIGHT TAKES TO COME DOWN — the hand-back's own window, and the ONE place his last
+	 * physical pose and the get-up meet.
+	 *
+	 * The pose is handed over by the WEIGHT and by nothing else, so this number decides how long he melts
+	 * out of the ragdoll instead of cutting out of it. Deliberately longer than the clip's own fade: the
+	 * clip is underneath this, not blended against it, and a window as short as a fade reads as a cut.
+	 * [TUNE] — mine.
+	 */
+	constexpr float GetUpHandOverSeconds = 0.35f;
 
 	/**
-	 * HOW LONG THE RIG'S OWN FRAME TAKES TO WALK FROM THE RAGDOLL'S ONTO THE STANDING ONE.
-	 *
-	 * The same window the pose blends over, on purpose: the frame and the pose are handed over together,
-	 * so the man settles onto the floor into the get-up instead of being re-oriented in one frame under
-	 * a pose that has not moved yet. [TUNE]
+	 * THE ONE PLACE THE TWO GET-UP CLIPS BLEND AGAINST EACH OTHER. The kneeling-to-standing takes the
+	 * first clip over in the SAME slot, and this is the cross-fade between the two of them. The FIRST
+	 * clip starts with no fade of its own: the weight is what blends him out of the ragdoll, and a slot
+	 * fade on top of that would be two blends arguing about the same frames.
 	 */
-	constexpr float FrameHandoverSeconds = 0.2f;
+	constexpr float GetUpBlendSeconds = 0.15f;
 
 	/**
 	 * WHEN A THROWN BODY COUNTS AS STOPPED: below this speed, for this long.
@@ -1020,6 +1028,33 @@ void AProsperitocracyCharacter::TickAimTurn(float DeltaSeconds)
 
 //~ Thrown by a blast ------------------------------------------------------------------------------
 
+void AProsperitocracyCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// HIS PLACEMENT IS HIS OWN AND NEVER THE PHYSICS'. The engine's default hands the mesh's own place
+	// and tilt straight off the ragdoll every physics step (`GetComponentTransformFromBodyInstance`:
+	// `RootBodyData.TransformToRoot * BodyTransform`), and THAT is what made a hand-walk of his whole
+	// body necessary on the way up — an entire man spun upright in a fifth of a second, under a clip that
+	// had already started, which is the snap this round removes. Kinematic: the physics drives his POSE,
+	// and nothing else, so his lying IS a pose — which is the thing the weight can blend out of.
+	if (USkeletalMeshComponent* Body = GetMesh())
+	{
+		Body->PhysicsTransformUpdateMode = EPhysicsTransformUpdateMode::ComponentTransformIsKinematic;
+	}
+
+	// Said out loud, once, with the answer read back off the component: a setting is only a setting if
+	// the body can be shown to have it, and a placement that silently stayed the physics' is a snap
+	// nobody can explain later.
+	if (const USkeletalMeshComponent* Body = GetMesh())
+	{
+		UE_LOG(LogProsperitocracy, Log,
+			TEXT("[Thrown] his placement is his own: %s — the physics drives his pose and nothing else"),
+			Body->PhysicsTransformUpdateMode == EPhysicsTransformUpdateMode::ComponentTransformIsKinematic
+				? TEXT("component transform is kinematic") : TEXT("SIMULATION UPDATES THE COMPONENT TRANSFORM (wrong)"));
+	}
+}
+
 void AProsperitocracyCharacter::ThrowThisBody(const FVector& ShoveVelocityCmS, FName HitBoneName)
 {
 	USkeletalMeshComponent* Body = GetMesh();
@@ -1059,10 +1094,9 @@ void AProsperitocracyCharacter::ThrowThisBody(const FVector& ShoveVelocityCmS, F
 	// FROM HERE IT IS THE STANDARD, in the standard's order, and both nodes the standard lives on are
 	// in the animation blueprint — which reads the state written right here, every frame:
 	//   IsBodyLimp / GetBodyPhysicsBlendWeight / ShouldBodySimulatePhysics / GetBodyPhysicsBoneName.
-	// THE BODY'S OWN PLACE IN THE RIG — read NOW, on the last frame on which nothing is wrong with it,
-	// because the way up hands exactly this back to the mesh. Nothing recomputes it later and nothing
-	// else keeps a copy: a second answer is a second thing that can disagree with the man on the screen.
-	BodyStandingTransform = Body->GetRelativeTransform();
+	// AND NOTHING HERE HAS TO SAVE HIS PLACE IN THE RIG. His placement is his own for good (BeginPlay),
+	// so the ragdoll never takes it and there is nothing to hand back later: what the physics owns is his
+	// POSE, and the pose is the one thing the weight blends out of him on the way up.
 
 	// AND THE POSE HE IS LAST HIS OWN IS SAVED ON THE SAME FRAME. The animation graph shows that saved
 	// pose as the body of him for the whole of the reaction (see IsBodyShowingTheRagdollPose), so a
@@ -1137,6 +1171,15 @@ void AProsperitocracyCharacter::TickLimpBody(float DeltaSeconds)
 		return;
 	}
 
+	// HE IS ON HIS WAY OUT OF IT: the weight comes down (TickTheHandBack), the player still rides him,
+	// and the physics is switched off on the frame the weight reaches 0 and not one frame before that.
+	if (bBodyHandingBack)
+	{
+		TickTheHandBack(DeltaSeconds);
+		ThePlayerRidesTheBody();
+		return;
+	}
+
 	// THE FORCE, one frame late, on a body that is actually simulating.
 	if (bThrowWaiting)
 	{
@@ -1178,32 +1221,74 @@ void AProsperitocracyCharacter::TickLimpBody(float DeltaSeconds)
 	}
 }
 
-void AProsperitocracyCharacter::GetThisBodyUp()
+void AProsperitocracyCharacter::TickTheHandBack(float DeltaSeconds)
+{
+	BodyLimpSeconds += DeltaSeconds;
+
+	// THE WEIGHT, STRAIGHT DOWN FROM 1 TO 0 OVER ITS OWN WINDOW — and it is the ONLY thing that blends
+	// him out of the physics. The clip is already playing underneath it (GetThisBodyUp), so every step of
+	// this number is his last physical pose melting a little further into the get-up instead of cutting
+	// to it. THE SIMULATION IS STILL ON, deliberately: this is the whole difference between a blend and
+	// a cut, and it is what the standard's order is for.
+	const float Window = FMath::Max(ProsperitocracyBodyThrown::GetUpHandOverSeconds, KINDA_SMALL_NUMBER);
+	const float LastWeight = BodyPhysicsBlendWeight;
+	BodyHandOverSecondsLeft = FMath::Max(BodyHandOverSecondsLeft - DeltaSeconds, 0.0f);
+	BodyPhysicsBlendWeight = FMath::Clamp(BodyHandOverSecondsLeft / Window, 0.0f, 1.0f);
+
+	// AND THE FRAME COMES ROUND WITH THE POSE — the same window, a step per frame, from exactly what the
+	// physics left to exactly the direction the clip is authored for (see BodyRiseFacing). The step IS the
+	// weight's: while the weight is still 1 the frame is untouched, so the hand-over's first frame moves
+	// him not at all, and by the frame the weight reaches 0 the frame is wholly the clip's. That is what
+	// makes the hand-over a hand-over — the pose LOOKS like the pose as it goes (a pose that is not yet
+	// done is not a jump, it is a blend), instead of the whole man being re-drawn in one frame under a
+	// pose that had not moved yet, which is what a frame change is. Written in the ONE place his facing is
+	// written (`AimRotation`), the same place a live attack writes its line.
+	const float FrameStep = 1.0f - BodyPhysicsBlendWeight;
+	AimRotation.Yaw = BodyFacingFrom + FMath::FindDeltaAngleDegrees(BodyFacingFrom, BodyRiseFacing) * FrameStep;
+	SetActorRotation(FRotator(0.0f, AimRotation.Yaw, 0.0f));
+
+	// SAID OUT LOUD AT EVERY QUARTER: a blend nobody can see and a blend that is not happening look the
+	// same in the world, and this is the number that tells them apart.
+	const int32 LastQuarter = FMath::CeilToInt(LastWeight * 4.0f);
+	const int32 Quarter = FMath::CeilToInt(BodyPhysicsBlendWeight * 4.0f);
+	if (Quarter < LastQuarter)
+	{
+		UE_LOG(LogProsperitocracy, Log,
+			TEXT("[Thrown] handing back: the physics' weight is %.2f — he is %.0f%% the get-up already, and still simulating"),
+			BodyPhysicsBlendWeight, (1.0f - BodyPhysicsBlendWeight) * 100.0f);
+	}
+
+	// AND THE RISE'S OWN CLOCK KEEPS RUNNING while the physics is still letting go, so the seconds this
+	// window takes are the rise's seconds too and no part of it is lost.
+	TickTheRise(DeltaSeconds);
+
+	if (BodyHandOverSecondsLeft <= 0.0f)
+	{
+		FinishTheHandOver();
+	}
+}
+
+void AProsperitocracyCharacter::FinishTheHandOver()
 {
 	USkeletalMeshComponent* Body = GetMesh();
 	UCapsuleComponent* Capsule = GetCapsuleComponent();
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 
-	// WHICH WAY HE LANDED picks the clip, through the body's own ONE answer — and the facing below is
-	// turned through that same answer, so the clip and the facing can never disagree about which way he
-	// is lying, which is a man coming up on the wrong clip and pivoting a half turn while he does it.
-	const FRotator PelvisRotation = Body ? Body->GetSocketRotation(BodyPhysicsBoneName) : GetActorRotation();
-	const bool bOnHisBack = IsTheBodyOnItsBack();
-	UAnimSequenceBase* GetUp = bOnHisBack ? GetUpFromBack : GetUpFromFront;
-
-	// AND THE PHYSICS IS SWITCHED OFF FIRST — before the player is moved, before anything is handed
-	// back. While the bodies are alive, every move the player makes CARRIES them: the engine teleports
-	// a simulating body along with its component ("we are teleporting a simulated body"), so the very
-	// move that is meant to catch up with the man shoves him by the same distance — every frame. That
-	// is the runaway. With the bodies dead they are simply where the physics left them, and no move of
-	// ours can reach them.
-	bBodyLimp = false;
-	bBodySimulating = false;           // the EDGE: the simulate node is switched off, once
+	// THE PHYSICS LETS GO, NOW THAT THE WEIGHT HAS REACHED 0 — the standard's own order, in Epic's own
+	// words: "once the reaction is complete and the Physics Blend Weight returns to 0, you should use the
+	// Set All Bodies Below Simulate Physics node once more to deactivate the simulation." Everything that
+	// was switched off on the way in comes back here and not a frame earlier: by now the weight has
+	// handed every part of him to the clip, so there is nothing left of the ragdoll to cut away.
+	bBodyHandingBack = false;
+	bBodySimulating = false;                 // the EDGE: the simulate node is switched off, once
 	BodyPhysicsBlendWeight = 0.0f;
+	bBodyLimp = false;                       // the graph stops driving the weight, and the saved pose stops being his body
 	if (Body)
 	{
 		Body->SetAllBodiesSimulatePhysics(false);
 		Body->SetCollisionObjectType(ECC_Pawn);
+		// Query Only, never No Collision: Epic's own correction to their tutorial — "this makes sure the
+		// physics system keeps tracking the velocity of the character physics bodies".
 		Body->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	}
 	if (Capsule)
@@ -1215,30 +1300,95 @@ void AProsperitocracyCharacter::GetThisBodyUp()
 		Movement->SetMovementMode(MOVE_Walking);
 	}
 
-	// EPIC'S RECOVERY IN ITS ORDER: the pose the physics left him in is SAVED first, so the animation
-	// blends out of where he actually is rather than from a keyframe, and the get-up clip then plays in
-	// the animation blueprint's own slot — the last physical pose and the clip, blended by the graph.
+	UE_LOG(LogProsperitocracy, Log,
+		TEXT("[Thrown] the physics lets go — the weight reached 0 after %.2fs of handing back: simulation off, capsule back, his movement his own again, and he is the animation's now"),
+		ProsperitocracyBodyThrown::GetUpHandOverSeconds);
+}
+
+void AProsperitocracyCharacter::TickTheRise(float DeltaSeconds)
+{
+	UAnimInstance* Anim = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+
+	// THE RISE IS COUNTED BY ITS OWN CLOCK AND BY NOTHING ELSE — never by asking the engine whether the
+	// clip is still "playing". That is a different question, and it answers no the moment the clip begins
+	// its own blend out, 0.15 s before its last frame, which is exactly how the second half used to be
+	// skipped. See BodyRiseSecondsLeft.
+	BodyRiseSecondsLeft -= DeltaSeconds;
+
+	if (BodyRiseSecondsLeft <= 0.0f)
+	{
+		// THE RISE IS OVER, and letting go costs nothing: his facing has BEEN the aim's own value for the
+		// whole of it (GetThisBodyUp wrote it there, and Tick holds it), so this is not a write at all —
+		// the aim's own turn carries him round from where he actually is (TickAimTurn).
+		bGetUpPlaying = false;
+		GetUpMontage = nullptr;
+	}
+	else if (!bGetUpStandingPlayed && GetUpToStanding && Anim &&
+		BodyRiseSecondsLeft <= ProsperitocracyBodyThrown::GetUpBlendSeconds)
+	{
+		// THE SECOND HALF, LAID OVER THE END OF THE FIRST: it starts while the first is still playing and
+		// cross-fades into the same slot, so the rise is never interrupted by the pose underneath it —
+		// which is exactly what two separate plays, one after the other, does.
+		bGetUpStandingPlayed = true;
+		GetUpMontage = Anim->PlaySlotAnimationAsDynamicMontage(
+			GetUpToStanding, ProsperitocracyBodyThrown::GetUpSlot,
+			ProsperitocracyBodyThrown::GetUpBlendSeconds, ProsperitocracyBodyThrown::GetUpBlendSeconds);
+		if (GetUpMontage.IsValid())
+		{
+			// AND THE CLOCK CHANGES HANDS WITH THE CLIP: the kneeling-to-standing's own length, counted
+			// from the frame it takes over, so the rise ends when THAT clip ends. The number on the line
+			// is the overlap it was laid over the first half by.
+			UE_LOG(LogProsperitocracy, Log,
+				TEXT("[Thrown] the rise is half done: the kneeling-to-standing takes over in the same slot, %.2fs of the get-up left"),
+				BodyRiseSecondsLeft);
+			BodyRiseSecondsLeft = GetUpToStanding->GetPlayLength();
+		}
+	}
+}
+
+void AProsperitocracyCharacter::GetThisBodyUp()
+{
+	USkeletalMeshComponent* Body = GetMesh();
+
+	// WHICH WAY HE LANDED picks the clip, through the body's own ONE answer — and the facing is read
+	// through that same answer, so the clip and the facing can never disagree about which way he
+	// is lying, which is a man coming up on the wrong clip and pivoting a half turn while he does it.
+	const FRotator PelvisRotation = Body ? Body->GetSocketRotation(BodyPhysicsBoneName) : GetActorRotation();
+	const bool bOnHisBack = IsTheBodyOnItsBack();
+	UAnimSequenceBase* GetUp = bOnHisBack ? GetUpFromBack : GetUpFromFront;
+
+	// THE DIRECTION HE CAME UP IN, AND THE DIRECTION HIS FRAME IS ALREADY IN — the two ends of the walk
+	// (see BodyRiseFacing). Reading both here and writing NEITHER is the whole of it: this frame's pose
+	// was already worked out in the frame he has, so a write here is a write one frame late — the entire
+	// man drawn in the frame he was in a moment ago, for that frame. That is the flash. The walk in
+	// TickTheHandBack does it a step per frame instead, over the same window the weight hands the pose
+	// over, so the frame and the pose arrive together and nothing jumps.
+	BodyFacingFrom = GetActorRotation().Yaw;
+	BodyRiseFacing = bOnHisBack ? PelvisRotation.Yaw - 180.0f : PelvisRotation.Yaw;
+
+	// AND THE CLIP STARTS, in the animation blueprint's own slot, with NO fade of its own: the WEIGHT is
+	// the blend (see TickTheHandBack), and a slot fade on top of it would be a second blend arguing about
+	// the same frames. The pose under it is still the physics' own — there is nothing else to arrange,
+	// and nothing here switches the physics off (see below).
 	if (Body)
 	{
 		if (UAnimInstance* Anim = Body->GetAnimInstance())
 		{
-			Anim->SavePoseSnapshot(ProsperitocracyBodyThrown::PoseSnapshot);
-
 			if (GetUp)
 			{
 				// BOTH HALVES OF THE RISE START HERE AS ONE: the clip he comes up on, and the kneel-to-
-				// standing that follows it, which his own tick plays the moment this one is over.
+				// standing that follows it, which his own tick plays the moment this one is nearly over.
 				bGetUpStandingPlayed = false;
 				GetUpMontage = Anim->PlaySlotAnimationAsDynamicMontage(
 					GetUp, ProsperitocracyBodyThrown::GetUpSlot,
-					ProsperitocracyBodyThrown::GetUpBlendSeconds, ProsperitocracyBodyThrown::GetUpBlendSeconds);
+					/*InBlendInTime=*/ 0.0f, ProsperitocracyBodyThrown::GetUpBlendSeconds);
 				bGetUpPlaying = GetUpMontage.IsValid();
 
-				// AND THE RISE'S OWN CLOCK STARTS ITS FIRST HALF HERE (see BodyRiseSecondsLeft): the
-				// clip's own length, which his tick counts down. The engine's answer about a clip
-				// "still playing" is a different question — it says no the moment the clip begins its
-				// own blend out, GetUpBlendSeconds before its last frame — so the rise keeps its own
-				// time and neither half of it can be cut short by that answer.
+				// AND THE RISE'S OWN CLOCK STARTS WITH THE CLIP (see BodyRiseSecondsLeft): the clip's own
+				// length, counted down by this body. The engine's answer about a clip "still playing" is a
+				// different question — it says no the moment the clip begins its own blend out, 0.15 s
+				// before its last frame — so the rise keeps its own time and neither half of it can be
+				// cut short by that answer.
 				if (bGetUpPlaying)
 				{
 					BodyRiseSecondsLeft = GetUp->GetPlayLength();
@@ -1255,35 +1405,23 @@ void AProsperitocracyCharacter::GetThisBodyUp()
 		}
 	}
 
-	// AND NOW THE PLAYER TAKES THE BODY'S PLACE — the ACTOR moves and the mesh never does: a man is
-	// drawn where the mesh sits in the rig, so moving the mesh onto the capsule would only put him back
-	// in the middle of the bang. The FACING is the body's own, turned back through the rig's twist that
-	// was read at the throw — and half a turn for a man on his back, whose pelvis points the other way
-	// from a man on his front. That is the difference between standing up facing where he lay and
-	// standing up facing sideways.
-	if (Body && Capsule)
-	{
-		const FVector Standing = WhereThisBodyIsStanding();
+	// AND THE WEIGHT STARTS ITS WAY DOWN, with that clip already playing underneath it — and THE PHYSICS
+	// IS DELIBERATELY STILL ON, at its full weight, and stays on until the weight has reached 0. A body
+	// whose simulation is switched off first cannot be blended out of at all: the part of him the physics
+	// owns is simply gone on that frame, and that cut is what the whole of this round removes.
+	bBodyHandingBack = true;
+	BodyHandOverSecondsLeft = ProsperitocracyBodyThrown::GetUpHandOverSeconds;
+	BodyPhysicsBlendWeight = 1.0f;
 
-		// THE TWO FRAMES, AND THE FACING: the frame the physics left him in, and the frame the clip is
-		// authored for (read at the throw, while nothing was wrong with it). The facing is the body's own
-		// answer — the pelvis's lying yaw, less half a turn for a man on his back. ALL THREE ARE WALKED
-		// onto the standing frame by his own tick (see Tick), never written in one frame.
-		BodyFrameFrom = Body->GetRelativeTransform();
-		BodyFacingFrom = GetActorRotation().Yaw;
-		BodyFacingTo = bOnHisBack ? PelvisRotation.Yaw - 180.0f : PelvisRotation.Yaw;
-		BodyFrameHandover = 0.0f;
-		bBodyFrameIsHandingOver = true;
-		BodyFacingHeldSeconds = 0.0f;
-
-		SetActorLocation(Standing, /*bSweep=*/ false, nullptr, ETeleportType::TeleportPhysics);
-	}
+	// AND THE PLAYER IS ALREADY ON THE BODY'S SPOT: the follow has been walking him onto it every frame
+	// he was down (ThePlayerRidesTheBody), so there is nothing to teleport here — and a teleport is the
+	// one move that CAN reach a live ragdoll (the engine sets the global pose of every simulating body on
+	// a teleport), which is not a risk worth taking for a move that has already happened.
 
 	UE_LOG(LogProsperitocracy, Log,
-		TEXT("[Thrown] is up: he stopped %.2fs in, standing at %.0f,%.0f,%.0f facing %.0f° on the %s clip (the body lay %.0f°, the pelvis rolled %.0f°) — simulation off, capsule back, weight back to 0"),
-		BodyLimpSeconds, GetActorLocation().X, GetActorLocation().Y, GetActorLocation().Z,
-		GetActorRotation().Yaw, bOnHisBack ? TEXT("back") : TEXT("front"),
-		PelvisRotation.Yaw, PelvisRotation.Roll);
+		TEXT("[Thrown] he has stopped %.2fs in — the rise begins: the %s clip in the slot with no fade of its own, his facing WALKING from %.0f° to %.0f° over the hand-over (the body lay %.0f°, the pelvis rolled %.0f°), the physics handing back over %.2fs"),
+		BodyLimpSeconds, bOnHisBack ? TEXT("back") : TEXT("front"), BodyFacingFrom, BodyRiseFacing,
+		PelvisRotation.Yaw, PelvisRotation.Roll, ProsperitocracyBodyThrown::GetUpHandOverSeconds);
 }
 
 bool AProsperitocracyCharacter::IsTheBodyOnItsBack() const
@@ -1392,88 +1530,19 @@ void AProsperitocracyCharacter::Tick(float DeltaSeconds)
 		return;
 	}
 
-	// THE FRAME WALKS, OVER THE SAME WINDOW THE POSE BLENDS OVER — from the frame the physics left him
-	// in onto the standing frame the clip is authored for, once, on the way out of a throw. On its first
-	// frame he is exactly what the physics left, frame and pose together; one window later he is exactly
-	// the standing frame. Nothing here is written in a single frame: that is what a snap is, and the
-	// pose blend cannot hide it, because a frame is not a pose.
-	if (bBodyFrameIsHandingOver)
-	{
-		BodyFrameHandover = FMath::Min(
-			BodyFrameHandover + DeltaSeconds / ProsperitocracyBodyThrown::FrameHandoverSeconds, 1.0f);
-		const float Alpha = BodyFrameHandover;
-
-		if (USkeletalMeshComponent* Body = GetMesh())
-		{
-			const FTransform Standing(
-				FQuat::Slerp(BodyFrameFrom.GetRotation(), BodyStandingTransform.GetRotation(), Alpha),
-				FMath::Lerp(BodyFrameFrom.GetLocation(), BodyStandingTransform.GetLocation(), Alpha),
-				FMath::Lerp(BodyFrameFrom.GetScale3D(), BodyStandingTransform.GetScale3D(), Alpha));
-			Body->SetRelativeTransform(Standing, /*bSweep=*/ false, nullptr, ETeleportType::TeleportPhysics);
-		}
-
-		SetActorRotation(FRotator(0.0f,
-			BodyFacingFrom + FMath::FindDeltaAngleDegrees(BodyFacingFrom, BodyFacingTo) * Alpha, 0.0f));
-
-		bBodyFrameIsHandingOver = BodyFrameHandover < 1.0f;
-	}
-
-	// AND THE RISE OWNS THE POSE UNTIL IT IS DONE — BOTH halves of it. Two things happen in here that
-	// are not the pose, and neither of them is allowed to be a step: the rig's own frame is WALKED onto
-	// the standing one, and the second half is laid OVER the end of the first instead of being started
-	// after it has finished.
+	// AND THE RISE OWNS THE POSE UNTIL IT IS DONE — both halves of it — and HIS FACING with it. The frame
+	// was already walked round to the direction the clip is authored for while the pose was being handed
+	// over (TickTheHandBack), so writing it here HOLDS it and does not move it: it is the number the walk
+	// arrived at, and it stays that number for the whole rise. So nothing walks his whole body round
+	// mid-rise, and nothing is left sitting behind his back from before the bang: LETTING GO IS NOT A
+	// WRITE AT ALL — the aim's own turn (TickAimTurn) starts from exactly where he is and brings him round
+	// to wherever he is looking, at the rate his load allows. That is the sword's hand-over, one place.
 	if (bGetUpPlaying)
 	{
-		UAnimInstance* Anim = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+		AimRotation.Yaw = BodyRiseFacing;
+		SetActorRotation(FRotator(0.0f, BodyRiseFacing, 0.0f));
 
-		// THE RISE IS COUNTED BY ITS OWN CLOCK AND BY NOTHING ELSE — never by asking the engine whether
-		// the clip is still "playing". A montage stops being reported as playing the moment it begins
-		// its own blend out at the end (the instance is no longer active — `AnimMontage.h`:
-		// `IsActive()` is "valid and not blending out"), which is GetUpBlendSeconds before the clip's
-		// last frame. So that answer called this rise finished early: the second half, which only
-		// starts inside that window, was never reached at all, and the pose was handed back under him
-		// while the clip was still fading out. The clip's length is a number this body already has, so
-		// the rise holds its own time and neither half can be skipped by anybody else's answer.
-		BodyRiseSecondsLeft -= DeltaSeconds;
-
-		if (BodyRiseSecondsLeft <= 0.0f)
-		{
-			// THE RISE IS OVER. The facing is held a moment longer, until the pose has finished blending
-			// into the idle pose — a yaw let go on this frame is a cut, not a blend.
-			bGetUpPlaying = false;
-			GetUpMontage = nullptr;
-			BodyFacingHeldSeconds = ProsperitocracyBodyThrown::FrameHandoverSeconds;
-		}
-		else if (!bGetUpStandingPlayed && GetUpToStanding && Anim &&
-			BodyRiseSecondsLeft <= ProsperitocracyBodyThrown::GetUpBlendSeconds)
-		{
-			// THE SECOND HALF, LAID OVER THE END OF THE FIRST: it starts while the first is still playing
-			// and cross-fades into the same slot, so the rise is never interrupted by the pose underneath
-			// it — which is exactly what two separate plays, one after the other, does.
-			bGetUpStandingPlayed = true;
-			GetUpMontage = Anim->PlaySlotAnimationAsDynamicMontage(
-				GetUpToStanding, ProsperitocracyBodyThrown::GetUpSlot,
-				ProsperitocracyBodyThrown::GetUpBlendSeconds, ProsperitocracyBodyThrown::GetUpBlendSeconds);
-			if (GetUpMontage.IsValid())
-			{
-				// AND THE CLOCK CHANGES HANDS WITH THE CLIP: the kneeling-to-standing's own length,
-				// counted from the frame it takes over, so the rise ends when THAT clip ends. The number
-				// on the line is the overlap it was laid over the first half by.
-				UE_LOG(LogProsperitocracy, Log,
-					TEXT("[Thrown] the rise is half done: the kneeling-to-standing takes over in the same slot, %.2fs of the get-up left"),
-					BodyRiseSecondsLeft);
-				BodyRiseSecondsLeft = GetUpToStanding->GetPlayLength();
-			}
-		}
-
-		return;
-	}
-
-	// AND THE FACING IS STILL THE RISE'S until the pose has finished blending into idle. Then, and only
-	// then, the aim takes him and turns him where the player is looking.
-	if (BodyFacingHeldSeconds > 0.0f)
-	{
-		BodyFacingHeldSeconds -= DeltaSeconds;
+		TickTheRise(DeltaSeconds);
 		return;
 	}
 
