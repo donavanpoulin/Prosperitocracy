@@ -1272,7 +1272,6 @@ void AProsperitocracyCharacter::FinishTheHandOver()
 {
 	USkeletalMeshComponent* Body = GetMesh();
 	UCapsuleComponent* Capsule = GetCapsuleComponent();
-	UCharacterMovementComponent* Movement = GetCharacterMovement();
 
 	// THE PHYSICS LETS GO, NOW THAT THE WEIGHT HAS REACHED 0 — the standard's own order, in Epic's own
 	// words: "once the reaction is complete and the Physics Blend Weight returns to 0, you should use the
@@ -1295,19 +1294,40 @@ void AProsperitocracyCharacter::FinishTheHandOver()
 	{
 		Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	}
-	if (Movement)
-	{
-		Movement->SetMovementMode(MOVE_Walking);
-	}
+	// AND HIS LEGS ARE DELIBERATELY NOT HANDED BACK HERE. They come back when the kneeling is reached
+	// (HandHisLegsBack), because the get-up owns his movement until then — and it is the SAME switch the
+	// limp took off him, so the only question is how long it is held. Handing them back on this frame,
+	// where the physics happens to let go, is what let him walk off in the middle of the get-up.
 
 	UE_LOG(LogProsperitocracy, Log,
-		TEXT("[Thrown] the physics lets go — the weight reached 0 after %.2fs of handing back: simulation off, capsule back, his movement his own again, and he is the animation's now"),
+		TEXT("[Thrown] the physics lets go — the weight reached 0 after %.2fs of handing back: simulation off, capsule back, and he is the animation's now — his legs stay the rise's until the kneeling"),
 		ProsperitocracyBodyThrown::GetUpHandOverSeconds);
 }
 
 void AProsperitocracyCharacter::TickTheRise(float DeltaSeconds)
 {
 	UAnimInstance* Anim = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+
+	// HE IS MOVING, SO THE RISE IS OVER — and this is the SECOND HALF only. The first half has his legs
+	// switched off outright, so there is nothing to read there and nothing to cancel; from the frame the
+	// kneeling-to-standing takes over, the first frame his own input is there ends the rise. The clip
+	// leaves by its OWN blend-out, the same way every move's picture comes off this body, and his legs
+	// take over from where they are: the sword's recovery cancel, through the sword's own door.
+	if (bGetUpStandingPlayed && ThePlayerIsTryingToMove())
+	{
+		bGetUpPlaying = false;
+		if (Anim && GetUpMontage.IsValid() && Anim->Montage_IsPlaying(GetUpMontage.Get()))
+		{
+			Anim->Montage_StopWithBlendOut(GetUpMontage->GetBlendOutArgs(), GetUpMontage.Get());
+		}
+		GetUpMontage = nullptr;
+
+		UE_LOG(LogProsperitocracy, Log,
+			TEXT("[Thrown] the rise is cut short — he moved with %.2fs of the kneeling-to-standing left, and his own legs take it from here"),
+			BodyRiseSecondsLeft);
+
+		return;
+	}
 
 	// THE RISE IS COUNTED BY ITS OWN CLOCK AND BY NOTHING ELSE — never by asking the engine whether the
 	// clip is still "playing". That is a different question, and it answers no the moment the clip begins
@@ -1335,15 +1355,51 @@ void AProsperitocracyCharacter::TickTheRise(float DeltaSeconds)
 			ProsperitocracyBodyThrown::GetUpBlendSeconds, ProsperitocracyBodyThrown::GetUpBlendSeconds);
 		if (GetUpMontage.IsValid())
 		{
+			// AND HIS LEGS COME BACK WITH IT, because the kneeling is the part of the rise he IS allowed to
+			// walk out of — the walk TO the kneel is the only part he is not. Handing them back on this
+			// frame and letting his input end the rise from here are the same hand-over, so there is no
+			// frame where he owns neither the clip nor his legs.
+			HandHisLegsBack();
+
 			// AND THE CLOCK CHANGES HANDS WITH THE CLIP: the kneeling-to-standing's own length, counted
 			// from the frame it takes over, so the rise ends when THAT clip ends. The number on the line
 			// is the overlap it was laid over the first half by.
 			UE_LOG(LogProsperitocracy, Log,
-				TEXT("[Thrown] the rise is half done: the kneeling-to-standing takes over in the same slot, %.2fs of the get-up left"),
+				TEXT("[Thrown] the rise is half done: the kneeling-to-standing takes over in the same slot, %.2fs of the get-up left — his legs are his again, so moving from here cuts it short"),
 				BodyRiseSecondsLeft);
 			BodyRiseSecondsLeft = GetUpToStanding->GetPlayLength();
 		}
 	}
+}
+
+bool AProsperitocracyCharacter::ThePlayerIsTryingToMove() const
+{
+	// HIS OWN PUSH, ASKED OF THE MOVEMENT COMPONENT AND NEVER RE-DERIVED FROM A SPEED. This is the vector
+	// the movement step last took off the controller, so it is the player asking to walk — and it still
+	// says yes for a man pushing into a wall, which a velocity, a distance or a position would not.
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	return Movement && !Movement->GetLastInputVector().IsNearlyZero();
+}
+
+void AProsperitocracyCharacter::HandHisLegsBack()
+{
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+
+	// Already his. This is thrown from every place the rise stops owning his movement, and the second of
+	// those is not a second event.
+	if (!Movement || Movement->MovementMode == MOVE_Walking)
+	{
+		return;
+	}
+
+	// THE ONE SWITCH, AND IT IS THE LIMP'S OWN: his legs were switched off with this when the blast took
+	// him, so the only question is when they come back. They come back when the KNEELING is reached and
+	// never when the physics happens to let go — that is the whole of the feel: the walk to the kneel is
+	// the one part of the rise he may not walk out of, and the kneeling-to-standing is the part he may.
+	Movement->SetMovementMode(MOVE_Walking);
+
+	UE_LOG(LogProsperitocracy, Log,
+		TEXT("[Thrown] his legs are his again — the rise has stopped owning his movement"));
 }
 
 void AProsperitocracyCharacter::GetThisBodyUp()
@@ -1401,6 +1457,10 @@ void AProsperitocracyCharacter::GetThisBodyUp()
 				UE_LOG(LogProsperitocracy, Warning,
 					TEXT("[Thrown] %s has no get-up clip named for the %s — he comes round without one. Name GetUpFromFront / GetUpFromBack on the body."),
 					*GetName(), bOnHisBack ? TEXT("back") : TEXT("front"));
+
+				// AND HIS LEGS COME BACK, because there is no rise coming to own them: a body that cannot
+				// stand itself up must not be left standing there unable to walk as well.
+				HandHisLegsBack();
 			}
 		}
 	}

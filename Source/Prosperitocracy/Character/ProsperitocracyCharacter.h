@@ -791,6 +791,24 @@ protected:
 	void TickTheRise(float DeltaSeconds);
 
 	/**
+	 * IS THE PLAYER ASKING TO WALK? His own input, taken off the movement component instead of derived
+	 * from a speed or a distance, and ONE reader: the rise's second half — the part of the rise he is
+	 * allowed to walk out of (see HandHisLegsBack).
+	 */
+	bool ThePlayerIsTryingToMove() const;
+
+	/**
+	 * HIS LEGS ARE HIS AGAIN — the ONE switch, and it is the limp's own: his movement was switched off
+	 * with it when the blast took him, so the only question is WHEN it comes back.
+	 *
+	 * It comes back when the KNEELING is reached, never when the physics lets go: the walk to the kneel is
+	 * the one part of the rise he may not walk out of, and the kneeling-to-standing is the part he may —
+	 * moving through that half ends the rise through this same hand-over. It is thrown for a body with no
+	 * clip to rise on as well, because a man who cannot stand himself up must not lose his legs too.
+	 */
+	void HandHisLegsBack();
+
+	/**
 	 * IS HE ON HIS BACK? ONE answer, asked of the body itself, and BOTH readers ask it: which of the two
 	 * get-up clips he wears, and whether his standing facing needs the half turn a man on his back wants.
 	 * Two tests anywhere is a clip and a facing that can disagree — a man coming up on the clip for the
