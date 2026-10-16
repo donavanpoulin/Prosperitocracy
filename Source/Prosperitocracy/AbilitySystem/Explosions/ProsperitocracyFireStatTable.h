@@ -36,14 +36,16 @@ class UProsperitocracyFireStatTable : public UProsperitocracyStatTable
 
 public:
 	/**
-	 * THE FIRE ITSELF — ONE effect for the whole patch, and not a list of flames to scatter.
+	 * THE FIRE ITSELF — ONE effect for the whole fire, and not a list of flames to scatter.
 	 *
 	 * It is ONE because a fire is one fire: a fire laid as a field of separate little fires costs a
-	 * light, a sim and a clock for every one of them, and a wider Range then means MORE FIRES rather
-	 * than a wider fire (2026-10-01, and the reason this file changed shape). This one effect is made of
-	 * the pack's own parts — the flame, the ash, the haze, the ground card, the lights — with the spread
-	 * put in by us, and everything it does is driven by the rows below plus the numbers our code feeds
-	 * it: how wide its circle is, and how many flames a second it is asking for.
+	 * light, a sim and a clock for every one of them, and a wider fire then means MORE FIRES rather
+	 * than a bigger fire (2026-10-01, and the reason this file changed shape). This one effect is made of
+	 * the pack's own parts — the flame, the ash, the haze, the ground card — and **it is told THE GROUND
+	 * ITSELF**: one entry per piece of ground the fire is burning and which way each of those pieces
+	 * faces, so its flames stand up off a floor, out of a wall and down a slope and none of them lies on
+	 * one flat plane (his call, 2026-10-15: the fire takes the shape of what it burns on). The one number
+	 * our code adds to that is how much fire the ground is asking for.
 	 *
 	 * It is a soft pointer so a fire block can be read without dragging the effect in with it, and the
 	 * load happens where the fire is laid, out loud if it fails. The path it ships with is ours
@@ -74,6 +76,39 @@ public:
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
 	int32 MostFlamesASecond = 12000;
+
+	/**
+	 * [TUNE] MINE — HOW WIDE ONE PIECE OF THE FIRE BURNS, in cm across.
+	 *
+	 * A fire is a set of pieces of real ground, and this is the size of one of them: about a metre across,
+	 * which is about TWICE a flame (a flame is 0.5 m, his number) and deliberately not the same thing. The
+	 * flame is the look and nothing reads it; this is the little volume that burns you, and he is the one who
+	 * called that difference out: *"one flames hitbox is maybe like a meter but the flame itself is maybe less
+	 * than half that. so we cannot rely on the size of the single flame."*
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
+	float HowWideOnePieceBurnsCm = 50.0f;
+
+	/**
+	 * [TUNE] MINE — HOW TALL ONE PIECE OF THE FIRE BURNS, in cm, standing OUT of the ground it is on.
+	 *
+	 * KNEE HIGH is his number for the fire's look, and it is the same number here: the flames stand out of the
+	 * floor, out of a slope or out of a wall's face, and this is how far up off its own ground a piece of fire
+	 * still reaches a body. A low wall therefore blocks low fire, which is real cover.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
+	float HowTallOnePieceBurnsCm = 60.0f;
+
+	/**
+	 * [TUNE] MINE — HOW FAR APART THE FIRE'S PIECES ARE LAID, in cm — and therefore how far the fire walks in
+	 * one step when it goes looking for the ground it burns.
+	 *
+	 * One metre, so that pieces a metre across cover their ground with no bare patches between them, and his
+	 * own read of how packed the fire already looks is the answer nothing new had to be authored for: a 12 m
+	 * fire is about 4,800 flames alight over its ground, a flame roughly every 15 cm (his call, 2026-10-15).
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
+	float HowFarApartItsPiecesAreSteppedCm = 100.0f;
 
 	/**
 	 * [TUNE] MINE — how deep in the surface the flame sits, in cm, along the surface's own normal.
