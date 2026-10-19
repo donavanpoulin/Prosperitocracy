@@ -12,6 +12,7 @@ class UNiagaraComponent;
 class UPointLightComponent;
 class UGameplayEffect;
 class UProsperitocracyFireStatTable;
+class UProsperitocracyStatTable;
 class AProsperitocracyStatHostActor;
 
 /**
@@ -158,17 +159,33 @@ public:
 	AProsperitocracyFireField();
 
 	/**
-	 * LIGHT THE GROUND — the one door a fire is born through, walked by the explosion pass.
+	 * LIGHT THE FIRE THIS THING NAMES — the ONE door anything that leaves fire walks through.
 	 *
-	 * FireBlock — which fire this is: its reach, its clock, its Burn, its pieces and its one effect all come
-	 * off that block, read FINAL through the fire's own GAS home.
+	 * ThingBlock — the block of the thing whose act is leaving fire. It answers two questions and nothing
+	 * else: whether a fire is named at all, and which one. A block that names none leaves none, silently:
+	 * presence is scope, exactly as it is for a mark, a status or a bang's look.
+	 * TheOneWhoLeftIt — whose fire it is: its Burn is dealt and credited as his.
+	 * Place — where the fire starts, on the ground it is meant to burn.
+	 *
+	 * No effect, no clock, no width and no look is handed in: every one of those is the fire's own block's,
+	 * read through the fire's own GAS home. That is what makes this callable from a bang, an ability, a
+	 * barrel's death or anything that exists later — the caller says WHERE and WHOSE, and nothing about what
+	 * a fire IS.
+	 *
+	 * Answers the fire it laid, or null when the thing names none, or the one it names will not load.
+	 */
+	static AProsperitocracyFireField* LightWhatItsBlockNames(const UProsperitocracyStatTable* ThingBlock,
+		AActor* TheOneWhoLeftIt, const FVector& Place);
+
+	/**
+	 * LIGHT THE GROUND — the one door a fire is born through, walked by LightWhatItsBlockNames above.
+	 *
+	 * InFireBlock — which fire this is: its reach, its clock, its Burn, its pieces, the effect its Burn runs
+	 * through and its one look all come off that block, read FINAL through the fire's own GAS home.
 	 * TheOneWhoLeftIt — whose fire it is: the Burn's damage is dealt and credited as his, so a fire that
 	 * kills contests health and shows a number exactly as his own shot would.
-	 * InDamageEffectClass — the effect the ONE damage pipeline runs on, carried so a Burn's tick is a
-	 * normal damage line and never a second way to take health off someone.
 	 */
-	void LightTheGround(UProsperitocracyFireStatTable* InFireBlock, AActor* TheOneWhoLeftIt,
-		TSubclassOf<UGameplayEffect> InDamageEffectClass);
+	void LightTheGround(UProsperitocracyFireStatTable* InFireBlock, AActor* TheOneWhoLeftIt_);
 
 	virtual void Tick(float DeltaSeconds) override;
 

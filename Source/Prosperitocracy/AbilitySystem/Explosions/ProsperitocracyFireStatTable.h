@@ -7,6 +7,7 @@
 
 #include "ProsperitocracyFireStatTable.generated.h"
 
+class UGameplayEffect;
 class UNiagaraSystem;
 
 /**
@@ -55,6 +56,23 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
 	TSoftObjectPtr<UNiagaraSystem> FireLook =
 		TSoftObjectPtr<UNiagaraSystem>(FSoftObjectPath(TEXT("/Game/Abilities/NS_FireField.NS_FireField")));
+
+	/**
+	 * THE EFFECT THE FIRE'S BURN RUNS THROUGH — the one asset a fire needs that is not a number.
+	 *
+	 * A fire hurts nothing by itself: it puts its statuses on what it catches (AppliedEffects, on the base
+	 * class), and a status's tick is a normal damage line through the ONE damage pipeline, which runs on an
+	 * effect. That effect used to be handed TO the fire by whatever lit it — a bang passing its own along —
+	 * which made a fire depend on there being a bang at all. It lives HERE now, so a fire is complete on
+	 * its own: the same fire block, lit by an ability, a barrel's death or a grenade, applies its Burn with
+	 * the same effect, and no caller has to know anything about it.
+	 *
+	 * Asked for only when the fire NAMES statuses: a fire block with no AppliedEffects hurts nothing by
+	 * design and needs no effect. A fire that names statuses and no effect says so out loud and lights
+	 * anyway — the ground still burns, and the missing half is a log line rather than a silent nothing.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
+	TSubclassOf<UGameplayEffect> DamageEffectClass;
 
 	/**
 	 * [TUNE] MINE — how thickly the flames stand on the ground: flame cards a second, PER SQUARE METRE.

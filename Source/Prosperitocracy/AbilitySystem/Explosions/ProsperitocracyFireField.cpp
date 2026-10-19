@@ -7,6 +7,7 @@
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/Explosions/ProsperitocracyExplosionStatics.h"
 #include "AbilitySystem/Explosions/ProsperitocracyFireStatTable.h"
+#include "Stats/ProsperitocracyStatTable.h"
 #include "AbilitySystem/ProsperitocracyDamageStatics.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
 #include "CollisionQueryParams.h"
@@ -202,8 +203,58 @@ AProsperitocracyFireField::AProsperitocracyFireField()
 	SetActorEnableCollision(true);
 }
 
+AProsperitocracyFireField* AProsperitocracyFireField::LightWhatItsBlockNames(const UProsperitocracyStatTable* ThingBlock,
+	AActor* TheOneWhoLeftIt, const FVector& Place)
+{
+	if (!ThingBlock || !TheOneWhoLeftIt)
+	{
+		return nullptr;
+	}
+
+	// PRESENCE IS SCOPE, ASKED OF THE PATH AND NEVER OF THE OBJECT (2026-09-30, and it cost a whole play
+	// test): `if (Block->Fire)` reads TSoftObjectPtr::operator bool, which is IsValid() — "is the object
+	// LOADED" — and not "is a fire NAMED". Nothing loads a fire block until something asks for it, so that
+	// test was false for a fire that had been named all along, and the whole thing was skipped without one
+	// word in the log — because a thing that names no fire is silent by design.
+	if (ThingBlock->Fire.IsNull())
+	{
+		return nullptr;
+	}
+
+	UWorld* World = TheOneWhoLeftIt->GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	UProsperitocracyFireStatTable* FireBlock = ThingBlock->Fire.LoadSynchronous();
+	if (!FireBlock)
+	{
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("[Fire] %s names a fire block that could not be loaded — no ground is burning."), *GetNameSafe(ThingBlock));
+		return nullptr;
+	}
+
+	FActorSpawnParameters FireParams;
+	FireParams.Owner = TheOneWhoLeftIt;
+	FireParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	AProsperitocracyFireField* TheFire = World->SpawnActor<AProsperitocracyFireField>(
+		AProsperitocracyFireField::StaticClass(), Place, FRotator::ZeroRotator, FireParams);
+	if (!TheFire)
+	{
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("[Fire] %s names a fire that could not be spawned at %s — no ground is burning."),
+			*GetNameSafe(ThingBlock), *Place.ToCompactString());
+		return nullptr;
+	}
+
+	TheFire->LightTheGround(FireBlock, TheOneWhoLeftIt);
+	return TheFire;
+}
+
 void AProsperitocracyFireField::LightTheGround(UProsperitocracyFireStatTable* InFireBlock,
-	AActor* TheOneWhoLeftIt_, TSubclassOf<UGameplayEffect> InDamageEffectClass)
+	AActor* TheOneWhoLeftIt_)
 {
 	UWorld* World = GetWorld();
 	if (!World || !InFireBlock)
@@ -213,7 +264,19 @@ void AProsperitocracyFireField::LightTheGround(UProsperitocracyFireStatTable* In
 
 	FireBlock = InFireBlock;
 	TheOneWhoLeftIt = TheOneWhoLeftIt_;
-	DamageEffectClass = InDamageEffectClass;
+
+	// THE EFFECT ITS BURN RUNS THROUGH comes off the fire's OWN block (2026-10-19). A fire used to be handed
+	// whatever effect the thing that lit it happened to carry — which tied every fire in the game to there
+	// being an explosion present to pass one along. A fire that names statuses and no effect would tick them
+	// into nothing, so it says so out loud AND burns anyway: the ground is still a fire, and hiding the
+	// mistake behind "no fire at all" would be the worse of the two failures.
+	DamageEffectClass = InFireBlock->DamageEffectClass;
+	if (!DamageEffectClass && InFireBlock->AppliedEffects.Num() > 0)
+	{
+		UE_LOG(LogProsperitocracy, Warning,
+			TEXT("[Fire] %s names %d status(es) but no damage effect — its burn will deal NOTHING. Set the effect on the fire's own block."),
+			*GetNameSafe(InFireBlock), InFireBlock->AppliedEffects.Num());
+	}
 
 	// THE FIRE'S OWN HOME. Its rows are read FINAL through the one aggregator, exactly as a gun's or a
 	// status's are, so a perk or a buff that ever reaches a fire moves its reach and its clock with it.

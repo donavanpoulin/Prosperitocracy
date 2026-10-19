@@ -8,6 +8,7 @@
 #include "AbilitySystem/ProsperitocracyGameplayEffectContext.h"
 #include "AbilitySystem/ProsperitocracyStatusComponent.h"
 #include "Engine/Engine.h"
+#include "CollisionQueryParams.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
@@ -18,6 +19,7 @@
 #include "Character/ProsperitocracyCharacter.h"
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
+#include "AbilitySystem/Explosions/ProsperitocracyFireField.h"
 #include "Classes/ProsperitocracyClass.h"
 #include "ProsperitocracyGameplayTags.h"
 #include "ProsperitocracyLogChannels.h"
@@ -26,11 +28,13 @@
 #include "Weapons/ProsperitocracyLoadoutComponent.h"
 
 /**
- * The in-game dev sandbox — DEVELOPMENT ONLY. Eight commands, one per thing you cannot try by walking
+ * The in-game dev sandbox — DEVELOPMENT ONLY. One command per thing you cannot try by walking
  * around: the gun you are holding, the weave you are wearing, the armour's colour, which of your
  * class's three loadouts you are playing, which class you are, the Stun and the Burn you cannot put on
- * yourself, and the damage you cannot otherwise take (Prosperitocracy.Hurt — so a weave's resist and
- * contested health can both be felt while nothing in the game attacks you).
+ * yourself, the damage you cannot otherwise take (Prosperitocracy.Hurt — so a weave's resist and
+ * contested health can both be felt while nothing in the game attacks you), the shove a blast gives
+ * you (Prosperitocracy.Push), and fire on the ground with no bang to make it
+ * (Prosperitocracy.LightFire — the fire pathway walked on its own).
  *
  * `Prosperitocracy.Gun <name>` puts one of our six guns in your hands without touching what the
  * character spawns with and without a pickup system.
@@ -1146,4 +1150,78 @@ namespace ProsperitocracyDevHurt
 		TEXT("It calls the BODY's own throw — the same door the explosion pass calls — so it is the real ragdoll: ")
 		TEXT("limp, the force on the body, the tumble, the get-up. No explosion, no damage, no fire, no status."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandlePushCommand));
+}
+
+/**
+ * THE FIRE SANDBOX — DEVELOPMENT ONLY, and it is a PROOF rather than a feature.
+ *
+ * Every fire in the game was, until now, lit by an explosion: the fire was spawned inside the explosion
+ * pass and handed that bang's damage effect on the way in. So "a fire is a pathway of its own" was a claim
+ * nobody could test without a bomb in the room.
+ *
+ * This lights a fire with NOTHING ELSE HAPPENING — no ball, no bang, no damage, no shake, no mark — by
+ * asking a stat block for the fire it names and walking the same door the explosion pass walks. If the
+ * strike's fire burns from here, an explosion is no longer required for fire to exist, and a barrel's
+ * death or an ability can light the same fire the same way.
+ *
+ * It states no fire, no reach and no clock of its own: it reads a block, and the fire's own block answers
+ * everything else.
+ */
+namespace ProsperitocracyDevFire
+{
+/** The block that names a fire today — the strike's. Read, never restated. */
+const TCHAR* const IncendiaryStrikeBlockPath = TEXT("/Game/Weapons/StatBlocks/STB_IncendiaryStrike.STB_IncendiaryStrike");
+
+void HandleLightFireCommand(const TArray<FString>& Args, UWorld* World)
+{
+	APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
+	APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
+	if (!Pawn)
+	{
+		ProsperitocracyDev::Report(TEXT("LightFire"), 0, TEXT("no body — this only works while the game is running (PIE)."));
+		return;
+	}
+
+	const TCHAR* const BlockPath = (Args.Num() > 0) ? *Args[0] : IncendiaryStrikeBlockPath;
+	const UProsperitocracyStatTable* NamingBlock = LoadObject<UProsperitocracyStatTable>(nullptr, BlockPath);
+	if (!NamingBlock)
+	{
+		ProsperitocracyDev::Report(TEXT("LightFire"), 0, FString::Printf(TEXT("there is no block at %s."), BlockPath));
+		return;
+	}
+
+	// WHERE HIS FEET ARE: down from him to the real ground, so the fire is laid on a surface rather than
+	// at his waist. Nothing under him means he is in the air, and then his own place is the honest answer
+	// — the fire's own walk finds the surface it can burn from there.
+	FVector Feet = Pawn->GetActorLocation();
+	{
+		FHitResult Under;
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(DevLightFire), /*bTraceComplex=*/ false, Pawn);
+		if (World->LineTraceSingleByChannel(Under, Pawn->GetActorLocation(),
+			Pawn->GetActorLocation() - FVector(0.0f, 0.0f, 500.0f), ECC_Visibility, Params))
+		{
+			Feet = Under.ImpactPoint;
+		}
+	}
+
+	// THE ONE DOOR — the same call a bang makes, with nothing that makes a bang around it.
+	AProsperitocracyFireField* TheFire = AProsperitocracyFireField::LightWhatItsBlockNames(NamingBlock, Pawn, Feet);
+	if (!TheFire)
+	{
+		ProsperitocracyDev::Report(TEXT("LightFire"), 0, FString::Printf(
+			TEXT("%s names no fire, or the fire it names would not load — nothing is burning."), *NamingBlock->GetName()));
+		return;
+	}
+
+	ProsperitocracyDev::Report(TEXT("LightFire"), 0, FString::Printf(
+		TEXT("lit %s from %s at your feet — no bang, no ball, nothing dealt. That is the fire pathway walked on its own."),
+		*TheFire->GetName(), *NamingBlock->GetName()));
+}
+
+static FAutoConsoleCommandWithWorldAndArgs LightFireCommand(
+	TEXT("Prosperitocracy.LightFire"),
+	TEXT("Light the fire a stat block NAMES, at your feet: Prosperitocracy.LightFire [block path], default the ")
+	TEXT("incendiary strike's block. Nothing explodes, nothing is dealt, nothing shakes — this is the fire ")
+	TEXT("pathway being walked by something that is NOT an explosion, through the same door a bang uses."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleLightFireCommand));
 }
