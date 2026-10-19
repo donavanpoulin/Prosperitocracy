@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "AbilitySystem/Abilities/ProsperitocracyGameplayAbility.h"
 
-#include "ProsperitocracyGameplayAbility_IncendiaryStrike.generated.h"
+#include "ProsperitocracyGameplayAbility_Strike.generated.h"
 
 class AProsperitocracyProjectile;
 class UGameplayEffect;
@@ -19,16 +19,19 @@ class UProsperitocracyStatTable;
  * has to fit inside: nothing inside it is refused and nothing past it is refused either — the line simply
  * ends there and the strikes land at its end. `[TUNE]`
  */
-namespace ProsperitocracyIncendiaryStrikeHandling
+namespace ProsperitocracyStrikeHandling
 {
 	constexpr float PlacementReachCm = 100000.0f;
 	constexpr float CentimetersPerMeter = 100.0f;
 }
 
 /**
- * UProsperitocracyGameplayAbility_IncendiaryStrike
+ * UProsperitocracyGameplayAbility_Strike
  *
- * THE ANCHOR'S FIRST STRIKE, the bombardment itself (PLANS/incendiary-strike.md part 2).
+ * EVERY CALLED STRIKE IS THIS CLASS. What makes one strike different from another is only its numbers —
+ * how many fall, how long it falls for, how fast and how wide — and every one of those is a row on a
+ * block, read FINAL. The incendiary strike is a child of this class that names its numbers; the next
+ * strike is another child naming different ones, and nothing in this file changes for it.
  *
  * One press is the WHOLE bombardment: the first strike falls on the call and then one every 1/Rate until
  * the ability's Duration is up. Its Range is the circle the strikes land inside — the SIZE of the
@@ -41,12 +44,12 @@ namespace ProsperitocracyIncendiaryStrikeHandling
  * the falling.
  */
 UCLASS()
-class UProsperitocracyGameplayAbility_IncendiaryStrike : public UProsperitocracyGameplayAbility
+class UProsperitocracyGameplayAbility_Strike : public UProsperitocracyGameplayAbility
 {
 	GENERATED_BODY()
 
 public:
-	UProsperitocracyGameplayAbility_IncendiaryStrike();
+	UProsperitocracyGameplayAbility_Strike();
 
 	virtual bool CanActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayTagContainer* SourceTags = nullptr, const FGameplayTagContainer* TargetTags = nullptr, OUT FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
 	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;

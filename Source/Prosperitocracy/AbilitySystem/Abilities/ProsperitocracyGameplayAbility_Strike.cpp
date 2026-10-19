@@ -1,6 +1,6 @@
 // Copyright Prosperitocracy. All Rights Reserved.
 
-#include "AbilitySystem/Abilities/ProsperitocracyGameplayAbility_IncendiaryStrike.h"
+#include "AbilitySystem/Abilities/ProsperitocracyGameplayAbility_Strike.h"
 
 #include "Character/ProsperitocracyCharacter.h"
 #include "CollisionQueryParams.h"
@@ -12,16 +12,16 @@
 #include "Stats/ProsperitocracyStatTable.h"
 #include "TimerManager.h"
 
-#include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyGameplayAbility_IncendiaryStrike)
+#include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyGameplayAbility_Strike)
 
-UProsperitocracyGameplayAbility_IncendiaryStrike::UProsperitocracyGameplayAbility_IncendiaryStrike()
+UProsperitocracyGameplayAbility_Strike::UProsperitocracyGameplayAbility_Strike()
 {
 	// The base's defaults are the right ones for a bombardment that is CALLED: instanced on the body that
 	// called it, fired on the input, and independent of every other ability — the man goes on fighting while
 	// it falls, and it refuses nobody's move.
 }
 
-bool UProsperitocracyGameplayAbility_IncendiaryStrike::CanActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayTagContainer* SourceTags, const FGameplayTagContainer* TargetTags, OUT FGameplayTagContainer* OptionalRelevantTags) const
+bool UProsperitocracyGameplayAbility_Strike::CanActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayTagContainer* SourceTags, const FGameplayTagContainer* TargetTags, OUT FGameplayTagContainer* OptionalRelevantTags) const
 {
 	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
 	{
@@ -48,7 +48,7 @@ bool UProsperitocracyGameplayAbility_IncendiaryStrike::CanActivateAbility(const 
 	return true;
 }
 
-void UProsperitocracyGameplayAbility_IncendiaryStrike::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
+void UProsperitocracyGameplayAbility_Strike::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
 	// The base class brings this ability's GAS home up: every number it owns — its Duration, Rate, Range and
 	// Cooldown — is evaluated there, and nowhere else.
@@ -101,7 +101,7 @@ void UProsperitocracyGameplayAbility_IncendiaryStrike::ActivateAbility(const FGa
 	if (SecondsBetweenStrikes > 0.0f)
 	{
 		World->GetTimerManager().SetTimer(FallingTimerHandle, this,
-			&UProsperitocracyGameplayAbility_IncendiaryStrike::TheBombardmentKeepsFalling, SecondsBetweenStrikes, /*bLoop=*/ true);
+			&UProsperitocracyGameplayAbility_Strike::TheBombardmentKeepsFalling, SecondsBetweenStrikes, /*bLoop=*/ true);
 	}
 	else
 	{
@@ -112,7 +112,7 @@ void UProsperitocracyGameplayAbility_IncendiaryStrike::ActivateAbility(const FGa
 	}
 }
 
-void UProsperitocracyGameplayAbility_IncendiaryStrike::TheBombardmentKeepsFalling()
+void UProsperitocracyGameplayAbility_Strike::TheBombardmentKeepsFalling()
 {
 	UWorld* World = GetWorld();
 	const float Duration = GetDurationSeconds();
@@ -162,7 +162,7 @@ void UProsperitocracyGameplayAbility_IncendiaryStrike::TheBombardmentKeepsFallin
 	++StrikesDropped;
 }
 
-bool UProsperitocracyGameplayAbility_IncendiaryStrike::FindWhereItLands(FVector& OutPlace) const
+bool UProsperitocracyGameplayAbility_Strike::FindWhereItLands(FVector& OutPlace) const
 {
 	const APawn* Caller = Cast<APawn>(CurrentActorInfo ? CurrentActorInfo->AvatarActor.Get() : nullptr);
 	const UWorld* World = GetWorld();
@@ -177,7 +177,7 @@ bool UProsperitocracyGameplayAbility_IncendiaryStrike::FindWhereItLands(FVector&
 	const AProsperitocracyCharacter* Man = Cast<AProsperitocracyCharacter>(Caller);
 	const FVector From = Caller->GetPawnViewLocation();
 	const FVector Along = Man ? Man->GetAimRotation().Vector() : Caller->GetControlRotation().Vector();
-	const FVector To = From + (Along * ProsperitocracyIncendiaryStrikeHandling::PlacementReachCm);
+	const FVector To = From + (Along * ProsperitocracyStrikeHandling::PlacementReachCm);
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(StrikePlacement), /*bTraceComplex=*/ false, Caller);
 
@@ -195,7 +195,7 @@ bool UProsperitocracyGameplayAbility_IncendiaryStrike::FindWhereItLands(FVector&
 	return true;
 }
 
-void UProsperitocracyGameplayAbility_IncendiaryStrike::EndTheBombardment(const TCHAR* Why)
+void UProsperitocracyGameplayAbility_Strike::EndTheBombardment(const TCHAR* Why)
 {
 	if (UWorld* World = GetWorld())
 	{
@@ -208,7 +208,7 @@ void UProsperitocracyGameplayAbility_IncendiaryStrike::EndTheBombardment(const T
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, /*bReplicateEndAbility=*/ true, /*bWasCancelled=*/ false);
 }
 
-void UProsperitocracyGameplayAbility_IncendiaryStrike::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
+void UProsperitocracyGameplayAbility_Strike::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
 {
 	// Whatever ended it — its Duration, the man dying, a cancel — the falling stops with it. Without this the
 	// clock would go on dropping strikes for a bombardment that no longer exists.
@@ -220,7 +220,7 @@ void UProsperitocracyGameplayAbility_IncendiaryStrike::EndAbility(const FGamepla
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
-float UProsperitocracyGameplayAbility_IncendiaryStrike::GetDurationSeconds() const
+float UProsperitocracyGameplayAbility_Strike::GetDurationSeconds() const
 {
 	// FINAL through this ability's own GAS home, so a Duration perk stretches the bombardment — and the
 	// floor fire's own clock is a different row entirely (the plan's three clocks: the bombardment's
@@ -228,13 +228,13 @@ float UProsperitocracyGameplayAbility_IncendiaryStrike::GetDurationSeconds() con
 	return GetStatFinalValue(EProsperitocracyStat::Duration);
 }
 
-float UProsperitocracyGameplayAbility_IncendiaryStrike::GetRatePerSecond() const
+float UProsperitocracyGameplayAbility_Strike::GetRatePerSecond() const
 {
 	// FINAL, the same read every rate in the game takes: how many strikes come down a second.
 	return GetStatFinalValue(EProsperitocracyStat::Rate);
 }
 
-float UProsperitocracyGameplayAbility_IncendiaryStrike::GetCircleRadiusCm() const
+float UProsperitocracyGameplayAbility_Strike::GetCircleRadiusCm() const
 {
 	// EVERY RANGE IN THIS FEATURE IS A DIAMETER (his rule: "in every case its the diameter not the radius"),
 	// and this one is no exception: the ability's Range is how far ACROSS the circle the strikes land inside
@@ -242,10 +242,10 @@ float UProsperitocracyGameplayAbility_IncendiaryStrike::GetCircleRadiusCm() cons
 	// placed and scattered inside from its radius, so that half is geometry here exactly as the ball's half is
 	// in the explosion pass. Read FINAL, so a Range perk widens the bombardment and nothing else has to know.
 	return GetStatFinalValue(EProsperitocracyStat::Range)
-		* ProsperitocracyIncendiaryStrikeHandling::CentimetersPerMeter * 0.5f;
+		* ProsperitocracyStrikeHandling::CentimetersPerMeter * 0.5f;
 }
 
-float UProsperitocracyGameplayAbility_IncendiaryStrike::GetCooldownSeconds() const
+float UProsperitocracyGameplayAbility_Strike::GetCooldownSeconds() const
 {
 	// FINAL through this ability's own GAS home, so a Cooldown perk reaches the call like any other stat.
 	return GetStatFinalValue(EProsperitocracyStat::Cooldown);
