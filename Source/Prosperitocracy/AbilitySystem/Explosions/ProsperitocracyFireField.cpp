@@ -10,6 +10,9 @@
 #include "AbilitySystem/ProsperitocracyDamageStatics.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
 #include "CollisionQueryParams.h"
+#include "DrawDebugHelpers.h"
+#include "Engine/Engine.h"
+#include "HAL/IConsoleManager.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SceneComponent.h"
 #include "Engine/OverlapResult.h"
@@ -51,8 +54,75 @@ namespace ProsperitocracyFireVariables
 // how far a look reaches, and the three rules that decide whether two pieces of ground touch.
 namespace ProsperitocracyFireHandling
 {
+	/**
+	 * THE FIRE'S LIGHTS ARE ON (1.0f). They were held at 0.0f for one test on 2026-10-17 — "are the white marks
+	 * left on the floor this light?" — and the answer was no, so they are back. Every lamp is made, placed and
+	 * sized by the code below, and this number scales what all of them are worth: 1 is the fire lighting the
+	 * ground it burns, 0 is every lamp made and contributing nothing.
+	 */
+	static constexpr float TheFiresLightsAreOffForATest = 1.0f;
+
 	/** How far off a surface a probe starts, in cm, so it is clear of the ground its own piece is standing on. */
 	static constexpr float ProbeStandoffCm = 40.0f;
+
+	/**
+	 * HOW MANY WAYS ONE PIECE OFFERS THE FIRE, in the piece's OWN surface plane.
+	 *
+	 * Eight, because a floor needs to fill in every direction, a wall needs up and down as well as sideways (and
+	 * gets them for free — its plane is the wall), and a corner needs the ones in between. The ring is rotated
+	 * per piece so the fire's edge is ragged and never a lattice.
+	 */
+	static constexpr int32 WaysOutOfOnePiece = 8;
+
+	/**
+	 * How big the probe is that is moved along the surface, in cm — a shape, not a point, so a gap of a couple of
+	 * centimetres cannot swallow a step and the fire cannot be stopped by a hair.
+	 */
+	static constexpr float TheProbeSphereReachesCm = 25.0f;
+
+	/** The least a step is worth taking, in cm — below this the walk would be placing a piece on itself. */
+	static constexpr float TheLeastAStepIsWorthCm = 15.0f;
+
+	/**
+	 * HOW WIDE ONE FLAME CARD IS, in cm — the biggest card the effect rolls (`User.FlameSizeMax`, 70).
+	 *
+	 * The cards keep their own random size; this is the LARGEST of them, and it is what a flame spot's box is
+	 * worth. So the smallest card sits inside its box rather than sticking out of it, and no burn reaches further
+	 * than a flame could be. Move it with the effect's own parameter, never alone.
+	 */
+	static constexpr float HowWideOneFlameCardIsCm = 70.0f;
+
+	/**
+	 * HOW FAR A FLAME MAY WANDER OFF ITS SPOT, in cm — the effect's own `Sphere Radius` on NE_Flame_02, and it
+	 * must be the same number here as there.
+	 *
+	 * The spots are scattered by the code; this is the last little drift each card gets so a spot never reads as a
+	 * single repeating stamp. It is also exactly how much wider than a card the box has to be, so a wandering
+	 * flame is still inside the thing that burns — no flame outside its box, and no box reaching past where a
+	 * flame could be.
+	 */
+	static constexpr float HowFarAFlameMayWanderOffItsSpotCm = 15.0f;
+
+	/**
+	 * HOW MANY FLAME SPOTS ONE PATCH OF GROUND CARRIES.
+	 *
+	 * Three, spread around the patch's own middle — enough that the cards standing on them overlap into one fire
+	 * with no bare ground between them, and few enough that a bombardment is not paying for a box per flame card.
+	 */
+	static constexpr int32 SpotsEachPatchOfGroundCarries = 3;
+
+	/**
+	 * HOW FAR A BURN BOX REACHES OUT FROM THE MIDDLE OF ITS SPOT, in cm — half its width, so a card's half plus the
+	 * wander. THE WALK STOPS THIS FAR SHORT OF THE RANGE, so the box's outer edge lands exactly on the Range
+	 * (his rule: if the Range is 8.45m then it is 8.45m). A flame card can still poke a few centimetres past it,
+	 * because a card is a picture; the thing that burns you never does.
+	 */
+	static constexpr float HowFarABurnBoxReachesCm =
+		(HowWideOneFlameCardIsCm * 0.5f) + HowFarAFlameMayWanderOffItsSpotCm;
+
+	/** [DEV] On, every fire draws the exact volume that burns — the box, not a picture of it. */
+	static bool bShowTheBurnBoxes = false;
+
 
 	/** How far a probe may look for the surface it has arrived at, along the piece's own facing, in cm. */
 	static constexpr float HowFarAProbeLooksCm = 400.0f;
@@ -63,49 +133,21 @@ namespace ProsperitocracyFireHandling
 	/** How big the ball is that finds the surface a bang landed ON, in cm — the thing the bang hit. */
 	static constexpr float TheBangIsWithinCm = 40.0f;
 
-	/**
-	 * HOW FAR ONE LOOK REACHES, as a share of one step.
-	 *
-	 * A sample looks six ways — down for a floor, up for nothing, across for a wall's face — and the nearest
-	 * thing it finds is the ground it stands on. It has to reach more than the gap between two samples or a
-	 * surface can fall down a hole between them and never be found; and it must NOT reach so far that a look
-	 * wanders past the surface it belongs to. A step and a half covers the worst gap a jittered lattice can
-	 * leave and still belongs to the sample's own neighbourhood.
-	 */
-	static constexpr float HowFarALookReachesShareOfAStep = 1.5f;
+
+
+
 
 	/**
-	 * How close two pieces of ground have to be to TOUCH, as a share of one step.
+	 * How close two pieces of ground have to be before the second one is THE SAME GROUND, as a share of a step.
 	 *
-	 * The first of the three rules a join has to pass. It is a little over a step because a step lands between
-	 * the lattice's rows as often as on one.
+	 * THIS MUST STAY UNDER A PIECE'S OWN CATCH RADIUS, or the fire gets holes — places where the flames are
+	 * plainly there and nothing catches. A piece catches to half its width (50 cm), so the walk may not leave
+	 * neighbouring pieces more than a step apart; at 0.9 a step a legitimate neighbour was thrown away as a
+	 * duplicate and the gap between pieces came out at 128 cm, leaving a man standing in the fire 64 cm from the
+	 * nearest piece and unburnt (measured 2026-10-18, on the landscape map).
 	 */
-	static constexpr float HowCloseTwoPiecesTouchShareOfAStep = 1.5f;
+	static constexpr float SameGroundShareOfAStep = 0.5f;
 
-	/**
-	 * The second rule: two surfaces may touch unless they FACE AWAY from each other.
-	 *
-	 * This is what a wall is, seen from the fire's side. The two faces of a wall point opposite ways, so the
-	 * ground on the far side of one is never joined to the ground on the near side — and the fire does not
-	 * cross it. Anything from back-to-back to side-on joins; only genuinely opposed surfaces are refused.
-	 */
-	static constexpr float TheFacingAgreementForAJoin = -0.2f;
-
-	/**
-	 * The third rule: the step between two pieces has to go ALONG the surface, not off it.
-	 *
-	 * Without this, two surfaces that face the SAME way and happen to be a step apart — a floor and the shelf
-	 * above it — would join, and the fire would burn on a shelf it never climbed to. The step's direction may
-	 * lean up to this share of the way off either surface's own facing; a real step along a floor, up a slope
-	 * or around a corner leans off it far less than this, and a step that crosses a gap leans off it far more.
-	 */
-	static constexpr float HowMuchOffTheSurfaceAJoinMayGo = 0.5f;
-
-	/** How close two samples may be before the second is the ground already found, as a share of one step. */
-	static constexpr float SameGroundShareOfAStep = 0.9f;
-
-	/** The floor on what one step costs the fire, in cm — a step along a wall is still travel and is never free. */
-	static constexpr float LeastAStepCostsCm = 10.0f;
 
 	/** How far BELOW its own ground the fire still reaches a body, in cm — a little, so a fire on a floor does
 	 *  not burn somebody in the room underneath it. What it reaches ABOVE is the piece's own height. */
@@ -119,16 +161,45 @@ namespace ProsperitocracyFireHandling
 	static const FLinearColor TheColourAFireIsLitWith(1.0f, 0.52f, 0.20f);
 }
 
+namespace
+{
+	/** [DEV] `Prosperitocracy.FireBoxes` — on/off. */
+	void ToggleTheBurnBoxes(UWorld* World)
+	{
+		ProsperitocracyFireHandling::bShowTheBurnBoxes = !ProsperitocracyFireHandling::bShowTheBurnBoxes;
+
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(0x9511, 4.0f, FColor::Orange,
+				ProsperitocracyFireHandling::bShowTheBurnBoxes ? TEXT("fire boxes ON") : TEXT("fire boxes OFF"));
+		}
+	}
+
+	/**
+	 * THE VOLUME THAT BURNS, DRAWN.
+	 *
+	 * It is the box itself — the same numbers the burn test uses — so what is on the screen is exactly what a body
+	 * has to touch, and there is nothing to argue with. Nothing is drawn while it is off.
+	 */
+	FAutoConsoleCommandWithWorld ToggleTheBurnBoxesCommand(
+		TEXT("Prosperitocracy.FireBoxes"),
+		TEXT("on/off — draws the exact volume that burns on every live fire, so a touch can be seen"),
+		FConsoleCommandWithWorldDelegate::CreateStatic(&ToggleTheBurnBoxes));
+}
+
 AProsperitocracyFireField::AProsperitocracyFireField()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
 
-	// A fire is a place on the ground, not an obstacle: the PIECES catch bodies, and this actor is only the
-	// home the fire hangs on. Nothing bumps into it.
+	// A FIRE IS A PLACE ON THE GROUND, NOT AN OBSTACLE — and its collision IS its pieces now. Every piece is a
+	// query-only box that overlaps bodies and ignores the world, so nothing bumps into a fire, while the engine
+	// still has something to report contact with. The actor's collision must stay ENABLED for those boxes to
+	// exist at all: with it off every component it owns is born without collision, which is a fire that can
+	// never touch anybody (measured 2026-10-18: 0 bodies touching across 144 beats).
 	TheRoot = CreateDefaultSubobject<USceneComponent>(TEXT("TheRoot"));
 	RootComponent = TheRoot;
-	SetActorEnableCollision(false);
+	SetActorEnableCollision(true);
 }
 
 void AProsperitocracyFireField::LightTheGround(UProsperitocracyFireStatTable* InFireBlock,
@@ -192,23 +263,30 @@ void AProsperitocracyFireField::LightTheGround(UProsperitocracyFireStatTable* In
 		return;
 	}
 
+	// WHERE THE FLAMES STAND, FIRST: the effect is told these spots and every box is built from them, so the
+	// picture and the burn are the same places — and the count the fire is sized from is the count it was laid at.
+	HowManyPiecesWereLaid = TheGroundItsBurningOn.Num();
+	LayTheFlameSpots();
+
 	LayTheFire();
 
 	// A NEW FIRE HAS TAKEN SOMEONE'S GROUND. Every fire burning reads its own ground back — this one too,
-	// though nothing newer exists yet — so the ground that changed hands stops burning twice, and every fire
-	// re-lights itself to the ground it still owns.
+	// though nothing newer exists yet — so the ground that changed hands stops burning twice.
 	for (int32 Index = EveryFireBurning.Num() - 1; Index >= 0; --Index)
 	{
 		if (AProsperitocracyFireField* Fire = EveryFireBurning[Index].Get())
 		{
 			Fire->ReReadWhichGroundIsStillIts();
-			Fire->LightTheBodiesOfFire();
 			if (UWorld* TheirWorld = Fire->GetWorld())
 			{
 				Fire->SetTheRate(Fire->TheRateThisGroundWants(TheirWorld->GetTimeSeconds()));
 			}
 		}
 	}
+
+	// AND THE WORLD'S FIRE IS GATHERED BACK INTO PATCHES — once, for the whole world, because a light belongs to
+	// GROUND THAT IS BURNING and not to any one fire (his call, 2026-10-16).
+	RegroupTheWorldsFire();
 
 	// Where the fire got to, in numbers: how many pieces of ground it owns, how far it had to travel for the
 	// furthest of them, and what it is asking for. A fire read off the log is a fire that can be argued with.
@@ -265,260 +343,183 @@ void AProsperitocracyFireField::FindTheGroundItIsBurning()
 	}
 
 	const float StepCm = GetPieceStepCm();
-	const FVector Middle = GetActorLocation();
+	// THE FIRST PIECE IS THE GROUND THE BANG HIT, and it is the only piece anything is ever grown from.
+	TheFirst.WalkedToGetHereCm = 0.0f;
+	TheFirst.bItIsStillThisFires = true;
+	AddTheGroundPiece(TheFirst);
 
-	// EVERY PIECE THIS FIRE COULD BE MADE OF, before anything is joined or measured: a jittered cloud filling
-	// the ball the reach could cover, one look per sample for the ground nearest it.
-	TArray<FProsperitocracyBurningGround> AroundIt;
-	AroundIt.Add(TheFirst);
+	// THE WALK. The ground is found by MOVING ALONG IT, one step at a time — never by throwing probes into a
+	// ball and keeping what they happen to hit. Every step puts a piece where the surface actually is, so the
+	// ground is covered at one piece per step by construction: nothing is too far to be looked at, and nothing
+	// is thrown away for sitting near something else.
+	TArray<int32> TheFrontier;
+	TheFrontier.Add(0);
 
-	const int32 HowManyStepsOut = FMath::Max(1, FMath::CeilToInt(HowFarItReachesCm / StepCm));
-	const float TheJitter = StepCm * 0.4f;
-	const float ReachSquared = FMath::Square(HowFarItReachesCm);
+	int32 HowManyTheSurfaceRanOut = 0;
+	int32 HowManyWereAlreadyTaken = 0;
+	float HowFarTheFurthestWalked = 0.0f;
 
-	int32 HowManySamples = 0;
-	int32 HowManyFoundNothing = 0;
-	int32 HowManyWereTheSameGround = 0;
-
-	for (int32 Z = -HowManyStepsOut; Z <= HowManyStepsOut; ++Z)
+	for (int32 Head = 0; Head < TheFrontier.Num(); ++Head)
 	{
-		for (int32 Y = -HowManyStepsOut; Y <= HowManyStepsOut; ++Y)
+		const int32 ParentIndex = TheFrontier[Head];
+		const FProsperitocracyBurningGround From = TheGroundItsBurningOn[ParentIndex];
+
+		// THE WAYS OUT LIE IN THE PIECE'S OWN SURFACE PLANE: a floor walks out flat, a wall walks up and down
+		// itself, a slope walks along its own face. The ring is turned a little per piece, so the edge is ragged
+		// and never a lattice.
+		const FVector Helper = (FMath::Abs(From.WhichWayIsUp.Z) < 0.9f) ? FVector::UpVector : FVector::ForwardVector;
+		const FVector SideA = FVector::CrossProduct(From.WhichWayIsUp, Helper).GetSafeNormal();
+		const FVector SideB = FVector::CrossProduct(From.WhichWayIsUp, SideA).GetSafeNormal();
+		const float TheTurn = (float)ParentIndex * 2.399963f;
+
+		// How much of the Range is left at this piece — when less than a step is left, the next piece IS the tip.
+		const float LeftToWalkCm = HowFarItReachesCm - From.WalkedToGetHereCm;
+		if (LeftToWalkCm < ProsperitocracyFireHandling::TheLeastAStepIsWorthCm)
 		{
-			for (int32 X = -HowManyStepsOut; X <= HowManyStepsOut; ++X)
+			continue;
+		}
+		const bool bTheNextOneIsTheTip = LeftToWalkCm < StepCm;
+		const float HowFarCm = FMath::Min(StepCm, LeftToWalkCm);
+
+		for (int32 Way = 0; Way < ProsperitocracyFireHandling::WaysOutOfOnePiece; ++Way)
+		{
+			const float Angle = TheTurn + (2.0f * PI * (float)Way) / (float)ProsperitocracyFireHandling::WaysOutOfOnePiece;
+			const FVector Direction = (SideA * FMath::Cos(Angle)) + (SideB * FMath::Sin(Angle));
+
+			FProsperitocracyBurningGround Found;
+			if (!TheSurfaceOneStepOn(From, Direction, HowFarCm, Found))
 			{
-				const FVector Sample = Middle + FVector(
-					(X * StepCm) + FMath::FRandRange(-TheJitter, TheJitter),
-					(Y * StepCm) + FMath::FRandRange(-TheJitter, TheJitter),
-					(Z * StepCm) + FMath::FRandRange(-TheJitter, TheJitter));
+				++HowManyTheSurfaceRanOut;
+				continue;
+			}
 
-				// Outside the ball the fire could ever cover: not worth a look. Travel is never shorter than the
-				// straight line, so this skips nothing the flood could have kept.
-				if (FVector::DistSquared(Sample, Middle) > ReachSquared)
-				{
-					continue;
-				}
-				++HowManySamples;
+			const float HowLongTheStepWasCm = FVector::Dist(From.Where, Found.Where);
+			if (HowLongTheStepWasCm < ProsperitocracyFireHandling::TheLeastAStepIsWorthCm)
+			{
+				continue;
+			}
 
-				FProsperitocracyBurningGround Found;
-				if (!TheSurfaceNearestTheSample(Sample, Found))
-				{
-					++HowManyFoundNothing;
-					continue;
-				}
+			const float WalkedToItCm = From.WalkedToGetHereCm + HowLongTheStepWasCm;
 
-				if (IsThatGroundAlreadyBurning(Found.Where, AroundIt))
-				{
-					++HowManyWereTheSameGround;
-					continue;
-				}
+			// THE RANGE IS THE RANGE: a piece is only kept if its burn box still fits inside it, so the volume
+			// that burns ends exactly on the Range and never a step past it.
+			if (WalkedToItCm + ProsperitocracyFireHandling::HowFarABurnBoxReachesCm > HowFarItReachesCm)
+			{
+				++HowManyTheSurfaceRanOut;
+				continue;
+			}
 
-				AroundIt.Add(Found);
+			if (IsThatGroundAlreadyBurning(Found.Where, TheGroundItsBurningOn))
+			{
+				++HowManyWereAlreadyTaken;
+				continue;
+			}
+
+			Found.WalkedToGetHereCm = WalkedToItCm;
+			Found.bItIsStillThisFires = true;
+			HowFarTheFurthestWalked = FMath::Max(HowFarTheFurthestWalked, WalkedToItCm);
+
+			const int32 NewIndex = TheGroundItsBurningOn.Num();
+			AddTheGroundPiece(Found);
+
+			// A TIP IS WHERE THE WALK ENDS: everything past it is further than the Range, so it has no children.
+			if (!bTheNextOneIsTheTip)
+			{
+				TheFrontier.Add(NewIndex);
 			}
 		}
 	}
 
-	// JOIN THEM, AND MEASURE THE REACH OVER THE JOINS: how far it had to travel to stand on each piece, and
-	// therefore which pieces are fire. Every sample is a piece here, including the ones the fire cannot afford.
-	TArray<float> WalkedToGetThere;
-	SettleTheGroundItCanReach(AroundIt, WalkedToGetThere);
-
-	int32 HowManyOutOfReach = 0;
-	for (int32 Index = 0; Index < AroundIt.Num(); ++Index)
-	{
-		if (WalkedToGetThere[Index] > HowFarItReachesCm)
-		{
-			++HowManyOutOfReach;
-			continue;
-		}
-
-		FProsperitocracyBurningGround Piece = AroundIt[Index];
-		Piece.WalkedToGetHereCm = WalkedToGetThere[Index];
-		AddTheGroundPiece(Piece);
-	}
-
-	// How the shape came out, in numbers: what it looked at, what it found, and where the reach stopped it.
+	// How the shape came out, in numbers: what the walk found, what the surface refused, and where the Range
+	// stopped it. `the furthest walked` should sit just inside the reach — far short of it is a walk that is
+	// being cut off by something other than its own Range.
 	UE_LOG(LogProsperitocracy, Log,
-		TEXT("[Fire] the ground is found: %d samples looked at, %d found no ground, %d were ground already found, %d pieces of ground stand inside the %.0fm reach, %d were past it."),
-		HowManySamples, HowManyFoundNothing, HowManyWereTheSameGround, TheGroundItsBurningOn.Num(),
-		HowFarItReachesCm / 100.0f, HowManyOutOfReach);
+		TEXT("[Fire] the ground is walked: %d pieces, %d the surface ran out, %d already taken, the furthest %.1fm walked for, a reach of %.1fm, asking for %.0f flames a second."),
+		TheGroundItsBurningOn.Num(), HowManyTheSurfaceRanOut, HowManyWereAlreadyTaken,
+		HowFarTheFurthestWalked / 100.0f, HowFarItReachesCm / 100.0f,
+		SquareMetresItIsBurning() * (FireBlock ? FireBlock->FlamesASquareMetreASecond : 0.0f));
 }
 
-bool AProsperitocracyFireField::TheSurfaceNearestTheSample(const FVector& Sample, FProsperitocracyBurningGround& OutPiece) const
+bool AProsperitocracyFireField::TheSurfaceOneStepOn(const FProsperitocracyBurningGround& From, const FVector& Direction,
+	float HowFarCm, FProsperitocracyBurningGround& OutPiece) const
 {
 	const UWorld* World = GetWorld();
-	if (!World)
+	if (!World || HowFarCm <= 0.0f)
 	{
 		return false;
 	}
 
-	// WHAT IS NEAREST TO THIS SAMPLE, in six short looks — down for a floor, up for nothing, across for a wall's
-	// face — and the nearest hit is the ground it stands on. A sample out in the open finds nothing and dies:
-	// that is what "air" means here, and it is why no fire ever appears where there is no surface.
-	FCollisionObjectQueryParams ObjectTypes;
-	ObjectTypes.AddObjectTypesToQuery(ECC_WorldStatic);
-	ObjectTypes.AddObjectTypesToQuery(ECC_WorldDynamic);
-
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(FireOnTheGround), /*bTraceComplex=*/ false);
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(FireWalksTheGround), /*bTraceComplex=*/ false);
 	Params.AddIgnoredActor(this);
 	Params.AddIgnoredActor(TheOneWhoLeftIt);
 
-	const float HowFarALookReachesCm = GetPieceStepCm() * ProsperitocracyFireHandling::HowFarALookReachesShareOfAStep;
+	// ASKED BY CHANNEL, the way the missile asks the world — never by object type. A surface that answers one
+	// and not the other is exactly what left the landscape map with one piece of fire on it (0 of 905 samples).
+	const ECollisionChannel TheChannel = ECC_Visibility;
 
-	static const FVector TheSixWays[6] =
+	// A BODY IS NEVER GROUND (his rule, 2026-10-18): fire is placed on the world, never on a player, an enemy or
+	// anything else that carries an ability system. A body is burnt by STANDING in the fire, not built on.
+	auto IsABody = [](const FHitResult& Hit)
 	{
-		FVector(1.0f, 0.0f, 0.0f), FVector(-1.0f, 0.0f, 0.0f),
-		FVector(0.0f, 1.0f, 0.0f), FVector(0.0f, -1.0f, 0.0f),
-		FVector(0.0f, 0.0f, 1.0f), FVector(0.0f, 0.0f, -1.0f)
+		AActor* HitActor = Hit.GetActor();
+		if (!HitActor)
+		{
+			return false;
+		}
+		if (UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(HitActor) != nullptr)
+		{
+			return true;
+		}
+
+		const UPrimitiveComponent* HitPart = Hit.GetComponent();
+		return HitPart && HitPart->GetCollisionObjectType() == ECC_Pawn;
 	};
 
-	float NearestCm = TNumericLimits<float>::Max();
-	FHitResult TheOneItFound;
-	bool bFoundSomething = false;
+	const FVector& Up = From.WhichWayIsUp;
+	const FVector StandOff = Up * ProsperitocracyFireHandling::ProbeStandoffCm;
+	const FVector ClearOfItsOwnSurface = From.Where + StandOff;
 
-	for (const FVector& Way : TheSixWays)
+	// ONE: IS THERE A FACE IN THE WAY? A shape is moved forward out of the surface, not a ray thrown from it, so
+	// the step cannot be lost down a gap. A hit here is a wall or a crate's side, and the piece goes ON it facing
+	// out of it — which is how the fire climbs.
+	FHitResult TheFace;
+	if (World->SweepSingleByChannel(TheFace, ClearOfItsOwnSurface, ClearOfItsOwnSurface + Direction * HowFarCm,
+		FQuat::Identity, TheChannel, FCollisionShape::MakeSphere(ProsperitocracyFireHandling::TheProbeSphereReachesCm), Params))
 	{
-		FHitResult Hit;
-		if (!World->LineTraceSingleByObjectType(Hit, Sample, Sample + Way * HowFarALookReachesCm, ObjectTypes, Params))
+		if (!TheFace.bStartPenetrating && !IsABody(TheFace))
 		{
-			continue;
-		}
-
-		// A look that started already inside something found no surface — it found the inside of a wall. And
-		// what a fire may stand on is unchanged: anything but the underside of something.
-		if (Hit.bStartPenetrating || !TheFireMayStandOn(Hit.ImpactNormal) || Hit.Distance >= NearestCm)
-		{
-			continue;
-		}
-
-		NearestCm = Hit.Distance;
-		TheOneItFound = Hit;
-		bFoundSomething = true;
-	}
-
-	if (!bFoundSomething)
-	{
-		return false;
-	}
-
-	OutPiece.Where = TheOneItFound.ImpactPoint;
-	OutPiece.WhichWayIsUp = TheOneItFound.ImpactNormal;
-	OutPiece.WalkedToGetHereCm = 0.0f;
-	OutPiece.bItIsStillThisFires = true;
-	return true;
-}
-
-void AProsperitocracyFireField::SettleTheGroundItCanReach(const TArray<FProsperitocracyBurningGround>& Pieces, TArray<float>& OutWalked) const
-{
-	// HOW FAR THE FIRE HAD TO TRAVEL TO STAND ON EACH PIECE: the shortest way over the pieces that touch,
-	// starting from the one the bang hit, every join costing the real distance between the two pieces. This is
-	// the whole of "the reach is travel" — a climb is a longer join, so it spends more, and the pieces it
-	// cannot afford are simply further away than the reach.
-	const int32 HowMany = Pieces.Num();
-	OutWalked.Init(TNumericLimits<float>::Max(), HowMany);
-	if (HowMany == 0)
-	{
-		return;
-	}
-	OutWalked[0] = 0.0f;
-
-	// The pieces hashed by where they are, one cell a step wide, so each piece only ever looks at the pieces
-	// around it instead of at all of them.
-	const float StepCm = GetPieceStepCm();
-	TMap<FIntVector, TArray<int32>> WhereThePiecesAre;
-	for (int32 Index = 0; Index < HowMany; ++Index)
-	{
-		const FVector& Where = Pieces[Index].Where;
-		const FIntVector Cell = FIntVector(FMath::FloorToInt(Where.X / StepCm), FMath::FloorToInt(Where.Y / StepCm),
-			FMath::FloorToInt(Where.Z / StepCm));
-		WhereThePiecesAre.FindOrAdd(Cell).Add(Index);
-	}
-
-	const float TouchingCm = StepCm * ProsperitocracyFireHandling::HowCloseTwoPiecesTouchShareOfAStep;
-	TArray<bool> bSettled;
-	bSettled.Init(false, HowMany);
-
-	for (;;)
-	{
-		// The nearest piece not yet settled. At this size the plain shortest-path walk is the honest one: no
-		// queue machinery to get subtly wrong. Unreachable pieces stay at "further than anything" and end it.
-		int32 TheNextPiece = INDEX_NONE;
-		float TheShortestSoFar = TNumericLimits<float>::Max();
-		for (int32 Index = 0; Index < HowMany; ++Index)
-		{
-			if (!bSettled[Index] && OutWalked[Index] < TheShortestSoFar)
+			if (!TheFireMayStandOn(TheFace.ImpactNormal))
 			{
-				TheShortestSoFar = OutWalked[Index];
-				TheNextPiece = Index;
+				// The underside of something is not ground: heat goes up, so the walk stops this way.
+				return false;
 			}
-		}
 
-		if (TheNextPiece == INDEX_NONE)
-		{
-			break;
-		}
-		bSettled[TheNextPiece] = true;
-
-		// EVERY PIECE THIS ONE TOUCHES, out of its own neighbourhood, through the three rules.
-		const FProsperitocracyBurningGround& From = Pieces[TheNextPiece];
-		const FIntVector Cell = FIntVector(FMath::FloorToInt(From.Where.X / StepCm), FMath::FloorToInt(From.Where.Y / StepCm),
-			FMath::FloorToInt(From.Where.Z / StepCm));
-
-		for (int32 Z = -1; Z <= 1; ++Z)
-		{
-			for (int32 Y = -1; Y <= 1; ++Y)
-			{
-				for (int32 X = -1; X <= 1; ++X)
-				{
-					const TArray<int32>* TheOnesNearby = WhereThePiecesAre.Find(Cell + FIntVector(X, Y, Z));
-					if (!TheOnesNearby)
-					{
-						continue;
-					}
-
-					for (const int32 Other : *TheOnesNearby)
-					{
-						if (bSettled[Other])
-						{
-							continue;
-						}
-
-						const FProsperitocracyBurningGround& To = Pieces[Other];
-						const FVector TheStep = To.Where - From.Where;
-						const float TheStepCm = TheStep.Size();
-
-						// RULE ONE: close enough to be one step.
-						if (TheStepCm <= KINDA_SMALL_NUMBER || TheStepCm > TouchingCm)
-						{
-							continue;
-						}
-
-						const FVector StepDirection = TheStep / TheStepCm;
-
-						// RULE TWO: surfaces that face away from each other are not touching — this is a wall.
-						if (FVector::DotProduct(From.WhichWayIsUp, To.WhichWayIsUp)
-							< ProsperitocracyFireHandling::TheFacingAgreementForAJoin)
-						{
-							continue;
-						}
-
-						// RULE THREE: the step has to go ALONG the surface, not off it — a shelf over a floor is
-						// the case this one is for.
-						if (FMath::Abs(FVector::DotProduct(StepDirection, From.WhichWayIsUp)) > ProsperitocracyFireHandling::HowMuchOffTheSurfaceAJoinMayGo
-							|| FMath::Abs(FVector::DotProduct(StepDirection, To.WhichWayIsUp)) > ProsperitocracyFireHandling::HowMuchOffTheSurfaceAJoinMayGo)
-						{
-							continue;
-						}
-
-						const float WalkedToIt = OutWalked[TheNextPiece] + FMath::Max(TheStepCm, ProsperitocracyFireHandling::LeastAStepCostsCm);
-						if (WalkedToIt < OutWalked[Other])
-						{
-							OutWalked[Other] = WalkedToIt;
-						}
-					}
-				}
-			}
+			OutPiece.Where = TheFace.ImpactPoint;
+			OutPiece.WhichWayIsUp = TheFace.ImpactNormal;
+			OutPiece.WalkedToGetHereCm = 0.0f;
+			OutPiece.bItIsStillThisFires = true;
+			return true;
 		}
 	}
+
+	// TWO: THE SURFACE CARRIES ON. Nothing in the way, so look onto whatever is one step ahead — the floor going
+	// on, a crate's top, a slope's face, the ground below a ledge.
+	const FVector OneStepAhead = From.Where + Direction * HowFarCm;
+	FHitResult TheGround;
+	if (World->LineTraceSingleByChannel(TheGround, OneStepAhead + StandOff,
+		OneStepAhead - Up * ProsperitocracyFireHandling::HowFarAProbeLooksCm, TheChannel, Params))
+	{
+		if (!TheGround.bStartPenetrating && !IsABody(TheGround) && TheFireMayStandOn(TheGround.ImpactNormal))
+		{
+			OutPiece.Where = TheGround.ImpactPoint;
+			OutPiece.WhichWayIsUp = TheGround.ImpactNormal;
+			OutPiece.WalkedToGetHereCm = 0.0f;
+			OutPiece.bItIsStillThisFires = true;
+			return true;
+		}
+	}
+
+	return false;
 }
 
 bool AProsperitocracyFireField::TheSurfaceUnder(const FVector& Place, FVector& OutWhere, FVector& OutWhichWayIsUp) const
@@ -605,29 +606,6 @@ bool AProsperitocracyFireField::TheFireMayStandOn(const FVector& WhichWayIsUp)
 	// built out of — and never on the underside of something, because fire hanging under a roof would be fire
 	// that had gone through it. This one rule is what keeps the walk from wrapping under a lip it has climbed.
 	return WhichWayIsUp.Z > -0.35f;
-}
-
-bool AProsperitocracyFireField::SomethingSolidBetween(const FVector& From, const FVector& To) const
-{
-	const UWorld* World = GetWorld();
-	if (!World)
-	{
-		return false;
-	}
-
-	// The WORLD is what gets in the way of a fire: a wall, a container, a floor between one room and the next.
-	// A body is not cover from flames in this game — a man standing in front of you does not put you out — so
-	// this asks for the world's own thing and never for a channel somebody's capsule answers.
-	FCollisionObjectQueryParams ObjectTypes;
-	ObjectTypes.AddObjectTypesToQuery(ECC_WorldStatic);
-	ObjectTypes.AddObjectTypesToQuery(ECC_WorldDynamic);
-
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(FireReachesTheBody), /*bTraceComplex=*/ false, this);
-	Params.AddIgnoredActor(this);
-	Params.AddIgnoredActor(TheOneWhoLeftIt);
-
-	FHitResult InTheWay;
-	return World->LineTraceSingleByObjectType(InTheWay, From, To, ObjectTypes, Params);
 }
 
 bool AProsperitocracyFireField::IsThatGroundAlreadyBurning(const FVector& Where, const TArray<FProsperitocracyBurningGround>& AlreadyFound) const
@@ -748,28 +726,22 @@ void AProsperitocracyFireField::HandTheEffectItsGround()
 		return;
 	}
 
-	// ONLY THE GROUND IT STILL OWNS: a corner a newer fire has taken is not this fire's to burn any more, so
-	// the picture it is given never shows fire on ground that is somebody else's.
+	// ONLY THE GROUND IT STILL OWNS, AS ITS FLAMES' OWN PLACES: the spots are where the picture is drawn and
+	// where the burn is tested, so what the effect is told IS the fire — no flame stands anywhere else.
 	//
 	// AND AS OFFSETS FROM THE FIRE'S OWN ORIGIN, because that is what the effect does with them: each flame is
-	// offset from the component, which stands at the fire's origin, so a piece's world place has to be handed
-	// over as the distance from there. The SINK is taken off here too, along EACH PIECE'S OWN FACING — his 50 cm
-	// of sitting the flames into what they are burning, done per piece, so a flame on a wall's face is pushed
-	// into the wall and a flame on a floor is pushed into the floor rather than both being pushed downwards.
+	// offset from the component, which stands at the fire's origin. The SINK is taken off here too, along EACH
+	// SPOT'S OWN FACING — his number of sitting the flames into what they are burning, done per spot, so a flame
+	// on a wall's face is pushed into the wall and a flame on a floor is pushed into the floor.
 	TArray<FVector> TheGround;
-	TheGround.Reserve(TheGroundItsBurningOn.Num());
+	TheGround.Reserve(TheFlameSpots.Num());
 
 	// His number, off the block, read once: how deep in the surface a flame sits.
 	const float HowDeepTheFlameSitsCm = FireBlock ? FireBlock->SinkCm : 0.0f;
 
-	for (const FProsperitocracyBurningGround& Piece : TheGroundItsBurningOn)
+	for (const FProsperitocracyFlameSpot& Spot : TheFlameSpots)
 	{
-		if (!Piece.bItIsStillThisFires)
-		{
-			continue;
-		}
-
-		TheGround.Add(Piece.Where - Piece.WhichWayIsUp * HowDeepTheFlameSitsCm - GetActorLocation());
+		TheGround.Add(Spot.Where - Spot.WhichWayIsUp * HowDeepTheFlameSitsCm - GetActorLocation());
 	}
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayPosition(TheFire,
@@ -782,159 +754,85 @@ void AProsperitocracyFireField::HandTheEffectItsGround()
 // WHO IS IN IT — the fire's own pieces, and nothing solid in between.
 // ---------------------------------------------------------------------------------------------------
 
-void AProsperitocracyFireField::CatchWhateverStandsInIt()
+void AProsperitocracyFireField::LayTheFlameSpots()
 {
-	UWorld* World = GetWorld();
-	if (!World || !FireBlock || !TheOneWhoLeftIt)
+	TheFlameSpots.Reset();
+	if (TheGroundItsBurningOn.Num() == 0)
 	{
 		return;
 	}
 
-	// The Burn's ticks are dealt by whoever left the fire, so a fire that kills contests health and shows
-	// a number exactly as his own shot would. His ability system gone means nothing to credit: no burn.
+	// SCATTERED, NOT A GRID (his rule): every spot is a random place on the ground this fire walked over, and a
+	// spot never leaves its own patch — so no flame, no box and no burn can stand outside the reach.
+	//
+	// Two spots per patch, a card's width apart at most, so the cards a patch ever shows overlap into one fire
+	// instead of reading as rows. The card's own random size is untouched: the biggest card (70cm, the effect's
+	// own `FlameSizeMax`) is what the spot's box is worth, so a small card is inside its box rather than outside.
+	const float PatchRadiusCm = GetPieceWidthCm();
+	const float HowFarApartSpotsSitCm = PatchRadiusCm * 0.5f;
+	const float TheJitterCm = ProsperitocracyFireHandling::HowFarAFlameMayWanderOffItsSpotCm;
+
+	for (const FProsperitocracyBurningGround& Piece : TheGroundItsBurningOn)
+	{
+		const FVector Helper = (FMath::Abs(Piece.WhichWayIsUp.Z) < 0.9f) ? FVector::UpVector : FVector::ForwardVector;
+		const FVector SideA = FVector::CrossProduct(Piece.WhichWayIsUp, Helper).GetSafeNormal();
+		const FVector SideB = FVector::CrossProduct(Piece.WhichWayIsUp, SideA).GetSafeNormal();
+
+		for (int32 Which = 0; Which < ProsperitocracyFireHandling::SpotsEachPatchOfGroundCarries; ++Which)
+		{
+			const float Around = ((float)Which / (float)ProsperitocracyFireHandling::SpotsEachPatchOfGroundCarries) * 2.0f * PI;
+			const FVector Spot = Piece.Where
+				+ SideA * (FMath::Cos(Around) * HowFarApartSpotsSitCm + FMath::FRandRange(-TheJitterCm, TheJitterCm))
+				+ SideB * (FMath::Sin(Around) * HowFarApartSpotsSitCm + FMath::FRandRange(-TheJitterCm, TheJitterCm));
+
+			FProsperitocracyFlameSpot& NewSpot = TheFlameSpots.AddDefaulted_GetRef();
+			NewSpot.Where = Spot;
+			NewSpot.WhichWayIsUp = Piece.WhichWayIsUp;
+		}
+	}
+}
+
+void AProsperitocracyFireField::ShowTheBurnBoxes() const
+{
+	if (!ProsperitocracyFireHandling::bShowTheBurnBoxes)
+	{
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// THE SAME NUMBERS THE BURN TEST USES, so the box on the screen is the box a body has to touch.
+	const float HalfAcrossCm = ProsperitocracyFireHandling::HowFarABurnBoxReachesCm;
+	const float AboveCm = GetPieceHeightCm();
+	const float BelowCm = ProsperitocracyFireHandling::HowFarBelowItsGroundTheFireReachesCm;
+	const FVector HalfExtent(HalfAcrossCm, HalfAcrossCm, (AboveCm + BelowCm) * 0.5f);
+
+	for (const FProsperitocracyFlameSpot& Spot : TheFlameSpots)
+	{
+		const FVector Centre = Spot.Where + Spot.WhichWayIsUp * ((AboveCm - BelowCm) * 0.5f);
+		DrawDebugBox(World, Centre, HalfExtent, FRotationMatrix::MakeFromZ(Spot.WhichWayIsUp).ToQuat(),
+			FColor::Orange, /*bPersistentLines=*/ false, /*LifeTime=*/ 0.0f, /*DepthPriority=*/ 0, /*Thickness=*/ 0.6f);
+	}
+}
+
+void AProsperitocracyFireField::ApplyTheBurnToWhateverIsTouchingIt()
+{
+	if (!FireBlock || !TheOneWhoLeftIt || TheFlameSpots.Num() == 0)
+	{
+		return;
+	}
+
+	// The Burn's ticks are dealt by whoever left the fire, so a fire that kills contests health and shows a
+	// number exactly as his own shot would. His ability system gone means nothing to credit: no burn.
 	UAbilitySystemComponent* Source = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TheOneWhoLeftIt);
 	if (!Source)
 	{
 		return;
 	}
-
-	// WHO COULD BE IN IT, in one ask, over the whole spread of the fire. The body-folding is the ball's, reused
-	// rather than written a second time: an overlap answers per PART and a fire catches a BODY once.
-	float FurthestPieceCm = 0.0f;
-	for (const FProsperitocracyBurningGround& Piece : TheGroundItsBurningOn)
-	{
-		if (Piece.bItIsStillThisFires)
-		{
-			FurthestPieceCm = FMath::Max(FurthestPieceCm, FVector::Dist2D(Piece.Where, GetActorLocation()));
-		}
-	}
-
-	TArray<FProsperitocracyExplosionTarget> Standing;
-	UProsperitocracyExplosionStatics::GatherTheBall(World, GetActorLocation(), FurthestPieceCm + GetPieceWidthCm(), this, Standing);
-
-	const float WidthCm = GetPieceWidthCm();
-	const float HeightCm = GetPieceHeightCm();
-
-	for (const FProsperitocracyExplosionTarget& Target : Standing)
-	{
-		if (!Target.Actor)
-		{
-			continue;
-		}
-
-		// "IN IT" IS STANDING IN ONE OF THE FIRE'S PIECES — the fire where the fire actually is, never a circle
-		// drawn around where it landed and never the size of a flame. Every piece carries its own facing, so a
-		// piece on a wall's face burns what stands against that wall exactly as a piece on a floor burns what
-		// stands on the floor; and a body above the flames or under a floor's fire is not in it.
-		const FProsperitocracyBurningGround* ThePieceItIsIn = nullptr;
-		for (const FProsperitocracyBurningGround& Piece : TheGroundItsBurningOn)
-		{
-			if (!Piece.bItIsStillThisFires)
-			{
-				continue;
-			}
-
-			const FVector Delta = Target.Point - Piece.Where;
-			const float AlongTheFacing = FVector::DotProduct(Delta, Piece.WhichWayIsUp);
-			const float AcrossTheFacing = (Delta - Piece.WhichWayIsUp * AlongTheFacing).Size();
-			if (AcrossTheFacing <= WidthCm
-				&& AlongTheFacing >= -ProsperitocracyFireHandling::HowFarBelowItsGroundTheFireReachesCm
-				&& AlongTheFacing <= HeightCm)
-			{
-				ThePieceItIsIn = &Piece;
-				break;
-			}
-		}
-
-		if (!ThePieceItIsIn)
-		{
-			continue;
-		}
-
-		// NOTHING SOLID IN THE WAY (his rule): a wall or a floor between the fire and a body is why a body on
-		// the far side of cover is not burnt. The fire's pieces only exist where the fire could walk to, so this
-		// is the second half of the same rule — the first half is that there is no fire over there at all.
-		if (SomethingSolidBetween(ThePieceItIsIn->Where, Target.Point))
-		{
-			continue;
-		}
-
-		// NO HIT, NO GATE, NO PEN QUESTION (his spec): the fire's door asks nothing about damage, because
-		// a fire has none. It applies its Burn again, every beat, for as long as the body stands here —
-		// and a body that walks out keeps the Burn it has, running down on its own clock.
-		UProsperitocracyDamageStatics::ApplyStatusesOnContact(Target.Actor, Source, FireBlock, DamageEffectClass);
-	}
-}
-
-// ---------------------------------------------------------------------------------------------------
-// ONE LIGHT PER BODY OF FIRE — his call, 2026-10-15.
-// ---------------------------------------------------------------------------------------------------
-
-void AProsperitocracyFireField::GroupThePiecesIntoBodiesOfFire(TArray<int32>& OutWhichBodyEachPieceIsIn, int32& OutHowManyBodies) const
-{
-	const int32 HowManyPieces = TheGroundItsBurningOn.Num();
-	OutWhichBodyEachPieceIsIn.Init(-1, HowManyPieces);
-	OutHowManyBodies = 0;
-
-	// A piece a newer fire took is in nobody's body of fire: it is not this fire's ground to light any more.
-	for (int32 Index = 0; Index < HowManyPieces; ++Index)
-	{
-		if (!TheGroundItsBurningOn[Index].bItIsStillThisFires)
-		{
-			OutWhichBodyEachPieceIsIn[Index] = -2;
-		}
-	}
-
-	const float TouchingCm = GetPieceStepCm() * ProsperitocracyFireHandling::OneBodyOfFireShareOfAStep;
-
-	// PIECES THAT TOUCH ARE ONE BODY OF FIRE — his rule, and the whole of the grouping: a flood outward from
-	// each piece that has no body yet, taking everything within a step of something already in that body.
-	TArray<int32> TheBody;
-	for (int32 Start = 0; Start < HowManyPieces; ++Start)
-	{
-		if (OutWhichBodyEachPieceIsIn[Start] != -1)
-		{
-			continue;
-		}
-
-		const int32 Body = OutHowManyBodies++;
-		OutWhichBodyEachPieceIsIn[Start] = Body;
-		TheBody.Reset();
-		TheBody.Add(Start);
-
-		for (int32 Head = 0; Head < TheBody.Num(); ++Head)
-		{
-			const FVector& WhereItIs = TheGroundItsBurningOn[TheBody[Head]].Where;
-			for (int32 Other = 0; Other < HowManyPieces; ++Other)
-			{
-				if (OutWhichBodyEachPieceIsIn[Other] != -1)
-				{
-					continue;
-				}
-
-				if (FVector::Dist(TheGroundItsBurningOn[Other].Where, WhereItIs) <= TouchingCm)
-				{
-					OutWhichBodyEachPieceIsIn[Other] = Body;
-					TheBody.Add(Other);
-				}
-			}
-		}
-	}
-}
-
-void AProsperitocracyFireField::LightTheBodiesOfFire()
-{
-	// THE FIRE'S OWN LIGHT IS OURS NOW — one per body of fire, so a body of fire can have exactly one. The
-	// lights the last shape of this fire needed are taken down first: the ground changed, and a light standing
-	// over ground the fire no longer owns is a light in the wrong place.
-	for (const TObjectPtr<UPointLightComponent>& Light : TheBodiesOfFire)
-	{
-		if (Light)
-		{
-			Light->DestroyComponent();
-		}
-	}
-	TheBodiesOfFire.Reset();
 
 	UWorld* World = GetWorld();
 	if (!World)
@@ -942,145 +840,393 @@ void AProsperitocracyFireField::LightTheBodiesOfFire()
 		return;
 	}
 
-	TArray<int32> WhichBodyEachPieceIsIn;
-	int32 HowManyBodies = 0;
-	GroupThePiecesIntoBodiesOfFire(WhichBodyEachPieceIsIn, HowManyBodies);
-	if (HowManyBodies == 0)
+	// ONE ASK OF THE WORLD PER BEAT, for the bodies near this fire — not one per flame spot, and no components.
+	// Everything after it is arithmetic against a list we already hold in memory.
+	float FurthestSpotCm = 0.0f;
+	for (const FProsperitocracyFlameSpot& Spot : TheFlameSpots)
 	{
-		return;
+		FurthestSpotCm = FMath::Max(FurthestSpotCm, FVector::Dist2D(Spot.Where, GetActorLocation()));
 	}
 
-	// WHAT EACH BODY OF FIRE IS: its own middle, how wide it actually reaches, and how much ground it covers.
-	TArray<FVector> BodyCentre;
-	TArray<FVector> BodyFacing;
-	TArray<int32> BodyPieces;
-	BodyCentre.Init(FVector::ZeroVector, HowManyBodies);
-	BodyFacing.Init(FVector::ZeroVector, HowManyBodies);
-	BodyPieces.Init(0, HowManyBodies);
+	const float HalfAcrossCm = (ProsperitocracyFireHandling::HowWideOneFlameCardIsCm * 0.5f)
+		+ ProsperitocracyFireHandling::HowFarAFlameMayWanderOffItsSpotCm;
+	const float AboveCm = GetPieceHeightCm();
+	const float BelowCm = ProsperitocracyFireHandling::HowFarBelowItsGroundTheFireReachesCm;
 
-	for (int32 Index = 0; Index < TheGroundItsBurningOn.Num(); ++Index)
+	TArray<FProsperitocracyExplosionTarget> Nearby;
+	UProsperitocracyExplosionStatics::GatherTheBall(World, GetActorLocation(), FurthestSpotCm + HalfAcrossCm, this, Nearby);
+
+	int32 HowManyBodiesTouching = 0;
+
+	for (const FProsperitocracyExplosionTarget& Target : Nearby)
 	{
-		const int32 Body = WhichBodyEachPieceIsIn[Index];
-		if (Body < 0)
+		AActor* Body = Target.Actor;
+		if (!Body || !UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Body))
 		{
 			continue;
 		}
 
-		BodyCentre[Body] += TheGroundItsBurningOn[Index].Where;
-		BodyFacing[Body] += TheGroundItsBurningOn[Index].WhichWayIsUp;
-		++BodyPieces[Body];
-	}
+		// THE BODY AS TWO POINTS AND A RADIUS — its own collision cylinder, so a capsule is tested as a capsule
+		// and not as a point somebody picked.
+		float BodyRadiusCm = 0.0f;
+		float BodyHalfHeightCm = 0.0f;
+		Body->GetSimpleCollisionCylinder(BodyRadiusCm, BodyHalfHeightCm);
+		const FVector BodyUp = Body->GetActorUpVector();
+		const FVector BodyMiddle = Body->GetActorLocation();
+		const float SegmentReachCm = FMath::Max(0.0f, BodyHalfHeightCm - BodyRadiusCm);
+		const FVector SegmentFoot = BodyMiddle - BodyUp * SegmentReachCm;
+		const FVector SegmentHead = BodyMiddle + BodyUp * SegmentReachCm;
 
-	TArray<float> BodyWidthCm;
-	TArray<float> BodyGroundM2;
-	BodyWidthCm.Init(0.0f, HowManyBodies);
-	BodyGroundM2.Init(0.0f, HowManyBodies);
-
-	for (int32 Body = 0; Body < HowManyBodies; ++Body)
-	{
-		BodyCentre[Body] /= (float)FMath::Max(1, BodyPieces[Body]);
-		BodyFacing[Body] = BodyFacing[Body].GetSafeNormal();
-		if (BodyFacing[Body].IsNearlyZero())
+		for (const FProsperitocracyFlameSpot& Spot : TheFlameSpots)
 		{
-			BodyFacing[Body] = FVector::UpVector;
-		}
-	}
+			// THE FLAME'S OWN BOX, in the spot's frame: what a card can be, and not a hair more.
+			const FQuat BoxTurn = FRotationMatrix::MakeFromZ(Spot.WhichWayIsUp).ToQuat();
+			const FVector NearestOnTheBody = FMath::ClosestPointOnSegment(Spot.Where, SegmentFoot, SegmentHead);
+			const FVector InTheBox = BoxTurn.UnrotateVector(NearestOnTheBody - Spot.Where);
 
-	const float PieceWidthM = GetPieceWidthCm() / 100.0f;
-	for (int32 Index = 0; Index < TheGroundItsBurningOn.Num(); ++Index)
-	{
-		const int32 Body = WhichBodyEachPieceIsIn[Index];
-		if (Body < 0)
-		{
-			continue;
-		}
+			const bool bTouching = FMath::Abs(InTheBox.X) <= HalfAcrossCm + BodyRadiusCm
+				&& FMath::Abs(InTheBox.Y) <= HalfAcrossCm + BodyRadiusCm
+				&& InTheBox.Z <= AboveCm + BodyRadiusCm
+				&& InTheBox.Z >= -(BelowCm + BodyRadiusCm);
 
-		BodyWidthCm[Body] = FMath::Max(BodyWidthCm[Body], FVector::Dist2D(TheGroundItsBurningOn[Index].Where, BodyCentre[Body]));
-		BodyGroundM2[Body] += PI * PieceWidthM * PieceWidthM;
-	}
-
-	// THE COUNT IS HELD DOWN ON PURPOSE: past the ceiling, the smallest body of fire is folded into the nearest
-	// one — one light per body of fire is his rule, and this is the ceiling on the lights a shattered fire may
-	// cost the world. Nothing about what burns changes: this is the light, and only the light.
-	TArray<bool> bBodyIsStillItsOwn;
-	bBodyIsStillItsOwn.Init(true, HowManyBodies);
-	while (HowManyBodies > MostBodiesOfFireOneLightEach)
-	{
-		int32 Smallest = INDEX_NONE;
-		for (int32 Body = 0; Body < HowManyBodies; ++Body)
-		{
-			if (bBodyIsStillItsOwn[Body] && (Smallest == INDEX_NONE || BodyPieces[Body] < BodyPieces[Smallest]))
-			{
-				Smallest = Body;
-			}
-		}
-		if (Smallest == INDEX_NONE)
-		{
-			break;
-		}
-
-		int32 Nearest = INDEX_NONE;
-		float NearestCm = TNumericLimits<float>::Max();
-		for (int32 Body = 0; Body < HowManyBodies; ++Body)
-		{
-			if (!bBodyIsStillItsOwn[Body] || Body == Smallest)
+			if (!bTouching)
 			{
 				continue;
 			}
 
-			const float DistanceCm = FVector::Dist(BodyCentre[Body], BodyCentre[Smallest]);
+			// NO HIT, NO GATE, NO PEN QUESTION (his spec): the fire's door asks nothing about damage, because
+			// a fire has none. It applies its Burn again, every beat, for as long as the body is touching it —
+			// and a body that walks out keeps the Burn it has, running down on its own clock.
+			UProsperitocracyDamageStatics::ApplyStatusesOnContact(Body, Source, FireBlock, DamageEffectClass);
+			++HowManyBodiesTouching;
+			break;
+		}
+	}
+
+	// [DIAG 2026-10-18] One line a second: how many pieces and spots it has, and who is touching it.
+	if (World->GetTimeSeconds() >= NextTheCatchSaysWhatItSees)
+	{
+		NextTheCatchSaysWhatItSees = World->GetTimeSeconds() + 1.0f;
+		UE_LOG(LogProsperitocracy, Log,
+			TEXT("[FireCatch] %d pieces, %d flame spots, %d bodies touching it."),
+			TheGroundItsBurningOn.Num(), TheFlameSpots.Num(), HowManyBodiesTouching);
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------
+// ONE LIGHT PER PATCH OF FIRE IN THE WORLD — his call, 2026-10-16.
+//
+// What it replaced, and why. The lights used to belong to a FIRE: one fire, up to six lamps, and every strike
+// destroyed and re-created every one of them. A bombardment is eighteen fires, so that was up to a hundred
+// lamps over the same patch, torn down and put up again three times a second, all adding into each other —
+// which is the flicker, and the spots and seams where two pools met. And they cast no shadows, so a pool of
+// firelight washed through a container as a bright patch.
+//
+// The unit of light is now GROUND THAT IS BURNING, gathered ACROSS every fire burning it: one patch, one lamp.
+// A bombardment over one area is ONE patch, so ONE light. The lamps are KEPT — moved and retuned, never
+// rebuilt while their patch lives — and because there are few enough of them, they can cast shadows.
+// ---------------------------------------------------------------------------------------------------
+
+void AProsperitocracyFireField::RegroupTheWorldsFire()
+{
+	AProsperitocracyFireField* AnyFire = nullptr;
+	for (const TWeakObjectPtr<AProsperitocracyFireField>& FireWeak : EveryFireBurning)
+	{
+		if (AProsperitocracyFireField* Fire = FireWeak.Get())
+		{
+			AnyFire = Fire;
+			break;
+		}
+	}
+	if (!AnyFire)
+	{
+		return;
+	}
+
+	// EVERY PIECE OF GROUND BURNING IN THE WORLD, with the fire burning it. A fire whose clock is out is not
+	// burning ground any more and its pieces are gone, which is what hands its patches on to whoever is left.
+	struct FPieceOfTheWorldsFire
+	{
+		AProsperitocracyFireField* Fire = nullptr;
+		FVector Where = FVector::ZeroVector;
+		FVector Up = FVector::UpVector;
+	};
+
+	TArray<FPieceOfTheWorldsFire> EveryPiece;
+	const float StepCm = AnyFire->GetPieceStepCm();
+
+	for (const TWeakObjectPtr<AProsperitocracyFireField>& FireWeak : EveryFireBurning)
+	{
+		AProsperitocracyFireField* Fire = FireWeak.Get();
+		if (!Fire || Fire->bTheClockIsOut)
+		{
+			continue;
+		}
+
+		for (const FProsperitocracyBurningGround& Piece : Fire->TheGroundItsBurningOn)
+		{
+			if (Piece.bItIsStillThisFires)
+			{
+				EveryPiece.Add({ Fire, Piece.Where, Piece.WhichWayIsUp });
+			}
+		}
+	}
+
+	// PIECES THAT TOUCH ARE ONE PATCH OF FIRE — his rule, over the whole world. The pieces still burning are
+	// few, because a newer fire owns the ground it covers, so the plain pairwise sweep is the honest way here.
+	TArray<FProsperitocracyPatchOfFire> TheWorldsPatches;
+	{
+		const float TouchingCm = StepCm * ProsperitocracyFireHandling::OneBodyOfFireShareOfAStep;
+		TArray<int32> WhichPatchEachPieceIsIn;
+		WhichPatchEachPieceIsIn.Init(-1, EveryPiece.Num());
+
+		for (int32 Start = 0; Start < EveryPiece.Num(); ++Start)
+		{
+			if (WhichPatchEachPieceIsIn[Start] != -1)
+			{
+				continue;
+			}
+
+			const int32 PatchIndex = TheWorldsPatches.AddDefaulted();
+			WhichPatchEachPieceIsIn[Start] = PatchIndex;
+
+			TArray<int32> ThePatch;
+			ThePatch.Add(Start);
+
+			for (int32 Head = 0; Head < ThePatch.Num(); ++Head)
+			{
+				const FVector& WhereItIs = EveryPiece[ThePatch[Head]].Where;
+				for (int32 Other = 0; Other < EveryPiece.Num(); ++Other)
+				{
+					if (WhichPatchEachPieceIsIn[Other] != -1)
+					{
+						continue;
+					}
+
+					if (FVector::Dist(EveryPiece[Other].Where, WhereItIs) <= TouchingCm)
+					{
+						WhichPatchEachPieceIsIn[Other] = PatchIndex;
+						ThePatch.Add(Other);
+					}
+				}
+			}
+
+			// WHAT THIS PATCH IS: how much ground is burning in it, where its own middle is, which way that
+			// ground faces, how far it reaches — and WHOSE LIGHT IT IS, which is the OLDEST fire burning any of
+			// it, so the lamp does not change hands as strikes land.
+			FProsperitocracyPatchOfFire& Patch = TheWorldsPatches[PatchIndex];
+			const float PieceWidthM = AnyFire->GetPieceWidthCm() / 100.0f;
+
+			FVector Centre = FVector::ZeroVector;
+			for (const int32 Index : ThePatch)
+			{
+				Centre += EveryPiece[Index].Where;
+				Patch.HowMuchGroundIsBurningM2 += PI * PieceWidthM * PieceWidthM;
+				if (!Patch.WhoseLightItIs || EveryPiece[Index].Fire->LaidOrder < Patch.WhoseLightItIs->LaidOrder)
+				{
+					Patch.WhoseLightItIs = EveryPiece[Index].Fire;
+				}
+			}
+			Centre /= (float)FMath::Max(1, ThePatch.Num());
+
+			// THE LIGHT STANDS ON A PIECE OF THE PATCH'S OWN GROUND — the one nearest its middle — and never in
+			// mid-air: a wrapped patch's middle is inside the geometry, and a lamp there lights the wrong thing.
+			int32 NearestToTheMiddle = ThePatch[0];
+			for (const int32 Index : ThePatch)
+			{
+				if (FVector::DistSquared(EveryPiece[Index].Where, Centre) < FVector::DistSquared(EveryPiece[NearestToTheMiddle].Where, Centre))
+				{
+					NearestToTheMiddle = Index;
+				}
+			}
+			Patch.WhereTheLightStands = EveryPiece[NearestToTheMiddle].Where;
+			Patch.WhichWayItFaces = EveryPiece[NearestToTheMiddle].Up;
+
+			for (const int32 Index : ThePatch)
+			{
+				Patch.HowWideItIsCm = FMath::Max(Patch.HowWideItIsCm,
+					FVector::Dist(EveryPiece[Index].Where, Patch.WhereTheLightStands));
+			}
+		}
+	}
+
+	// THE COUNT IS HELD DOWN ON PURPOSE: past the ceiling the smallest patch is folded into the nearest, because
+	// the light is the expensive part of a fire and his ask was the least of it. Nothing about what burns
+	// changes here — this is the light, and only the light.
+	while (TheWorldsPatches.Num() > MostPatchesOfFireWithALightInTheWorld)
+	{
+		int32 Smallest = 0;
+		for (int32 Index = 1; Index < TheWorldsPatches.Num(); ++Index)
+		{
+			if (TheWorldsPatches[Index].HowMuchGroundIsBurningM2 < TheWorldsPatches[Smallest].HowMuchGroundIsBurningM2)
+			{
+				Smallest = Index;
+			}
+		}
+
+		int32 Nearest = INDEX_NONE;
+		float NearestCm = TNumericLimits<float>::Max();
+		for (int32 Index = 0; Index < TheWorldsPatches.Num(); ++Index)
+		{
+			if (Index == Smallest)
+			{
+				continue;
+			}
+
+			const float DistanceCm = FVector::Dist(TheWorldsPatches[Index].WhereTheLightStands, TheWorldsPatches[Smallest].WhereTheLightStands);
 			if (DistanceCm < NearestCm)
 			{
 				NearestCm = DistanceCm;
-				Nearest = Body;
+				Nearest = Index;
 			}
 		}
+
 		if (Nearest == INDEX_NONE)
 		{
 			break;
 		}
 
-		bBodyIsStillItsOwn[Smallest] = false;
-		BodyPieces[Nearest] += BodyPieces[Smallest];
-		BodyGroundM2[Nearest] += BodyGroundM2[Smallest];
-		BodyWidthCm[Nearest] = FMath::Max(BodyWidthCm[Nearest],
-			FVector::Dist(BodyCentre[Nearest], BodyCentre[Smallest]) + BodyWidthCm[Smallest]);
-		--HowManyBodies;
+		TheWorldsPatches[Nearest].HowMuchGroundIsBurningM2 += TheWorldsPatches[Smallest].HowMuchGroundIsBurningM2;
+		TheWorldsPatches[Nearest].HowWideItIsCm = FMath::Max(TheWorldsPatches[Nearest].HowWideItIsCm,
+			NearestCm + TheWorldsPatches[Smallest].HowWideItIsCm);
+		TheWorldsPatches.RemoveAt(Smallest);
 	}
 
-	// ONE LIGHT, STANDING ON THE FIRE WHERE THE FIRE IS: at the middle of that body of fire, off the surface
-	// along the way that body of ground faces, reaching as wide as that body actually reaches, and as bright as
-	// the ground it covers is worth. A ragged fire lights raggedly — that is the point of it (his words).
-	for (int32 Body = 0; Body < BodyPieces.Num(); ++Body)
+	// AND EVERY FIRE IS TOLD WHICH PATCHES' LIGHTS IT HOLDS. A fire holding none lets its lamps go — which is
+	// the only way a light is ever taken down now.
+	for (const TWeakObjectPtr<AProsperitocracyFireField>& FireWeak : EveryFireBurning)
 	{
-		if (!bBodyIsStillItsOwn[Body])
+		AProsperitocracyFireField* Fire = FireWeak.Get();
+		if (!Fire)
 		{
 			continue;
 		}
 
-		// ONE LIGHT, STANDING ON THE FIRE WHERE THE FIRE IS: at the middle of that body of fire, off the surface
-		// along the way that body of ground faces, reaching as wide as that body actually reaches, and as bright
-		// as the ground it covers is worth. A ragged fire lights raggedly — that is the point of it (his words).
-		// The five numbers are this class's own (see the header), which is why they are named bare here.
-		const FVector WhereTheLightStands = BodyCentre[Body]
-			+ BodyFacing[Body] * HowFarTheLightStandsOffTheFireCm;
+		TArray<FProsperitocracyPatchOfFire> TheOnesItHolds;
+		for (const FProsperitocracyPatchOfFire& Patch : TheWorldsPatches)
+		{
+			if (Patch.WhoseLightItIs == Fire)
+			{
+				TheOnesItHolds.Add(Patch);
+			}
+		}
 
-		UPointLightComponent* TheLight = NewObject<UPointLightComponent>(this);
-		TheLight->SetMobility(EComponentMobility::Movable);
-		TheLight->SetupAttachment(TheRoot);
-		TheLight->RegisterComponent();
+		Fire->HoldTheLightsForThesePatches(TheOnesItHolds);
+	}
+}
+
+void AProsperitocracyFireField::HoldTheLightsForThesePatches(const TArray<FProsperitocracyPatchOfFire>& ThePatchesItsLightsAreFor)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// WHAT STILL FITS IS KEPT. A lamp whose patch is still there is MOVED and retuned and never rebuilt: a lamp
+	// torn down and put up again three times a second is a lamp that flickers. Only a lamp with no patch left to
+	// stand for is taken down.
+	while (TheLightsItHolds.Num() > ThePatchesItsLightsAreFor.Num())
+	{
+		if (UPointLightComponent* TheOneToLose = TheLightsItHolds.Last())
+		{
+			TheOneToLose->DestroyComponent();
+		}
+		TheLightsItHolds.Pop();
+		if (WhatEachHeldLightIsWorth.Num() > 0)
+		{
+			WhatEachHeldLightIsWorth.Pop();
+		}
+	}
+
+	for (int32 Index = 0; Index < ThePatchesItsLightsAreFor.Num(); ++Index)
+	{
+		const FProsperitocracyPatchOfFire& Patch = ThePatchesItsLightsAreFor[Index];
+
+		UPointLightComponent* TheLight = TheLightsItHolds.IsValidIndex(Index) ? TheLightsItHolds[Index].Get() : nullptr;
+		if (!TheLight)
+		{
+			// The only lamp ever made here: a patch of fire that has none yet.
+			TheLight = NewObject<UPointLightComponent>(this);
+			TheLight->SetMobility(EComponentMobility::Movable);
+			TheLight->SetupAttachment(TheRoot);
+			TheLight->RegisterComponent();
+			TheLight->SetLightColor(ProsperitocracyFireHandling::TheColourAFireIsLitWith);
+
+			// A patch of fire is ONE light, and there are few enough of them that they can afford to cast
+			// shadows — which is what stops a pool of firelight washing through a wall as a bright patch. It is
+			// not a cheapness decision any more; it is what the light is.
+			TheLight->SetCastShadows(true);
+
+			if (TheLightsItHolds.IsValidIndex(Index))
+			{
+				TheLightsItHolds[Index] = TheLight;
+			}
+			else
+			{
+				TheLightsItHolds.Add(TheLight);
+			}
+		}
+
+		const FVector WhereTheLightStands = Patch.WhereTheLightStands
+			+ Patch.WhichWayItFaces * HowFarTheLightStandsOffTheFireCm;
+
+		// WHAT THE LIGHT IS WORTH is the ground burning in its patch; what it is SET to is that, scaled by how
+		// much of the fire is still asking for flames — so a fire that is burning down stops lighting the ground
+		// as it goes, in step with its own flames.
+		const float WhatItIsWorth = FMath::Clamp(Patch.HowMuchGroundIsBurningM2 * CandelasASquareMetreOfFireIsWorth,
+			DimmestOneBodyOfFireIsLit, BrightestOneBodyOfFireIsLit);
+
 		TheLight->SetWorldLocation(WhereTheLightStands);
-		TheLight->SetLightColor(ProsperitocracyFireHandling::TheColourAFireIsLitWith);
 		TheLight->SetAttenuationRadius(FMath::Max(TheLeastALightOfFireReachesCm,
-			BodyWidthCm[Body] * HowWideTheLightOfABodyOfFireReaches));
-		TheLight->SetIntensity(FMath::Clamp(BodyGroundM2[Body] * CandelasASquareMetreOfFireIsWorth,
-			DimmestOneBodyOfFireIsLit, BrightestOneBodyOfFireIsLit));
+			Patch.HowWideItIsCm * HowWideTheLightOfABodyOfFireReaches));
+		TheLight->SetIntensity(WhatItIsWorth * HowMuchOfTheFireIsStillAsking(World->GetTimeSeconds())
+			* ProsperitocracyFireHandling::TheFiresLightsAreOffForATest);
 
-		// A fire does not cast shadows: it is the light of the ground burning, and the world's shadows are the
-		// sun's. This is also the cheapest light there is, which is what his "minimal" asked for.
-		TheLight->SetCastShadows(false);
+		if (WhatEachHeldLightIsWorth.IsValidIndex(Index))
+		{
+			WhatEachHeldLightIsWorth[Index] = WhatItIsWorth;
+		}
+		else
+		{
+			WhatEachHeldLightIsWorth.Add(WhatItIsWorth);
+		}
+	}
+}
 
-		TheBodiesOfFire.Add(TheLight);
+float AProsperitocracyFireField::HowMuchOfTheFireIsStillAsking(float Now) const
+{
+	// THE BURNING DOWN, AS ONE NUMBER: 1 the whole way while the fire is all there, sliding to nothing as the
+	// fade reaches the end of the clock. The flames thin by it, and the light dims by it, so the two cannot say
+	// different things about how much fire is left.
+	const float FadeSeconds = EndsAt - FadeStartsAt;
+	if (FadeSeconds <= 0.0f || Now <= FadeStartsAt)
+	{
+		return 1.0f;
+	}
+
+	return 1.0f - FMath::Clamp((Now - FadeStartsAt) / FadeSeconds, 0.0f, 1.0f);
+}
+
+void AProsperitocracyFireField::RetuneTheLightsItHolds()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const float HowMuchIsStillAsking = HowMuchOfTheFireIsStillAsking(World->GetTimeSeconds());
+	for (int32 Index = 0; Index < TheLightsItHolds.Num(); ++Index)
+	{
+		if (UPointLightComponent* Light = TheLightsItHolds[Index].Get())
+		{
+			if (WhatEachHeldLightIsWorth.IsValidIndex(Index))
+			{
+				Light->SetIntensity(WhatEachHeldLightIsWorth[Index] * HowMuchIsStillAsking
+					* ProsperitocracyFireHandling::TheFiresLightsAreOffForATest);
+			}
+		}
 	}
 }
 
@@ -1090,12 +1236,14 @@ void AProsperitocracyFireField::LightTheBodiesOfFire()
 
 void AProsperitocracyFireField::ReReadWhichGroundIsStillIts()
 {
-	// A NEWER FIRE OWNS THE GROUND IT COVERS, and only that ground (his rule, 2026-10-01). A piece of mine
-	// within a piece of a NEWER fire's ground is taken; everything else is mine, untouched. Nothing is ever
-	// replaced, re-made or moved, and a fire that lost ground asks for less fire rather than shrinking.
+	// A NEWER FIRE TAKES THE GROUND IT COVERS — and it TAKES it. The pieces it covers are REMOVED from this fire,
+	// with their spots, their boxes and their share of the clock. Two fires never occupy the same square metre, so
+	// a bombardment is one fire on one patch instead of eighteen drawing over each other and burning twice
+	// (his rule, 2026-10-18). Ground it did not reach keeps burning on its own clock and fades on its own.
 	const float TakenCm = GetPieceWidthCm();
 
-	for (FProsperitocracyBurningGround& Piece : TheGroundItsBurningOn)
+	int32 HowManyWereTaken = 0;
+	for (int32 Index = TheGroundItsBurningOn.Num() - 1; Index >= 0; --Index)
 	{
 		bool bSomebodyNewerIsOnIt = false;
 		for (const TWeakObjectPtr<AProsperitocracyFireField>& OtherWeak : EveryFireBurning)
@@ -1108,12 +1256,7 @@ void AProsperitocracyFireField::ReReadWhichGroundIsStillIts()
 
 			for (const FProsperitocracyBurningGround& Theirs : Other->TheGroundItsBurningOn)
 			{
-				if (!Theirs.bItIsStillThisFires)
-				{
-					continue;
-				}
-
-				if (FVector::Dist(Piece.Where, Theirs.Where) <= TakenCm)
+				if (FVector::Dist(TheGroundItsBurningOn[Index].Where, Theirs.Where) <= TakenCm)
 				{
 					bSomebodyNewerIsOnIt = true;
 					break;
@@ -1126,33 +1269,40 @@ void AProsperitocracyFireField::ReReadWhichGroundIsStillIts()
 			}
 		}
 
-		Piece.bItIsStillThisFires = !bSomebodyNewerIsOnIt;
+		if (bSomebodyNewerIsOnIt)
+		{
+			TheGroundItsBurningOn.RemoveAt(Index);
+			++HowManyWereTaken;
+		}
+	}
+
+	if (HowManyWereTaken > 0)
+	{
+		// THE FIRE IS LAID AGAIN FROM WHAT IS LEFT: its spots, and the picture it is drawn on.
+		LayTheFlameSpots();
+		HandTheEffectItsGround();
 	}
 }
 
 float AProsperitocracyFireField::HowMuchOfItsGroundItStillOwns() const
 {
-	if (TheGroundItsBurningOn.Num() == 0)
+	// THE SHARE OF THE GROUND IT WAS LAID WITH THAT IT STILL HAS. Ground a newer fire took is REMOVED, so this is
+	// the one number that tells the picture how much of its fire is still owed to it — a fire that lost half its
+	// ground asks for half the flames, and its cards stop standing where somebody else's fire now is.
+	if (HowManyPiecesWereLaid <= 0)
 	{
 		return 0.0f;
 	}
 
-	int32 HowManyAreStillIts = 0;
-	for (const FProsperitocracyBurningGround& Piece : TheGroundItsBurningOn)
-	{
-		if (Piece.bItIsStillThisFires)
-		{
-			++HowManyAreStillIts;
-		}
-	}
-
-	return (float)HowManyAreStillIts / (float)TheGroundItsBurningOn.Num();
+	return FMath::Clamp((float)TheGroundItsBurningOn.Num() / (float)HowManyPiecesWereLaid, 0.0f, 1.0f);
 }
 
 float AProsperitocracyFireField::SquareMetresItIsBurning() const
 {
+	// The ground it still has, piece by piece. Ground taken by a newer fire is gone from the count, so this needs
+	// no share of its own.
 	const float PieceWidthM = GetPieceWidthCm() / 100.0f;
-	return (float)HowMuchOfItsGroundItStillOwns() * (float)TheGroundItsBurningOn.Num() * PI * PieceWidthM * PieceWidthM;
+	return (float)TheGroundItsBurningOn.Num() * PI * PieceWidthM * PieceWidthM;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -1168,15 +1318,9 @@ float AProsperitocracyFireField::TheRateThisGroundWants(float Now) const
 	// Before the fade it is that, unchanging. Through the fade it is less and less fire, reaching nothing
 	// exactly as the clock runs out — the fire thinning ITSELF, so the ground goes dark as one fire rather than
 	// as a field of little fires stopping one at a time. Nothing about who gets lit reads this: the ground
-	// catches people the whole way down, because the fade is inside the Duration (his rule).
-	const float FadeSeconds = EndsAt - FadeStartsAt;
-	if (FadeSeconds <= 0.0f || Now <= FadeStartsAt)
-	{
-		return ForTheGroundItOwns;
-	}
-
-	const float BurnedDown = FMath::Clamp((Now - FadeStartsAt) / FadeSeconds, 0.0f, 1.0f);
-	return ForTheGroundItOwns * (1.0f - BurnedDown);
+	// catches people the whole way down, because the fade is inside the Duration (his rule). And the SAME number
+	// dims the light over this ground, so the flames and the light cannot disagree about how much fire is left.
+	return ForTheGroundItOwns * HowMuchOfTheFireIsStillAsking(Now);
 }
 
 void AProsperitocracyFireField::SetTheRate(float FlamesASecond)
@@ -1221,16 +1365,11 @@ void AProsperitocracyFireField::TheClockIsOut()
 		TheFire->Deactivate();
 	}
 
-	// A FIRE THAT IS OUT PUTS OUT NO LIGHT: the burning down is a picture, and the ground is not burning any
-	// more. The lights go with the clock rather than flickering on over dead ground for another fifteen seconds.
-	for (const TObjectPtr<UPointLightComponent>& Light : TheBodiesOfFire)
-	{
-		if (Light)
-		{
-			Light->DestroyComponent();
-		}
-	}
-	TheBodiesOfFire.Reset();
+	// A FIRE THAT IS OUT BURNS NO GROUND, so the world's patches are gathered again: whatever was this fire's to
+	// light passes to the fire still burning that ground, and a patch nobody is burning any more lets its lamp go
+	// — which is the only place a light is ever taken down. Nothing is torn down and put back here: a clock
+	// running out must not make the world's fire flicker.
+	RegroupTheWorldsFire();
 
 	// A picture that never reports an end must not leave a dead fire standing in the world forever.
 	GraceEndsAt = Now + LongestAFireMayOutliveItsClockSeconds;
@@ -1254,6 +1393,9 @@ void AProsperitocracyFireField::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// [DEV] the volume that burns, drawn — off unless `Prosperitocracy.FireBoxes` was typed.
+	ShowTheBurnBoxes();
+
 	UWorld* World = GetWorld();
 	if (!World || !FireBlock)
 	{
@@ -1267,7 +1409,11 @@ void AProsperitocracyFireField::Tick(float DeltaSeconds)
 	if (!bTheClockIsOut && Now >= NextCatchesAt)
 	{
 		NextCatchesAt = Now + CatchEverySeconds;
-		CatchWhateverStandsInIt();
+		ApplyTheBurnToWhateverIsTouchingIt();
+
+		// AND THE LIGHT OVER THIS FIRE'S GROUND FOLLOWS IT DOWN. The same beat that asks who is standing in the
+		// fire retunes the lamps, so a fire that is burning out stops lighting the ground as it goes.
+		RetuneTheLightsItHolds();
 	}
 
 	// THE FIRE BURNS DOWN, and it burns down as ONE fire: one number, thinning the whole of it evenly.
@@ -1352,21 +1498,25 @@ void AProsperitocracyFireField::EndPlay(const EEndPlayReason::Type EndPlayReason
 		MyOwnHome = nullptr;
 	}
 
-	// The lights this fire was lit with are this fire's own; they go with it rather than standing over dead ground.
-	for (const TObjectPtr<UPointLightComponent>& Light : TheBodiesOfFire)
+	// THE LAMPS THIS FIRE HOLDS GO WITH IT, whichever patch they were standing for: a fire that is gone cannot
+	// hold a light for ground. The world's patches are gathered again below, so whatever it was burning passes
+	// to the fires still burning it.
+	for (const TObjectPtr<UPointLightComponent>& Light : TheLightsItHolds)
 	{
 		if (Light)
 		{
 			Light->DestroyComponent();
 		}
 	}
-	TheBodiesOfFire.Reset();
+	TheLightsItHolds.Reset();
+	WhatEachHeldLightIsWorth.Reset();
+
+	TheFlameSpots.Reset();
 
 	EveryFireBurning.Remove(this);
 
 	// THE GROUND GOES BACK. This fire's ground stops being covered the moment it is gone, so every fire still
-	// burning reads its own ground back — an older fire gets back whatever this one was sitting on — and every
-	// one of them re-lights itself to the ground it now owns.
+	// burning reads its own ground back — an older fire gets back whatever this one was sitting on.
 	for (int32 Index = EveryFireBurning.Num() - 1; Index >= 0; --Index)
 	{
 		AProsperitocracyFireField* Fire = EveryFireBurning[Index].Get();
@@ -1376,9 +1526,12 @@ void AProsperitocracyFireField::EndPlay(const EEndPlayReason::Type EndPlayReason
 		}
 
 		Fire->ReReadWhichGroundIsStillIts();
-		Fire->LightTheBodiesOfFire();
 		Fire->HandTheEffectItsGround();
 	}
+
+	// AND THE WORLD'S FIRE IS GATHERED AGAIN — the patches are re-handed, so no lamp keeps standing for ground
+	// that is not burning any more and none is left unlit that is.
+	RegroupTheWorldsFire();
 
 	Super::EndPlay(EndPlayReason);
 }

@@ -55,6 +55,65 @@ struct FProsperitocracyBurningGround
 };
 
 /**
+ * ONE FLAME'S PLACE ON THE GROUND.
+ *
+ * The cards are a stream — a flame is spawned, lives about a second, and dies — so the thing that BURNS cannot be
+ * a card. It is the place cards appear at: a spot on the ground the fire walked over, standing out of its own
+ * surface, carrying the size of a card. The picture is drawn on these spots and the burn is tested against them,
+ * so what you see and what burns you are the same place — and a spot is a handful of numbers, not a component.
+ */
+USTRUCT()
+struct FProsperitocracyFlameSpot
+{
+	GENERATED_BODY()
+
+	/** Where the flame stands — a point on the real surface this fire walked over. */
+	UPROPERTY()
+	FVector Where = FVector::ZeroVector;
+
+	/** Which way that surface faces, so a spot on a wall's face burns what stands against the wall. */
+	UPROPERTY()
+	FVector WhichWayIsUp = FVector::UpVector;
+};
+
+/**
+ * ONE PATCH OF FIRE, THE WORLD OVER.
+ *
+ * A patch is GROUND THAT IS BURNING, gathered across every fire that is burning it — not one fire's own pieces.
+ * That is the unit a light belongs to (his call, 2026-10-16): a bombardment over one area is ONE patch, so it
+ * is one light, and the lights stop being a hundred lamps over the same ground adding up into spots, seams and
+ * flicker.
+ *
+ * WhoseLightItIs is the OLDEST fire burning any of it, so a patch's light does not jump from one fire to the
+ * next as strikes land — it changes hands only when the fire holding it has actually gone.
+ */
+USTRUCT()
+struct FProsperitocracyPatchOfFire
+{
+	GENERATED_BODY()
+
+	/** A piece of the patch's own ground, nearest its middle — the light stands HERE, never in mid-air. */
+	UPROPERTY()
+	FVector WhereTheLightStands = FVector::ZeroVector;
+
+	/** Which way that piece of ground faces, so the light is stood off it along its own surface. */
+	UPROPERTY()
+	FVector WhichWayItFaces = FVector::UpVector;
+
+	/** How wide the patch actually reaches, in cm, from that piece to its furthest one. */
+	UPROPERTY()
+	float HowWideItIsCm = 0.0f;
+
+	/** How much ground is burning in it, in square metres — what its light is worth. */
+	UPROPERTY()
+	float HowMuchGroundIsBurningM2 = 0.0f;
+
+	/** The oldest fire burning any of this patch: whose light it is. */
+	UPROPERTY()
+	TObjectPtr<AProsperitocracyFireField> WhoseLightItIs = nullptr;
+};
+
+/**
  * THE FIRE A BANG LEAVES BURNING ON THE GROUND (PLANS/incendiary-strike.md §4 and "THE FIRE'S SHAPE").
  *
  * It is spawned by the ONE explosion pass, at the place the bang went off, and the only thing it is told is
@@ -138,35 +197,54 @@ protected:
 	/**
 	 * FIND THE GROUND IT IS BURNING — the fire's shape, worked out once, the moment it is lit.
 	 *
-	 * It does not walk the surface any more (his call, 2026-10-16). It SAMPLES it: a jittered cloud of points
-	 * filling the ball its reach could cover, each one asked what ground is nearest to it; then the pieces that
-	 * TOUCH each other are joined, and the reach is spent as the real distance travelled over those joins. What
-	 * it can afford is the fire; what it cannot is not.
+	 * It WALKS the surface (his call, 2026-10-18). From the piece the bang hit, out over the real ground one
+	 * step at a time, in directions lying in that piece's own surface plane: along a floor, up a slope, up the
+	 * face of a crate, over its top, down its far side, onto the ground past it. Every accepted piece costs the
+	 * real distance travelled to reach it, and the walk stops when the Range is spent — so flat ground gives the
+	 * full width he sees and a rise costs it width, because a climb is distance like any other. No uphill
+	 * premium: one metre up a wall is one metre.
 	 *
-	 * Why it is built this way: nothing here depends on anything else. A piece is found by itself, so a thing
-	 * standing on one piece — the missile that had just gone off, a crate, a body — costs that one piece and not
-	 * the fire. The walk this replaced was one contact away from collapsing into a single dot, which is exactly
-	 * what it did.
+	 * The tip of every branch is placed at EXACTLY the distance that is left, never snapped to a lattice line,
+	 * so the edge is ragged and follows the surface. Inside the fire, pieces are one step apart.
+	 *
+	 * Why it is built this way (2026-10-18, measured): the sampling it replaced threw ~900 probes into a ball,
+	 * each looking six ways 1.5m. On the flat map that found ground for only 162 of them — one ground point per
+	 * metre at best, and it lost half of those to duplicates and to the reach — and on the landscape map it
+	 * found ground for **none of 905**, leaving a single piece and no burn at all. A walk cannot miss the ground
+	 * it is standing on, covers the surface at one piece per step by construction, and a bad step costs one
+	 * branch rather than the fire.
 	 *
 	 * It is done ONCE: after it there are no traces per frame, only pieces.
 	 */
 	void FindTheGroundItIsBurning();
 
-	/**
-	 * WHAT GROUND IS NEAREST THIS SAMPLE, in six short looks — down for a floor, up for nothing, across for a
-	 * wall's face. The nearest hit is the ground the sample stands on; a sample out in the open finds nothing
-	 * and dies, which is what "air" means here.
-	 */
-	bool TheSurfaceNearestTheSample(const FVector& Sample, FProsperitocracyBurningGround& OutPiece) const;
+	/** THE VOLUME THAT BURNS, DRAWN — [DEV], and only while `Prosperitocracy.FireBoxes` is on. */
+	void ShowTheBurnBoxes() const;
 
 	/**
-	 * HOW FAR THE FIRE HAD TO TRAVEL TO STAND ON EACH PIECE — the shortest way over the pieces that touch,
-	 * starting from the one the bang hit, every join costing the real distance between the two pieces.
-	 *
-	 * OutWalked is filled one entry per piece, in the order they were given; a piece the fire cannot reach at
-	 * all is left further away than anything, which is how it is dropped.
+	 * SCATTER THE FLAMES OVER THE GROUND IT BURNED — the spots every card is drawn on and every burn is tested
+	 * against. Laid scattered, never on a grid, and never leaving the patch it belongs to, so nothing can stand
+	 * outside the fire's reach.
 	 */
-	void SettleTheGroundItCanReach(const TArray<FProsperitocracyBurningGround>& Pieces, TArray<float>& OutWalked) const;
+	void LayTheFlameSpots();
+
+
+	/**
+	 * ONE STEP OF THE WALK — is there surface one step on from this piece, in this direction, and where is it?
+	 *
+	 * It is a SHAPE moved along the surface, never a ray thrown from a floating point: a probe sphere is swept
+	 * forward out of the piece's own surface. A hit is a FACE — a wall, a crate's side — and the piece goes ON
+	 * that hit facing out of it, which is how the fire climbs. Nothing in the way means the surface carries on,
+	 * so the probe looks onto what is one step ahead: the floor continuing, a crate's top, a slope.
+	 *
+	 * The look is asked by CHANNEL, the way the missile asks the world, and never by object type: a surface that
+	 * answers one and not the other is what left a whole map with one piece of fire on it (2026-10-18, 0 of 905).
+	 * A body is never ground — a hit on a character is refused here — so fire is never placed on a person.
+	 */
+	bool TheSurfaceOneStepOn(const FProsperitocracyBurningGround& From, const FVector& Direction, float HowFarCm,
+		FProsperitocracyBurningGround& OutPiece) const;
+
+
 
 	/** The surface under a place — the floor, a crate's top, a slope — with its own facing. */
 	bool TheSurfaceUnder(const FVector& Place, FVector& OutWhere, FVector& OutWhichWayIsUp) const;
@@ -180,8 +258,6 @@ protected:
 	 */
 	static bool TheFireMayStandOn(const FVector& WhichWayIsUp);
 
-	/** Is there something solid between two places — what keeps a body on the far side of cover unburnt. */
-	bool SomethingSolidBetween(const FVector& From, const FVector& To) const;
 
 	/** A place on the ground the fire has not already found — the sampling never keeps the same ground twice. */
 	bool IsThatGroundAlreadyBurning(const FVector& Where, const TArray<FProsperitocracyBurningGround>& AlreadyFound) const;
@@ -201,22 +277,35 @@ protected:
 	 */
 	void HandTheEffectItsGround();
 
-	/** Put the Burn on everything standing in the fire — again, every beat, for the whole Duration. */
-	void CatchWhateverStandsInIt();
+	/** Put the Burn on everything touching the fire right now — again, every beat, for the whole Duration. */
+	void ApplyTheBurnToWhateverIsTouchingIt();
+
 
 	/**
-	 * ONE LIGHT PER BODY OF FIRE (his call, 2026-10-15).
+	 * GATHER THE WHOLE WORLD'S FIRE INTO PATCHES, and tell every fire which patches' lights it holds.
 	 *
-	 * The pieces that touch each other are one body of fire, and each body gets ONE light, standing on the fire
-	 * where the fire is — at the middle of that body, reaching as wide as that body actually is. A ragged fire
-	 * therefore lights raggedly, and a fire that has come apart into two (a wall between, a gap) is two lights,
-	 * which is what it looks like. The count is held down on purpose: past the ceiling the smallest bodies are
-	 * folded into the nearest, because the light is the expensive part of a fire and his ask was the least of it.
+	 * A patch is GROUND THAT IS BURNING, gathered across every fire burning it — not one fire's own pieces (his
+	 * call, 2026-10-16). A bombardment over one area is therefore ONE patch and one light, instead of eighteen
+	 * fires' worth of lamps over the same ground adding up into spots, seams and flicker.
+	 *
+	 * Called when a fire is laid, when the ground changes hands, and when a fire goes.
 	 */
-	void LightTheBodiesOfFire();
+	static void RegroupTheWorldsFire();
 
-	/** Every piece that touches this one, folded into one body of fire — the whole grouping is this, run over all pieces. */
-	void GroupThePiecesIntoBodiesOfFire(TArray<int32>& OutWhichBodyEachPieceIsIn, int32& OutHowManyBodies) const;
+	/**
+	 * HOLD THE LIGHTS FOR THESE PATCHES — ONE light each, standing on a piece of the patch's own ground, reaching
+	 * as wide as the patch reaches, as bright as the ground burning in it is worth.
+	 *
+	 * The components are KEPT, moved and retuned. Nothing is destroyed and re-created while a patch lives: a lamp
+	 * torn down and put up again three times a second is a lamp that flickers.
+	 */
+	void HoldTheLightsForThesePatches(const TArray<FProsperitocracyPatchOfFire>& ThePatchesItsLightsAreFor);
+
+	/** How much of the fire is still asking for flames: 1 until the burning down begins, then sliding to nothing. */
+	float HowMuchOfTheFireIsStillAsking(float Now) const;
+
+	/** Retune the lights this fire holds to how much fire is actually left burning under them. */
+	void RetuneTheLightsItHolds();
 
 	/**
 	 * READ THE GROUND BACK — which of this fire's pieces are still its own.
@@ -267,9 +356,17 @@ protected:
 	UPROPERTY()
 	TArray<FProsperitocracyBurningGround> TheGroundItsBurningOn;
 
-	/** ONE LIGHT PER BODY OF FIRE, ours rather than the effect's, so a body of fire can have exactly one. */
+	/** WHERE THE FLAMES STAND — scattered spots over that ground, and what burns you. One box each. */
 	UPROPERTY()
-	TArray<TObjectPtr<UPointLightComponent>> TheBodiesOfFire;
+	TArray<FProsperitocracyFlameSpot> TheFlameSpots;
+
+	/** THE LIGHTS THIS FIRE HOLDS — one per patch of the world's fire whose light is this fire's to hold. They
+	 *  are KEPT and retuned as that fire changes, and destroyed only when the patch they stand for is gone. */
+	UPROPERTY()
+	TArray<TObjectPtr<UPointLightComponent>> TheLightsItHolds;
+
+	/** What each of those lights is worth with the fire at full strength, in candelas — the burning down scales it. */
+	TArray<float> WhatEachHeldLightIsWorth;
 
 	/** Which fire this is. */
 	UPROPERTY()
@@ -301,6 +398,10 @@ protected:
 	/** World seconds the ground next catches at. */
 	float NextCatchesAt = 0.0f;
 
+	/** [DIAG 2026-10-18] World seconds the catch next says what it sees, in the log. One line a second per fire,
+	 *  and the thing that names why a fire that is plainly there burns nobody. Delete with the [FireCatch] lines. */
+	float NextTheCatchSaysWhatItSees = 0.0f;
+
 	/**
 	 * World seconds a fire that has been told to stop is given to finish burning out, and the only thing
 	 * that can end it early after that is the picture reporting that it is done.
@@ -315,6 +416,9 @@ protected:
 
 	/** This fire's place in the order fires were laid: the newest fire owns the ground it covers. */
 	int32 LaidOrder = 0;
+
+	/** How many pieces of ground it was LAID with — what "how much of its ground is left" is measured against. */
+	int32 HowManyPiecesWereLaid = 0;
 
 	/** True once the fire has been laid — the ground is only ever walked and laid once. */
 	bool bTheFireIsLaid = false;
@@ -344,10 +448,10 @@ protected:
 	 *  where the ground is burning. */
 	static constexpr float FewestFlamesASecondAFireMayAsk = 150.0f;
 
-	/** [TUNE] MINE — the most bodies of fire one fire may be lit by, and therefore the most lights it may put
-	 *  in the world. Past it the smallest bodies are folded into the nearest: one light per body of fire is his
-	 *  rule, and this is the ceiling that keeps a shattered fire from costing a lamp per shard. */
-	static constexpr int32 MostBodiesOfFireOneLightEach = 6;
+	/** [TUNE] MINE — the most patches of fire in the WORLD that may have a light each. Past it the smallest
+	 *  patch is folded into the nearest: one light per patch of fire is the rule, and this is the ceiling that
+	 *  keeps a shattered fire from costing a lamp per shard. Few enough that the lights can cast shadows. */
+	static constexpr int32 MostPatchesOfFireWithALightInTheWorld = 8;
 
 	/** [TUNE] MINE — how light one body of fire is lit with, per square metre of that body, in candelas. */
 	static constexpr float CandelasASquareMetreOfFireIsWorth = 22.0f;
@@ -365,11 +469,15 @@ protected:
 	static constexpr float TheLeastALightOfFireReachesCm = 250.0f;
 
 	/**
-	 * [TUNE] MINE — the longest a fire may outlive its own clock, in seconds. A fire that has been told
-	 * to stop needs its own particles to finish, and that is the look; this is only the guarantee that a
-	 * picture which never reports an end cannot leave a dead fire standing in the world forever.
+	 * [TUNE] MINE — the longest a fire may outlive its own clock, in seconds.
+	 *
+	 * A fire that has been told to stop needs its own flames to finish, and that is the look: the longest flame
+	 * card lives 1.0s (read off the effect), so this is that plus half a second. EVERYTHING of a strike must be
+	 * gone within this of its Duration running out — his rule (2026-10-18): nothing may exist in the world
+	 * related to a strike once that strike's clock has ended. It was 15s, and that tail was a frame cost and the
+	 * white marks: the effect never reports an end, so this number was the only thing killing the actor.
 	 */
-	static constexpr float LongestAFireMayOutliveItsClockSeconds = 15.0f;
+	static constexpr float LongestAFireMayOutliveItsClockSeconds = 1.5f;
 
 	/** A rate that has moved less than this much (a hundredth of itself) is not worth a write. */
 	static constexpr float RateChangeWorthSending = 0.01f;
