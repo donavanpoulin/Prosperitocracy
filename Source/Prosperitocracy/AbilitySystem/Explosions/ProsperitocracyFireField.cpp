@@ -295,7 +295,8 @@ void AProsperitocracyFireField::LightTheGround(UProsperitocracyFireStatTable* In
 		UE_LOG(LogProsperitocracy, Warning,
 			TEXT("[Fire] %s was left with no %s in its block — nothing is burning. A fire IS its reach and its clock."),
 			*GetNameSafe(FireBlock), DurationSeconds <= 0.0f ? TEXT("Duration") : TEXT("Range"));
-		TheClockIsOut();
+		EndsAt = World->GetTimeSeconds();
+		GoneAt = EndsAt;
 		return;
 	}
 
@@ -304,6 +305,11 @@ void AProsperitocracyFireField::LightTheGround(UProsperitocracyFireStatTable* In
 	// half of it. On flat ground that is exactly the radius of the fire he sees.
 	HowFarItReachesCm = RangeMeters * 100.0f * 0.5f;
 	EndsAt = World->GetTimeSeconds() + DurationSeconds;
+
+	// THE FIRE'S POWER ENDS ON THE DURATION; THE PICTURE HAS A MOMENT AFTER IT. The one second of thinning and the
+	// longest card the effect spawns, and then this fire is not in the world at all.
+	GoneAt = EndsAt + HowLongTheFlamesThinOutSeconds + HowLongTheLastOfItsFlamesLivesSeconds;
+
 	NextCatchesAt = World->GetTimeSeconds();
 
 	EveryFireBurning.Add(this);
@@ -322,7 +328,8 @@ void AProsperitocracyFireField::LightTheGround(UProsperitocracyFireStatTable* In
 		UE_LOG(LogProsperitocracy, Warning,
 			TEXT("[Fire] %s had no ground under it at %s — nothing caught fire."),
 			*GetNameSafe(FireBlock), *GetActorLocation().ToCompactString());
-		TheClockIsOut();
+		EndsAt = World->GetTimeSeconds();
+		GoneAt = EndsAt;
 		return;
 	}
 
@@ -333,6 +340,12 @@ void AProsperitocracyFireField::LightTheGround(UProsperitocracyFireStatTable* In
 
 	LayTheFire();
 
+	// A FIRE WITH NO EFFECT HAS NO PICTURE TO WAIT FOR: nothing is placed after its clock either, so it goes.
+	if (!TheFire)
+	{
+		GoneAt = EndsAt;
+	}
+
 	// A NEW FIRE HAS TAKEN SOMEONE'S GROUND. Every fire burning reads its own ground back — this one too,
 	// though nothing newer exists yet — so the ground that changed hands stops burning twice.
 	for (int32 Index = EveryFireBurning.Num() - 1; Index >= 0; --Index)
@@ -340,10 +353,7 @@ void AProsperitocracyFireField::LightTheGround(UProsperitocracyFireStatTable* In
 		if (AProsperitocracyFireField* Fire = EveryFireBurning[Index].Get())
 		{
 			Fire->ReReadWhichGroundIsStillIts();
-			if (UWorld* TheirWorld = Fire->GetWorld())
-			{
-				Fire->SetTheRate(Fire->TheRateThisGroundWants(TheirWorld->GetTimeSeconds()));
-			}
+			Fire->SetTheRate(Fire->TheRateThisGroundWants(World->GetTimeSeconds()));
 		}
 	}
 
@@ -753,10 +763,8 @@ void AProsperitocracyFireField::LayTheFire()
 		}
 	}
 
-	// THE FADE IS THE LAST PART OF THE DURATION AND INSIDE IT (his rule): the fire starts thinning itself
-	// here and is asking for nothing by the time its clock runs out.
-	const float FadeSeconds = FMath::Clamp(FireBlock->FadeSeconds, 0.0f, DurationSeconds);
-	FadeStartsAt = EndsAt - FadeSeconds;
+	// THE FIRE BURNS AT ONE RATE FOR ITS WHOLE LIFE AND STOPS WHEN THE CLOCK RUNS OUT — no burning down, no fade
+	// number. What is alight on that frame goes out on its own, and that is the fire going out.
 
 	if (!TheLook)
 	{
@@ -810,7 +818,11 @@ void AProsperitocracyFireField::HandTheEffectItsGround()
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayPosition(TheFire,
 		ProsperitocracyFireVariables::TheGroundItsBurningOn, TheGround);
 
-	SetTheRate(BaseFlameRate * HowMuchOfItsGroundItStillOwns());
+	// THE ONE RATE, read the one way, so a picture handed new ground mid-life stays on the same number.
+	if (const UWorld* World = GetWorld())
+	{
+		SetTheRate(TheRateThisGroundWants(World->GetTimeSeconds()));
+	}
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -966,13 +978,21 @@ void AProsperitocracyFireField::ApplyTheBurnToWhateverIsTouchingIt()
 		}
 	}
 
-	// [DIAG 2026-10-18] One line a second: how many pieces and spots it has, and who is touching it.
+	// [DIAG 2026-10-19] One line a second: how much of the fire is LEFT, what we are ASKING the effect for, and what the effect actually HOLDS. If the share falls and the held rate does not, the write is not landing; if the share never falls, the number is wrong. Delete with the [FireCatch] lines.
 	if (World->GetTimeSeconds() >= NextTheCatchSaysWhatItSees)
 	{
 		NextTheCatchSaysWhatItSees = World->GetTimeSeconds() + 1.0f;
+
+		bool bTheEffectHasTheNumber = false;
+		const float WhatTheEffectHolds = TheFire
+			? TheFire->GetVariableFloat(ProsperitocracyFireVariables::TheRate, bTheEffectHasTheNumber)
+			: 0.0f;
+
 		UE_LOG(LogProsperitocracy, Log,
-			TEXT("[FireCatch] %d pieces, %d flame spots, %d bodies touching it."),
-			TheGroundItsBurningOn.Num(), TheFlameSpots.Num(), HowManyBodiesTouching);
+			TEXT("[FireCatch] %d pieces, %d flame spots, %d bodies touching it — asking for %.0f a second, the effect holds %.0f%s."),
+			TheGroundItsBurningOn.Num(), TheFlameSpots.Num(), HowManyBodiesTouching,
+			TheRateThisGroundWants(World->GetTimeSeconds()), WhatTheEffectHolds,
+			bTheEffectHasTheNumber ? TEXT("") : TEXT(" — IT HAS NO SUCH NUMBER"));
 	}
 }
 
@@ -1021,7 +1041,7 @@ void AProsperitocracyFireField::RegroupTheWorldsFire()
 	for (const TWeakObjectPtr<AProsperitocracyFireField>& FireWeak : EveryFireBurning)
 	{
 		AProsperitocracyFireField* Fire = FireWeak.Get();
-		if (!Fire || Fire->bTheClockIsOut)
+		if (!Fire)
 		{
 			continue;
 		}
@@ -1180,12 +1200,6 @@ void AProsperitocracyFireField::RegroupTheWorldsFire()
 
 void AProsperitocracyFireField::HoldTheLightsForThesePatches(const TArray<FProsperitocracyPatchOfFire>& ThePatchesItsLightsAreFor)
 {
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
 	// WHAT STILL FITS IS KEPT. A lamp whose patch is still there is MOVED and retuned and never rebuilt: a lamp
 	// torn down and put up again three times a second is a lamp that flickers. Only a lamp with no patch left to
 	// stand for is taken down.
@@ -1234,17 +1248,15 @@ void AProsperitocracyFireField::HoldTheLightsForThesePatches(const TArray<FProsp
 		const FVector WhereTheLightStands = Patch.WhereTheLightStands
 			+ Patch.WhichWayItFaces * HowFarTheLightStandsOffTheFireCm;
 
-		// WHAT THE LIGHT IS WORTH is the ground burning in its patch; what it is SET to is that, scaled by how
-		// much of the fire is still asking for flames — so a fire that is burning down stops lighting the ground
-		// as it goes, in step with its own flames.
+		// WHAT THE LIGHT IS WORTH is the ground burning in its patch, and that is the whole of it: the fire keeps
+		// asking for the same light all its life and simply stops on the frame its clock runs out.
 		const float WhatItIsWorth = FMath::Clamp(Patch.HowMuchGroundIsBurningM2 * CandelasASquareMetreOfFireIsWorth,
 			DimmestOneBodyOfFireIsLit, BrightestOneBodyOfFireIsLit);
 
 		TheLight->SetWorldLocation(WhereTheLightStands);
 		TheLight->SetAttenuationRadius(FMath::Max(TheLeastALightOfFireReachesCm,
 			Patch.HowWideItIsCm * HowWideTheLightOfABodyOfFireReaches));
-		TheLight->SetIntensity(WhatItIsWorth * HowMuchOfTheFireIsStillAsking(World->GetTimeSeconds())
-			* ProsperitocracyFireHandling::TheFiresLightsAreOffForATest);
+		TheLight->SetIntensity(WhatItIsWorth * ProsperitocracyFireHandling::TheFiresLightsAreOffForATest);
 
 		if (WhatEachHeldLightIsWorth.IsValidIndex(Index))
 		{
@@ -1257,36 +1269,18 @@ void AProsperitocracyFireField::HoldTheLightsForThesePatches(const TArray<FProsp
 	}
 }
 
-float AProsperitocracyFireField::HowMuchOfTheFireIsStillAsking(float Now) const
+void AProsperitocracyFireField::RetuneTheLightsItHolds(float Now)
 {
-	// THE BURNING DOWN, AS ONE NUMBER: 1 the whole way while the fire is all there, sliding to nothing as the
-	// fade reaches the end of the clock. The flames thin by it, and the light dims by it, so the two cannot say
-	// different things about how much fire is left.
-	const float FadeSeconds = EndsAt - FadeStartsAt;
-	if (FadeSeconds <= 0.0f || Now <= FadeStartsAt)
-	{
-		return 1.0f;
-	}
-
-	return 1.0f - FMath::Clamp((Now - FadeStartsAt) / FadeSeconds, 0.0f, 1.0f);
-}
-
-void AProsperitocracyFireField::RetuneTheLightsItHolds()
-{
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	const float HowMuchIsStillAsking = HowMuchOfTheFireIsStillAsking(World->GetTimeSeconds());
+	// The lamp is part of the same picture as the flames: it keeps its full worth for the whole Duration and goes
+	// out on the same number the flames thin by.
+	const float HowMuchIsStillThere = HowMuchIsBeingPlaced(Now);
 	for (int32 Index = 0; Index < TheLightsItHolds.Num(); ++Index)
 	{
 		if (UPointLightComponent* Light = TheLightsItHolds[Index].Get())
 		{
 			if (WhatEachHeldLightIsWorth.IsValidIndex(Index))
 			{
-				Light->SetIntensity(WhatEachHeldLightIsWorth[Index] * HowMuchIsStillAsking
+				Light->SetIntensity(WhatEachHeldLightIsWorth[Index] * HowMuchIsStillThere
 					* ProsperitocracyFireHandling::TheFiresLightsAreOffForATest);
 			}
 		}
@@ -1312,7 +1306,7 @@ void AProsperitocracyFireField::ReReadWhichGroundIsStillIts()
 		for (const TWeakObjectPtr<AProsperitocracyFireField>& OtherWeak : EveryFireBurning)
 		{
 			const AProsperitocracyFireField* Other = OtherWeak.Get();
-			if (!Other || Other == this || Other->bTheClockIsOut || Other->LaidOrder <= LaidOrder)
+			if (!Other || Other == this || Other->LaidOrder <= LaidOrder)
 			{
 				continue;
 			}
@@ -1372,18 +1366,24 @@ float AProsperitocracyFireField::SquareMetresItIsBurning() const
 // THE CLOCK, THE RATE AND THE BURNING DOWN.
 // ---------------------------------------------------------------------------------------------------
 
+float AProsperitocracyFireField::HowMuchIsBeingPlaced(float Now) const
+{
+	// 1 for the whole of the Duration — the fire is the fire. Then, across the one second after it, sliding to
+	// nothing, so it goes out instead of being cut. Nothing catches in that second.
+	if (HowLongTheFlamesThinOutSeconds <= 0.0f || Now <= EndsAt)
+	{
+		return 1.0f;
+	}
+
+	return FMath::Clamp(1.0f - (Now - EndsAt) / HowLongTheFlamesThinOutSeconds, 0.0f, 1.0f);
+}
+
 float AProsperitocracyFireField::TheRateThisGroundWants(float Now) const
 {
-	// THE GROUND THIS FIRE STILL OWNS IS WHAT IT ASKS FOR. Flames over ground a newer fire has taken would be
-	// the same ground burning twice, which is what an overlap used to cost.
-	const float ForTheGroundItOwns = BaseFlameRate * HowMuchOfItsGroundItStillOwns();
-
-	// Before the fade it is that, unchanging. Through the fade it is less and less fire, reaching nothing
-	// exactly as the clock runs out — the fire thinning ITSELF, so the ground goes dark as one fire rather than
-	// as a field of little fires stopping one at a time. Nothing about who gets lit reads this: the ground
-	// catches people the whole way down, because the fade is inside the Duration (his rule). And the SAME number
-	// dims the light over this ground, so the flames and the light cannot disagree about how much fire is left.
-	return ForTheGroundItOwns * HowMuchOfTheFireIsStillAsking(Now);
+	// ITS GROUND, AND HOW MUCH OF THE FIRE IS STILL BEING PUT DOWN. The first is ground a newer fire has taken —
+	// flames over it would be the same ground burning twice. The second is the fire thinning out after its own
+	// Duration, which burns nobody: the fire that could burn you ended on time.
+	return BaseFlameRate * HowMuchOfItsGroundItStillOwns() * HowMuchIsBeingPlaced(Now);
 }
 
 void AProsperitocracyFireField::SetTheRate(float FlamesASecond)
@@ -1405,53 +1405,6 @@ void AProsperitocracyFireField::SetTheRate(float FlamesASecond)
 	RateSent = FlamesASecond;
 }
 
-void AProsperitocracyFireField::TheClockIsOut()
-{
-	if (bTheClockIsOut)
-	{
-		return;
-	}
-	bTheClockIsOut = true;
-
-	UWorld* World = GetWorld();
-	const float Now = World ? World->GetTimeSeconds() : 0.0f;
-
-	// NOTHING CATCHES ANYTHING FROM HERE. The ground is dead the moment the clock is; the fire that is still
-	// alight is only burning down, and the ground it is on is nobody's any more — a newer fire may take it.
-	if (TheFire)
-	{
-		// Told to stop, and nothing else: no new fire is made and the flames already alight finish their
-		// own lives at the effect's own pace — a real burn-out, with no size trick and nothing re-created.
-		// The rate is already nothing by now, because the burning down ends with the clock.
-		SetTheRate(0.0f);
-		TheFire->OnSystemFinished.AddDynamic(this, &AProsperitocracyFireField::TheFireHasBurnedOut);
-		TheFire->Deactivate();
-	}
-
-	// A FIRE THAT IS OUT BURNS NO GROUND, so the world's patches are gathered again: whatever was this fire's to
-	// light passes to the fire still burning that ground, and a patch nobody is burning any more lets its lamp go
-	// — which is the only place a light is ever taken down. Nothing is torn down and put back here: a clock
-	// running out must not make the world's fire flicker.
-	RegroupTheWorldsFire();
-
-	// A picture that never reports an end must not leave a dead fire standing in the world forever.
-	GraceEndsAt = Now + LongestAFireMayOutliveItsClockSeconds;
-
-	if (!TheFire)
-	{
-		Destroy();
-	}
-}
-
-void AProsperitocracyFireField::TheFireHasBurnedOut(UNiagaraComponent* Finished)
-{
-	// The last of the fire is gone and the clock is out: nothing of this fire is left in the world.
-	if (bTheClockIsOut)
-	{
-		Destroy();
-	}
-}
-
 void AProsperitocracyFireField::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
@@ -1467,32 +1420,30 @@ void AProsperitocracyFireField::Tick(float DeltaSeconds)
 
 	const float Now = World->GetTimeSeconds();
 
-	// THE GROUND CATCHES FOR THE WHOLE OF ITS LIFE, the fade included, because the fade is part of the
-	// Duration (his rule). Nothing about who gets lit changes at any point in this fire's clock.
-	if (!bTheClockIsOut && Now >= NextCatchesAt)
+	// THE FIRE IS A FIRE UNTIL ITS DURATION ENDS AND NOT ONE FRAME LONGER: from that frame it cannot set anybody
+	// alight, whatever its flames are still doing on the screen.
+	const bool bItCanStillLightPeople = Now < EndsAt;
+
+	// THE BEAT: who is standing in it — only while it can still light them — and how bright its ground is, for as
+	// long as any of it is still there to see.
+	if (Now >= NextCatchesAt)
 	{
 		NextCatchesAt = Now + CatchEverySeconds;
-		ApplyTheBurnToWhateverIsTouchingIt();
 
-		// AND THE LIGHT OVER THIS FIRE'S GROUND FOLLOWS IT DOWN. The same beat that asks who is standing in the
-		// fire retunes the lamps, so a fire that is burning out stops lighting the ground as it goes.
-		RetuneTheLightsItHolds();
-	}
-
-	// THE FIRE BURNS DOWN, and it burns down as ONE fire: one number, thinning the whole of it evenly.
-	if (!bTheClockIsOut)
-	{
-		SetTheRate(TheRateThisGroundWants(Now));
-
-		if (Now >= EndsAt)
+		if (bItCanStillLightPeople)
 		{
-			TheClockIsOut();
-			return;
+			ApplyTheBurnToWhateverIsTouchingIt();
 		}
+
+		RetuneTheLightsItHolds(Now);
 	}
 
-	// The clock is out and the fire has outlived even the grace it was given: it goes.
-	if (bTheClockIsOut && Now >= GraceEndsAt)
+	// THE PICTURE: the whole fire for the whole Duration, then thinning across the second after it, so it goes out
+	// instead of being cut. What is placed in that second catches nothing.
+	SetTheRate(TheRateThisGroundWants(Now));
+
+	// AND THE EMPTY FIRE LEAVES WHEN THE LAST OF ITS FLAMES HAS.
+	if (Now >= GoneAt)
 	{
 		Destroy();
 	}

@@ -137,16 +137,4 @@ public:
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
 	float SinkCm = 5.0f;
-
-	/**
-	 * [TUNE] MINE — how long the fire takes to burn DOWN, in seconds, measured back from the END of the
-	 * fire's Duration. INSIDE the Duration, never after it (his rule, 2026-09-30): the ground catches
-	 * people for the whole of the fire's life, the burning down included, so this changes the look and
-	 * nothing else.
-	 *
-	 * The burning down is the fire thinning ITSELF — one fire asking for less and less fire, its flames
-	 * going out on their own as it goes — rather than a field of little fires stopping one at a time.
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
-	float FadeSeconds = 3.0f;
 };

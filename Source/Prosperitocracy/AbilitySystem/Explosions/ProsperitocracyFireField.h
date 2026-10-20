@@ -318,11 +318,8 @@ protected:
 	 */
 	void HoldTheLightsForThesePatches(const TArray<FProsperitocracyPatchOfFire>& ThePatchesItsLightsAreFor);
 
-	/** How much of the fire is still asking for flames: 1 until the burning down begins, then sliding to nothing. */
-	float HowMuchOfTheFireIsStillAsking(float Now) const;
-
-	/** Retune the lights this fire holds to how much fire is actually left burning under them. */
-	void RetuneTheLightsItHolds();
+	/** Retune the lights this fire holds to how much of it is still on the screen. */
+	void RetuneTheLightsItHolds(float Now);
 
 	/**
 	 * READ THE GROUND BACK — which of this fire's pieces are still its own.
@@ -344,15 +341,17 @@ protected:
 	/** Hand the effect the rate it should be burning at, and write nothing when it has not really moved. */
 	void SetTheRate(float FlamesASecond);
 
-	/** How much fire this ground wants right now — the whole of it, until the burning down begins. */
+	/** What this ground is asking for right now, in flames a second — its ground, and how much is still being placed. */
 	float TheRateThisGroundWants(float Now) const;
 
-	/** The clock is out: nothing catches anything here any more, and the fire burns down on its own. */
-	void TheClockIsOut();
-
-	/** The last of the fire is gone: the picture is done and this fire leaves the world. */
-	UFUNCTION()
-	void TheFireHasBurnedOut(UNiagaraComponent* Finished);
+	/**
+	 * HOW MUCH OF THE FIRE IS STILL BEING PLACED: 1 for the whole Duration, then sliding to nothing across the one
+	 * second after it.
+	 *
+	 * Nothing catches in that second — the fire that could burn anybody is already over — so those flames are the
+	 * picture of a fire going out, and the same number dims the lamp so the light goes out with them.
+	 */
+	float HowMuchIsBeingPlaced(float Now) const;
 
 	/** This fire's own rows, read FINAL through its own GAS home — the same read every stat takes. */
 	float GetMyStat(EProsperitocracyStat Stat) const;
@@ -409,8 +408,8 @@ protected:
 	/** World seconds the clock is out at. */
 	float EndsAt = 0.0f;
 
-	/** World seconds the burning down begins at — the fire's own FadeSeconds, measured back from the end. */
-	float FadeStartsAt = 0.0f;
+	/** World seconds the last of its flames has gone out at — after this the empty fire leaves the world. */
+	float GoneAt = 0.0f;
 
 	/** World seconds the ground next catches at. */
 	float NextCatchesAt = 0.0f;
@@ -418,12 +417,6 @@ protected:
 	/** [DIAG 2026-10-18] World seconds the catch next says what it sees, in the log. One line a second per fire,
 	 *  and the thing that names why a fire that is plainly there burns nobody. Delete with the [FireCatch] lines. */
 	float NextTheCatchSaysWhatItSees = 0.0f;
-
-	/**
-	 * World seconds a fire that has been told to stop is given to finish burning out, and the only thing
-	 * that can end it early after that is the picture reporting that it is done.
-	 */
-	float GraceEndsAt = 0.0f;
 
 	/** What this ground asked for when it was lit, in flames a second — the ceiling and the world applied. */
 	float BaseFlameRate = 0.0f;
@@ -439,9 +432,6 @@ protected:
 
 	/** True once the fire has been laid — the ground is only ever walked and laid once. */
 	bool bTheFireIsLaid = false;
-
-	/** True once the clock is out: nothing is burning here any more and the fire is only burning down. */
-	bool bTheClockIsOut = false;
 
 	/** [TUNE] MINE — how often the fire is asked who is standing in it. Damage-free, so this is only
 	 *  a cost knob: nothing about who gets lit depends on it. */
@@ -486,15 +476,19 @@ protected:
 	static constexpr float TheLeastALightOfFireReachesCm = 250.0f;
 
 	/**
-	 * [TUNE] MINE — the longest a fire may outlive its own clock, in seconds.
+	 * HOW LONG THE FIRE KEEPS PUTTING FLAMES DOWN AFTER ITS DURATION, in seconds — his number (2026-10-19).
 	 *
-	 * A fire that has been told to stop needs its own flames to finish, and that is the look: the longest flame
-	 * card lives 1.0s (read off the effect), so this is that plus half a second. EVERYTHING of a strike must be
-	 * gone within this of its Duration running out — his rule (2026-10-18): nothing may exist in the world
-	 * related to a strike once that strike's clock has ended. It was 15s, and that tail was a frame cost and the
-	 * white marks: the effect never reports an end, so this number was the only thing killing the actor.
+	 * The fire's POWER ends on the Duration: from that frame it cannot set anybody alight. What it does for the one
+	 * second after is thin out, so it goes out instead of being cut. Those flames catch nothing.
 	 */
-	static constexpr float LongestAFireMayOutliveItsClockSeconds = 1.5f;
+	static constexpr float HowLongTheFlamesThinOutSeconds = 1.0f;
+
+	/**
+	 * HOW LONG THE LAST OF ITS FLAMES LIVES, in seconds — the longest a card the effect spawns can live, read off
+	 * the effect itself (flames 0.6–1.0 s, ash and heat 1.1–1.4 s). The empty fire is kept this long past the last
+	 * flame placed, so its own picture is never cut.
+	 */
+	static constexpr float HowLongTheLastOfItsFlamesLivesSeconds = 1.4f;
 
 	/** A rate that has moved less than this much (a hundredth of itself) is not worth a write. */
 	static constexpr float RateChangeWorthSending = 0.01f;
