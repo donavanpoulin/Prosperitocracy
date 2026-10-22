@@ -1,4 +1,4 @@
-// Copyright Prosperitocracy. All Rights Reserved.
+﻿// Copyright Prosperitocracy. All Rights Reserved.
 
 #include "AbilitySystem/Explosions/ProsperitocracyFireField.h"
 
@@ -55,13 +55,6 @@ namespace ProsperitocracyFireVariables
 // how far a look reaches, and the three rules that decide whether two pieces of ground touch.
 namespace ProsperitocracyFireHandling
 {
-	/**
-	 * THE FIRE'S LIGHTS ARE ON (1.0f). They were held at 0.0f for one test on 2026-10-17 — "are the white marks
-	 * left on the floor this light?" — and the answer was no, so they are back. Every lamp is made, placed and
-	 * sized by the code below, and this number scales what all of them are worth: 1 is the fire lighting the
-	 * ground it burns, 0 is every lamp made and contributing nothing.
-	 */
-	static constexpr float TheFiresLightsAreOffForATest = 1.0f;
 
 	/** How far off a surface a probe starts, in cm, so it is clear of the ground its own piece is standing on. */
 	static constexpr float ProbeStandoffCm = 40.0f;
@@ -154,12 +147,6 @@ namespace ProsperitocracyFireHandling
 	 *  not burn somebody in the room underneath it. What it reaches ABOVE is the piece's own height. */
 	static constexpr float HowFarBelowItsGroundTheFireReachesCm = 25.0f;
 
-	/** How close two pieces have to be to be ONE body of fire, as a share of one step. */
-	static constexpr float OneBodyOfFireShareOfAStep = 1.2f;
-
-	/** [TUNE] MINE — the colour one body of fire is lit with. The pack's own light colour is HIS to place; this
-	 *  is the warm the code lights with until he says otherwise. */
-	static const FLinearColor TheColourAFireIsLitWith(1.0f, 0.52f, 0.20f);
 }
 
 namespace
@@ -357,9 +344,6 @@ void AProsperitocracyFireField::LightTheGround(UProsperitocracyFireStatTable* In
 		}
 	}
 
-	// AND THE WORLD'S FIRE IS GATHERED BACK INTO PATCHES — once, for the whole world, because a light belongs to
-	// GROUND THAT IS BURNING and not to any one fire (his call, 2026-10-16).
-	RegroupTheWorldsFire();
 
 	// Where the fire got to, in numbers: how many pieces of ground it owns, how far it had to travel for the
 	// furthest of them, and what it is asking for. A fire read off the log is a fire that can be argued with.
@@ -997,297 +981,6 @@ void AProsperitocracyFireField::ApplyTheBurnToWhateverIsTouchingIt()
 }
 
 // ---------------------------------------------------------------------------------------------------
-// ONE LIGHT PER PATCH OF FIRE IN THE WORLD — his call, 2026-10-16.
-//
-// What it replaced, and why. The lights used to belong to a FIRE: one fire, up to six lamps, and every strike
-// destroyed and re-created every one of them. A bombardment is eighteen fires, so that was up to a hundred
-// lamps over the same patch, torn down and put up again three times a second, all adding into each other —
-// which is the flicker, and the spots and seams where two pools met. And they cast no shadows, so a pool of
-// firelight washed through a container as a bright patch.
-//
-// The unit of light is now GROUND THAT IS BURNING, gathered ACROSS every fire burning it: one patch, one lamp.
-// A bombardment over one area is ONE patch, so ONE light. The lamps are KEPT — moved and retuned, never
-// rebuilt while their patch lives — and because there are few enough of them, they can cast shadows.
-// ---------------------------------------------------------------------------------------------------
-
-void AProsperitocracyFireField::RegroupTheWorldsFire()
-{
-	AProsperitocracyFireField* AnyFire = nullptr;
-	for (const TWeakObjectPtr<AProsperitocracyFireField>& FireWeak : EveryFireBurning)
-	{
-		if (AProsperitocracyFireField* Fire = FireWeak.Get())
-		{
-			AnyFire = Fire;
-			break;
-		}
-	}
-	if (!AnyFire)
-	{
-		return;
-	}
-
-	// EVERY PIECE OF GROUND BURNING IN THE WORLD, with the fire burning it. A fire whose clock is out is not
-	// burning ground any more and its pieces are gone, which is what hands its patches on to whoever is left.
-	struct FPieceOfTheWorldsFire
-	{
-		AProsperitocracyFireField* Fire = nullptr;
-		FVector Where = FVector::ZeroVector;
-		FVector Up = FVector::UpVector;
-	};
-
-	TArray<FPieceOfTheWorldsFire> EveryPiece;
-	const float StepCm = AnyFire->GetPieceStepCm();
-
-	for (const TWeakObjectPtr<AProsperitocracyFireField>& FireWeak : EveryFireBurning)
-	{
-		AProsperitocracyFireField* Fire = FireWeak.Get();
-		if (!Fire)
-		{
-			continue;
-		}
-
-		for (const FProsperitocracyBurningGround& Piece : Fire->TheGroundItsBurningOn)
-		{
-			if (Piece.bItIsStillThisFires)
-			{
-				EveryPiece.Add({ Fire, Piece.Where, Piece.WhichWayIsUp });
-			}
-		}
-	}
-
-	// PIECES THAT TOUCH ARE ONE PATCH OF FIRE — his rule, over the whole world. The pieces still burning are
-	// few, because a newer fire owns the ground it covers, so the plain pairwise sweep is the honest way here.
-	TArray<FProsperitocracyPatchOfFire> TheWorldsPatches;
-	{
-		const float TouchingCm = StepCm * ProsperitocracyFireHandling::OneBodyOfFireShareOfAStep;
-		TArray<int32> WhichPatchEachPieceIsIn;
-		WhichPatchEachPieceIsIn.Init(-1, EveryPiece.Num());
-
-		for (int32 Start = 0; Start < EveryPiece.Num(); ++Start)
-		{
-			if (WhichPatchEachPieceIsIn[Start] != -1)
-			{
-				continue;
-			}
-
-			const int32 PatchIndex = TheWorldsPatches.AddDefaulted();
-			WhichPatchEachPieceIsIn[Start] = PatchIndex;
-
-			TArray<int32> ThePatch;
-			ThePatch.Add(Start);
-
-			for (int32 Head = 0; Head < ThePatch.Num(); ++Head)
-			{
-				const FVector& WhereItIs = EveryPiece[ThePatch[Head]].Where;
-				for (int32 Other = 0; Other < EveryPiece.Num(); ++Other)
-				{
-					if (WhichPatchEachPieceIsIn[Other] != -1)
-					{
-						continue;
-					}
-
-					if (FVector::Dist(EveryPiece[Other].Where, WhereItIs) <= TouchingCm)
-					{
-						WhichPatchEachPieceIsIn[Other] = PatchIndex;
-						ThePatch.Add(Other);
-					}
-				}
-			}
-
-			// WHAT THIS PATCH IS: how much ground is burning in it, where its own middle is, which way that
-			// ground faces, how far it reaches — and WHOSE LIGHT IT IS, which is the OLDEST fire burning any of
-			// it, so the lamp does not change hands as strikes land.
-			FProsperitocracyPatchOfFire& Patch = TheWorldsPatches[PatchIndex];
-			const float PieceWidthM = AnyFire->GetPieceWidthCm() / 100.0f;
-
-			FVector Centre = FVector::ZeroVector;
-			for (const int32 Index : ThePatch)
-			{
-				Centre += EveryPiece[Index].Where;
-				Patch.HowMuchGroundIsBurningM2 += PI * PieceWidthM * PieceWidthM;
-				if (!Patch.WhoseLightItIs || EveryPiece[Index].Fire->LaidOrder < Patch.WhoseLightItIs->LaidOrder)
-				{
-					Patch.WhoseLightItIs = EveryPiece[Index].Fire;
-				}
-			}
-			Centre /= (float)FMath::Max(1, ThePatch.Num());
-
-			// THE LIGHT STANDS ON A PIECE OF THE PATCH'S OWN GROUND — the one nearest its middle — and never in
-			// mid-air: a wrapped patch's middle is inside the geometry, and a lamp there lights the wrong thing.
-			int32 NearestToTheMiddle = ThePatch[0];
-			for (const int32 Index : ThePatch)
-			{
-				if (FVector::DistSquared(EveryPiece[Index].Where, Centre) < FVector::DistSquared(EveryPiece[NearestToTheMiddle].Where, Centre))
-				{
-					NearestToTheMiddle = Index;
-				}
-			}
-			Patch.WhereTheLightStands = EveryPiece[NearestToTheMiddle].Where;
-			Patch.WhichWayItFaces = EveryPiece[NearestToTheMiddle].Up;
-
-			for (const int32 Index : ThePatch)
-			{
-				Patch.HowWideItIsCm = FMath::Max(Patch.HowWideItIsCm,
-					FVector::Dist(EveryPiece[Index].Where, Patch.WhereTheLightStands));
-			}
-		}
-	}
-
-	// THE COUNT IS HELD DOWN ON PURPOSE: past the ceiling the smallest patch is folded into the nearest, because
-	// the light is the expensive part of a fire and his ask was the least of it. Nothing about what burns
-	// changes here — this is the light, and only the light.
-	while (TheWorldsPatches.Num() > MostPatchesOfFireWithALightInTheWorld)
-	{
-		int32 Smallest = 0;
-		for (int32 Index = 1; Index < TheWorldsPatches.Num(); ++Index)
-		{
-			if (TheWorldsPatches[Index].HowMuchGroundIsBurningM2 < TheWorldsPatches[Smallest].HowMuchGroundIsBurningM2)
-			{
-				Smallest = Index;
-			}
-		}
-
-		int32 Nearest = INDEX_NONE;
-		float NearestCm = TNumericLimits<float>::Max();
-		for (int32 Index = 0; Index < TheWorldsPatches.Num(); ++Index)
-		{
-			if (Index == Smallest)
-			{
-				continue;
-			}
-
-			const float DistanceCm = FVector::Dist(TheWorldsPatches[Index].WhereTheLightStands, TheWorldsPatches[Smallest].WhereTheLightStands);
-			if (DistanceCm < NearestCm)
-			{
-				NearestCm = DistanceCm;
-				Nearest = Index;
-			}
-		}
-
-		if (Nearest == INDEX_NONE)
-		{
-			break;
-		}
-
-		TheWorldsPatches[Nearest].HowMuchGroundIsBurningM2 += TheWorldsPatches[Smallest].HowMuchGroundIsBurningM2;
-		TheWorldsPatches[Nearest].HowWideItIsCm = FMath::Max(TheWorldsPatches[Nearest].HowWideItIsCm,
-			NearestCm + TheWorldsPatches[Smallest].HowWideItIsCm);
-		TheWorldsPatches.RemoveAt(Smallest);
-	}
-
-	// AND EVERY FIRE IS TOLD WHICH PATCHES' LIGHTS IT HOLDS. A fire holding none lets its lamps go — which is
-	// the only way a light is ever taken down now.
-	for (const TWeakObjectPtr<AProsperitocracyFireField>& FireWeak : EveryFireBurning)
-	{
-		AProsperitocracyFireField* Fire = FireWeak.Get();
-		if (!Fire)
-		{
-			continue;
-		}
-
-		TArray<FProsperitocracyPatchOfFire> TheOnesItHolds;
-		for (const FProsperitocracyPatchOfFire& Patch : TheWorldsPatches)
-		{
-			if (Patch.WhoseLightItIs == Fire)
-			{
-				TheOnesItHolds.Add(Patch);
-			}
-		}
-
-		Fire->HoldTheLightsForThesePatches(TheOnesItHolds);
-	}
-}
-
-void AProsperitocracyFireField::HoldTheLightsForThesePatches(const TArray<FProsperitocracyPatchOfFire>& ThePatchesItsLightsAreFor)
-{
-	// WHAT STILL FITS IS KEPT. A lamp whose patch is still there is MOVED and retuned and never rebuilt: a lamp
-	// torn down and put up again three times a second is a lamp that flickers. Only a lamp with no patch left to
-	// stand for is taken down.
-	while (TheLightsItHolds.Num() > ThePatchesItsLightsAreFor.Num())
-	{
-		if (UPointLightComponent* TheOneToLose = TheLightsItHolds.Last())
-		{
-			TheOneToLose->DestroyComponent();
-		}
-		TheLightsItHolds.Pop();
-		if (WhatEachHeldLightIsWorth.Num() > 0)
-		{
-			WhatEachHeldLightIsWorth.Pop();
-		}
-	}
-
-	for (int32 Index = 0; Index < ThePatchesItsLightsAreFor.Num(); ++Index)
-	{
-		const FProsperitocracyPatchOfFire& Patch = ThePatchesItsLightsAreFor[Index];
-
-		UPointLightComponent* TheLight = TheLightsItHolds.IsValidIndex(Index) ? TheLightsItHolds[Index].Get() : nullptr;
-		if (!TheLight)
-		{
-			// The only lamp ever made here: a patch of fire that has none yet.
-			TheLight = NewObject<UPointLightComponent>(this);
-			TheLight->SetMobility(EComponentMobility::Movable);
-			TheLight->SetupAttachment(TheRoot);
-			TheLight->RegisterComponent();
-			TheLight->SetLightColor(ProsperitocracyFireHandling::TheColourAFireIsLitWith);
-
-			// A patch of fire is ONE light, and there are few enough of them that they can afford to cast
-			// shadows — which is what stops a pool of firelight washing through a wall as a bright patch. It is
-			// not a cheapness decision any more; it is what the light is.
-			TheLight->SetCastShadows(true);
-
-			if (TheLightsItHolds.IsValidIndex(Index))
-			{
-				TheLightsItHolds[Index] = TheLight;
-			}
-			else
-			{
-				TheLightsItHolds.Add(TheLight);
-			}
-		}
-
-		const FVector WhereTheLightStands = Patch.WhereTheLightStands
-			+ Patch.WhichWayItFaces * HowFarTheLightStandsOffTheFireCm;
-
-		// WHAT THE LIGHT IS WORTH is the ground burning in its patch, and that is the whole of it: the fire keeps
-		// asking for the same light all its life and simply stops on the frame its clock runs out.
-		const float WhatItIsWorth = FMath::Clamp(Patch.HowMuchGroundIsBurningM2 * CandelasASquareMetreOfFireIsWorth,
-			DimmestOneBodyOfFireIsLit, BrightestOneBodyOfFireIsLit);
-
-		TheLight->SetWorldLocation(WhereTheLightStands);
-		TheLight->SetAttenuationRadius(FMath::Max(TheLeastALightOfFireReachesCm,
-			Patch.HowWideItIsCm * HowWideTheLightOfABodyOfFireReaches));
-		TheLight->SetIntensity(WhatItIsWorth * ProsperitocracyFireHandling::TheFiresLightsAreOffForATest);
-
-		if (WhatEachHeldLightIsWorth.IsValidIndex(Index))
-		{
-			WhatEachHeldLightIsWorth[Index] = WhatItIsWorth;
-		}
-		else
-		{
-			WhatEachHeldLightIsWorth.Add(WhatItIsWorth);
-		}
-	}
-}
-
-void AProsperitocracyFireField::RetuneTheLightsItHolds(float Now)
-{
-	// The lamp is part of the same picture as the flames: it keeps its full worth for the whole Duration and goes
-	// out on the same number the flames thin by.
-	const float HowMuchIsStillThere = HowMuchIsBeingPlaced(Now);
-	for (int32 Index = 0; Index < TheLightsItHolds.Num(); ++Index)
-	{
-		if (UPointLightComponent* Light = TheLightsItHolds[Index].Get())
-		{
-			if (WhatEachHeldLightIsWorth.IsValidIndex(Index))
-			{
-				Light->SetIntensity(WhatEachHeldLightIsWorth[Index] * HowMuchIsStillThere
-					* ProsperitocracyFireHandling::TheFiresLightsAreOffForATest);
-			}
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------------------------------
 // WHOSE GROUND IT STILL IS — the newest fire owns what it covers.
 // ---------------------------------------------------------------------------------------------------
 
@@ -1378,6 +1071,7 @@ float AProsperitocracyFireField::HowMuchIsBeingPlaced(float Now) const
 	return FMath::Clamp(1.0f - (Now - EndsAt) / HowLongTheFlamesThinOutSeconds, 0.0f, 1.0f);
 }
 
+
 float AProsperitocracyFireField::TheRateThisGroundWants(float Now) const
 {
 	// ITS GROUND, AND HOW MUCH OF THE FIRE IS STILL BEING PUT DOWN. The first is ground a newer fire has taken —
@@ -1424,8 +1118,7 @@ void AProsperitocracyFireField::Tick(float DeltaSeconds)
 	// alight, whatever its flames are still doing on the screen.
 	const bool bItCanStillLightPeople = Now < EndsAt;
 
-	// THE BEAT: who is standing in it — only while it can still light them — and how bright its ground is, for as
-	// long as any of it is still there to see.
+	// THE BEAT: who is standing in it — only while it can still light them.
 	if (Now >= NextCatchesAt)
 	{
 		NextCatchesAt = Now + CatchEverySeconds;
@@ -1434,9 +1127,8 @@ void AProsperitocracyFireField::Tick(float DeltaSeconds)
 		{
 			ApplyTheBurnToWhateverIsTouchingIt();
 		}
-
-		RetuneTheLightsItHolds(Now);
 	}
+
 
 	// THE PICTURE: the whole fire for the whole Duration, then thinning across the second after it, so it goes out
 	// instead of being cut. What is placed in that second catches nothing.
@@ -1512,18 +1204,6 @@ void AProsperitocracyFireField::EndPlay(const EEndPlayReason::Type EndPlayReason
 		MyOwnHome = nullptr;
 	}
 
-	// THE LAMPS THIS FIRE HOLDS GO WITH IT, whichever patch they were standing for: a fire that is gone cannot
-	// hold a light for ground. The world's patches are gathered again below, so whatever it was burning passes
-	// to the fires still burning it.
-	for (const TObjectPtr<UPointLightComponent>& Light : TheLightsItHolds)
-	{
-		if (Light)
-		{
-			Light->DestroyComponent();
-		}
-	}
-	TheLightsItHolds.Reset();
-	WhatEachHeldLightIsWorth.Reset();
 
 	TheFlameSpots.Reset();
 
@@ -1543,9 +1223,6 @@ void AProsperitocracyFireField::EndPlay(const EEndPlayReason::Type EndPlayReason
 		Fire->HandTheEffectItsGround();
 	}
 
-	// AND THE WORLD'S FIRE IS GATHERED AGAIN — the patches are re-handed, so no lamp keeps standing for ground
-	// that is not burning any more and none is left unlit that is.
-	RegroupTheWorldsFire();
 
 	Super::EndPlay(EndPlayReason);
 }

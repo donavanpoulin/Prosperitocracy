@@ -7,7 +7,9 @@
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyDamageStatics.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
+#include "Components/PointLightComponent.h"
 #include "Components/SceneComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
@@ -22,6 +24,9 @@
 #include "Stats/ProsperitocracyStatTable.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyStatusComponent)
+
+// THE ONE FIRE COLOUR: what a burning body is lit with, warm rather than white so it reads as fire.
+const FLinearColor UProsperitocracyStatusComponent::TheColourAFireIsLitWith(1.0f, 0.52f, 0.20f);
 
 namespace ProsperitocracyStatus
 {
@@ -262,6 +267,41 @@ void UProsperitocracyStatusComponent::ApplyTickDamage(const FProsperitocracyLive
 	UProsperitocracyDamageStatics::ApplyDamageEffectToHit(Context, Owner, Source, Live.DamageEffectClass);
 }
 
+USceneComponent* UProsperitocracyStatusComponent::WhereTheFireHangsOnThisBody(FName& OutBoneName) const
+{
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return nullptr;
+	}
+
+	// THE CHEST IS WHERE A BODY'S FIRE IS. On the capsule it followed a standing man and stayed standing while he
+	// lay on the ground; on the chest it goes wherever the BODY goes, a ragdoll included.
+	if (USkeletalMeshComponent* Body = Owner->FindComponentByClass<USkeletalMeshComponent>())
+	{
+		static const FName TheChestBonesToTry[] =
+		{
+			TEXT("spine_03"), TEXT("spine_02"), TEXT("spine_01"), TEXT("chest"), TEXT("pelvis")
+		};
+
+		for (const FName& Candidate : TheChestBonesToTry)
+		{
+			if (Body->GetBoneIndex(Candidate) != INDEX_NONE)
+			{
+				OutBoneName = Candidate;
+				return Body;
+			}
+		}
+
+		// No bone by any of those names: the body itself still follows better than the capsule does.
+		OutBoneName = NAME_None;
+		return Body;
+	}
+
+	OutBoneName = NAME_None;
+	return Owner->GetRootComponent();
+}
+
 void UProsperitocracyStatusComponent::BeginStatusEffect(FProsperitocracyLiveStatus& Live)
 {
 	AActor* Owner = GetOwner();
@@ -274,16 +314,21 @@ void UProsperitocracyStatusComponent::BeginStatusEffect(FProsperitocracyLiveStat
 		return;
 	}
 
-	USceneComponent* AttachTo = Owner->GetRootComponent();
+	FName TheBone;
+	USceneComponent* AttachTo = WhereTheFireHangsOnThisBody(TheBone);
 	if (!AttachTo)
 	{
 		return;
 	}
 
-	// At the body's OWN origin: no offset, no scale, no bone. It is attached rather than left standing
-	// where it was put, so a body that walks away carries its fire with it, and it is set to destroy
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+
+	// THE BODY'S OWN FIRE, ON THE BODY'S OWN CHEST — no offset the author has to keep in step, and it is attached
+	// rather than left standing where it was put, so a body that walks away carries its fire with it. It destroys
 	// itself once its last flame dies, so nothing has to remember to clean this up.
-	Live.Effect = UNiagaraFunctionLibrary::SpawnSystemAttached(Effect, AttachTo, NAME_None,
+	// KeepRelativeOffset and not SnapToTarget: snapped, the bone's own scale comes with it, and the fire would
+	// take the rig's scale. At the socket with no offset is the chest, at the effect's own size.
+	Live.Effect = UNiagaraFunctionLibrary::SpawnSystemAttached(Effect, AttachTo, TheBone,
 		FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::KeepRelativeOffset,
 		/*bAutoDestroy=*/ true, /*bAutoActivate=*/ true);
 
@@ -294,12 +339,90 @@ void UProsperitocracyStatusComponent::BeginStatusEffect(FProsperitocracyLiveStat
 		return;
 	}
 
+	// THE FLAMES KEEP RISING, whichever way the body falls: it rides the chest for its POSITION and keeps its own
+	// upright rotation, so a body on its side has fire standing out of it rather than fire lying flat on it.
+	Live.Effect->SetUsingAbsoluteRotation(true);
+
 	// A burning body an enemy can see burning is burning on every client that can see it, so the fire
 	// is replicated with the body it stands on rather than drawn on one machine only.
 	Live.Effect->SetIsReplicated(true);
 
+	// AND ITS LIGHT IS OURS — one per body, on its own clock. The effect's own light is gone from the asset,
+	// because a light per particle is a light that strobes as the cards spawn and die. It hangs on the SAME bone the
+	// flames do: on the body's component alone it sat at the mesh's origin, which is between the feet.
+	BeginTheLightOnThisBody(Live, AttachTo, TheBone, Now);
+
 	ProsperitocracyStatus::Report(Live.StatusTag, /*OnScreenKey=*/ 0x9012,
-		FString::Printf(TEXT("%s — its fire is on %s at the body's own origin"), *Live.StatusTag.ToString(), *GetNameSafe(Owner)));
+		FString::Printf(TEXT("%s — its fire is on %s, on its chest, with one light of ours"),
+			*Live.StatusTag.ToString(), *GetNameSafe(Owner)));
+}
+
+void UProsperitocracyStatusComponent::BeginTheLightOnThisBody(FProsperitocracyLiveStatus& Live, USceneComponent* AttachTo, FName OnBone, float Now)
+{
+	if (!AttachTo || Live.Light.TheLight)
+	{
+		return;
+	}
+
+	UPointLightComponent* TheLight = NewObject<UPointLightComponent>(GetOwner());
+	TheLight->SetMobility(EComponentMobility::Movable);
+	TheLight->SetupAttachment(AttachTo, OnBone);
+	TheLight->SetLightColor(TheColourAFireIsLitWith);
+	TheLight->SetAttenuationRadius(HowFarTheLightOfABurningBodyReachesCm);
+	TheLight->SetSourceRadius(HowSoftTheBurningBodysLightIsCm);
+
+	// NO SHADOWS ON A BURNING BODY'S LIGHT — his call, and the honest answer to the engine's limit: a light on a body
+	// casts that body's own torso onto the ground under it, and Unreal has no per-light-per-object shadow switch (only
+	// three project-wide lighting channels). A suit of fire reads as a glow, not as a light with a silhouette.
+	TheLight->SetCastShadows(false);
+	TheLight->SetIntensity(0.0f);
+	TheLight->RegisterComponent();
+
+	Live.Light.TheLight = TheLight;
+	Live.Light.WhatItIsWorth = CandelasABurningBodyIsLitWith;
+	Live.Light.WhenItWasLit = Now;
+}
+
+void UProsperitocracyStatusComponent::RetuneTheLightsOfBurningBodies(float Now)
+{
+	// WHILE IT BURNS: up over its own short ramp, then full worth for as long as the burn lasts. Every frame, so
+	// the ramp is a ramp and not a step.
+	for (FProsperitocracyLiveStatus& Live : LiveStatuses)
+	{
+		UPointLightComponent* TheLight = Live.Light.TheLight;
+		if (!TheLight)
+		{
+			continue;
+		}
+
+		const float HowFarUpItIs = (HowLongABurningBodysLightTakesToComeUpSeconds <= 0.0f) ? 1.0f
+			: FMath::Clamp((Now - Live.Light.WhenItWasLit) / HowLongABurningBodysLightTakesToComeUpSeconds, 0.0f, 1.0f);
+
+		TheLight->SetIntensity(Live.Light.WhatItIsWorth * HowFarUpItIs);
+	}
+
+	// AND THE ONES WHOSE BURN HAS ENDED: out over the second the last flames on the body take, then gone.
+	for (int32 Index = LightsGoingOut.Num() - 1; Index >= 0; --Index)
+	{
+		FProsperitocracyBurningBodyLight& GoingOut = LightsGoingOut[Index];
+		if (!GoingOut.TheLight)
+		{
+			LightsGoingOut.RemoveAt(Index);
+			continue;
+		}
+
+		const float HowFarOutItIs = (HowLongTheLightOnABurningBodyTakesToGoOutSeconds <= 0.0f) ? 1.0f
+			: FMath::Clamp((Now - GoingOut.WhenItStartedGoingOut) / HowLongTheLightOnABurningBodyTakesToGoOutSeconds, 0.0f, 1.0f);
+
+		if (HowFarOutItIs >= 1.0f)
+		{
+			GoingOut.TheLight->DestroyComponent();
+			LightsGoingOut.RemoveAt(Index);
+			continue;
+		}
+
+		GoingOut.TheLight->SetIntensity(GoingOut.WhatItIsWorth * (1.0f - HowFarOutItIs));
+	}
 }
 
 void UProsperitocracyStatusComponent::EndStatusEffect(FProsperitocracyLiveStatus& Live)
@@ -311,6 +434,16 @@ void UProsperitocracyStatusComponent::EndStatusEffect(FProsperitocracyLiveStatus
 		// the last one dies. Nothing is killed here and nothing is held on to.
 		Effect->Deactivate();
 		Live.Effect = nullptr;
+	}
+
+	// THE LIGHT LEAVES WITH THE FLAMES, NOT WITH THE STATUS: the burn's own second is how long the last cards on
+	// the body take to die, so the light is handed to the ones going out and fades across exactly that.
+	if (Live.Light.TheLight)
+	{
+		FProsperitocracyBurningBodyLight GoingOut = Live.Light;
+		GoingOut.WhenItStartedGoingOut = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		LightsGoingOut.Add(GoingOut);
+		Live.Light = FProsperitocracyBurningBodyLight();
 	}
 }
 
@@ -413,6 +546,8 @@ void UProsperitocracyStatusComponent::TickComponent(float DeltaTime, ELevelTick 
 		}
 	}
 
+	RetuneTheLightsOfBurningBodies(Now);
+
 	UpdateMovementGate();
 }
 
@@ -461,6 +596,17 @@ void UProsperitocracyStatusComponent::EndPlay(const EEndPlayReason::Type EndPlay
 		}
 	}
 	LiveStatuses.Reset();
+
+	// AND THE LIGHTS OF BURNS THAT ARE STILL GOING OUT — a body that goes away takes them too, rather than leaving
+	// a lamp hanging in the world with nothing burning under it.
+	for (const FProsperitocracyBurningBodyLight& GoingOut : LightsGoingOut)
+	{
+		if (GoingOut.TheLight)
+		{
+			GoingOut.TheLight->DestroyComponent();
+		}
+	}
+	LightsGoingOut.Reset();
 
 	Super::EndPlay(EndPlayReason);
 }

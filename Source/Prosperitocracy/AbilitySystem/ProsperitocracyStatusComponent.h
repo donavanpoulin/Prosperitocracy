@@ -15,7 +15,37 @@ class AProsperitocracyStatHostActor;
 class UAbilitySystemComponent;
 class UGameplayEffect;
 class UNiagaraComponent;
+class UPointLightComponent;
 class UProsperitocracyStatTable;
+
+/**
+ * THE LIGHT OF A BURNING BODY — ours, ONE per body, and it comes up and goes out over its own ramps.
+ *
+ * It exists because the effect cannot light itself: a light inside Niagara is one light PER PARTICLE, spawning
+ * and dying with the cards, which is a light that strobes and snaps instead of a body that is on fire.
+ *
+ * WhenItWasLit is the frame it came up. WhenItStartedGoingOut is the frame the burn ENDED — from there it goes out
+ * over the second the last flames on the body take, so the body's light and the body's fire leave together.
+ */
+USTRUCT()
+struct FProsperitocracyBurningBodyLight
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TObjectPtr<UPointLightComponent> TheLight = nullptr;
+
+	/** What this body is lit with while it burns, in candelas. */
+	UPROPERTY()
+	float WhatItIsWorth = 0.0f;
+
+	UPROPERTY()
+	float WhenItWasLit = 0.0f;
+
+	/** Less than zero while the body is still burning; the moment the burn ended and it began going out. */
+	UPROPERTY()
+	float WhenItStartedGoingOut = -1.0f;
+};
 
 /**
  * FProsperitocracyLiveStatus
@@ -68,9 +98,9 @@ struct FProsperitocracyLiveStatus
 	/**
 	 * The status's own LOOK — the effect that stands on the body for as long as this status lasts.
 	 *
-	 * Nothing about it is a number: it is hung at the body's OWN origin, takes no offset and no scale,
-	 * and every body that can carry a status gets it the same way, because a body's origin is where it
-	 * stands. It is attached, so a body that walks away does not leave its fire on the floor.
+	 * It is hung on the body's CHEST, not on its origin: a body that falls over lies down while its capsule stays
+	 * standing, and fire left standing on the capsule is fire in mid-air over a man on the ground. The effect takes
+	 * no scale, and keeps its own upright rotation so the flames rise whichever way the body falls.
 	 *
 	 * Null for a status that wears no effect (the pairing is one place, and a status absent from it has
 	 * no look), and null again the moment the status ends — the effect is told to stop and destroys
@@ -78,6 +108,10 @@ struct FProsperitocracyLiveStatus
 	 */
 	UPROPERTY()
 	TObjectPtr<UNiagaraComponent> Effect = nullptr;
+
+	/** The light this body's status throws. OURS, one per body, never a light per particle in the effect. */
+	UPROPERTY()
+	FProsperitocracyBurningBodyLight Light;
 };
 
 /**
@@ -166,17 +200,44 @@ private:
 	void ApplyTickDamage(const FProsperitocracyLiveStatus& Live);
 
 	/**
-	 * Put this status's own look on the body, at the body's own origin. Called once, when the status
-	 * LANDS — never on a re-application, because a status that is already burning does not light a
-	 * second fire.
+	 * Put this status's own look on the body, on its chest. Called once, when the status LANDS — never on a
+	 * re-application, because a status that is already burning does not light a second fire.
 	 */
 	void BeginStatusEffect(FProsperitocracyLiveStatus& Live);
 
 	/**
 	 * Tell this status's look to stop: no more fire is spawned and the flames already on the body burn
-	 * out at their own pace, then the effect destroys itself. A stop, never a cut.
+	 * out at their own pace, then the effect destroys itself. A stop, never a cut. The light is handed to the
+	 * ones going out, so it leaves over the same second the flames do instead of cutting with the status.
 	 */
 	void EndStatusEffect(FProsperitocracyLiveStatus& Live);
+
+	/**
+	 * THE LIGHT THIS BURNING BODY THROWS — made once, when the burn lands, hung on the same chest the fire hangs
+	 * on. Ours, not the effect's: one light that rides the body instead of one light per particle strobing on it.
+	 */
+	void BeginTheLightOnThisBody(FProsperitocracyLiveStatus& Live, USceneComponent* AttachTo, FName OnBone, float Now);
+
+	/** Its brightness this frame: up over its own ramp, and out over the second after the burn ends. */
+	void RetuneTheLightsOfBurningBodies(float Now);
+
+	/** Where the fire hangs on a body: the chest, or the body itself when it has no bones to name. */
+	USceneComponent* WhereTheFireHangsOnThisBody(FName& OutBoneName) const;
+
+	/** [TUNE] MINE — the colour a burning body is lit with: the one fire colour in the game, and the only light
+	 *  that is fire now that a fire's own ground is lit by nothing but its flames. */
+	static const FLinearColor TheColourAFireIsLitWith;
+
+	/** [TUNE] MINE — what a burning body throws, how far it reaches, and how soft its shadow is. A body is small: this
+	 *  is a suit of fire lighting the ground around it, not a bonfire. */
+	static constexpr float CandelasABurningBodyIsLitWith = 350.0f;
+	static constexpr float HowFarTheLightOfABurningBodyReachesCm = 350.0f;
+	static constexpr float HowSoftTheBurningBodysLightIsCm = 20.0f;
+
+	/** How long a burning body's light takes to come up — and to go out once the burn is over, which is the
+	 *  second the last flames on the body take to die. */
+	static constexpr float HowLongABurningBodysLightTakesToComeUpSeconds = 0.2f;
+	static constexpr float HowLongTheLightOnABurningBodyTakesToGoOutSeconds = 1.0f;
 
 	/** Take the controls away / give them back, as the movement-stopping status lands and ends. */
 	void UpdateMovementGate();
@@ -184,6 +245,10 @@ private:
 	/** Every status this body is carrying. */
 	UPROPERTY()
 	TArray<FProsperitocracyLiveStatus> LiveStatuses;
+
+	/** The lights of burns that have ENDED and are still going out: they outlive the status by that second. */
+	UPROPERTY()
+	TArray<FProsperitocracyBurningBodyLight> LightsGoingOut;
 
 	/** True while the movement gate is closed, so a status landing and ending each act exactly once. */
 	bool bMovementStopped = false;

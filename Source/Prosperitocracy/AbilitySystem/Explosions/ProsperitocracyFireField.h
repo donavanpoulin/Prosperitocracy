@@ -9,7 +9,6 @@
 #include "ProsperitocracyFireField.generated.h"
 
 class UNiagaraComponent;
-class UPointLightComponent;
 class UGameplayEffect;
 class UProsperitocracyFireStatTable;
 class UProsperitocracyStatTable;
@@ -78,43 +77,6 @@ struct FProsperitocracyFlameSpot
 };
 
 /**
- * ONE PATCH OF FIRE, THE WORLD OVER.
- *
- * A patch is GROUND THAT IS BURNING, gathered across every fire that is burning it — not one fire's own pieces.
- * That is the unit a light belongs to (his call, 2026-10-16): a bombardment over one area is ONE patch, so it
- * is one light, and the lights stop being a hundred lamps over the same ground adding up into spots, seams and
- * flicker.
- *
- * WhoseLightItIs is the OLDEST fire burning any of it, so a patch's light does not jump from one fire to the
- * next as strikes land — it changes hands only when the fire holding it has actually gone.
- */
-USTRUCT()
-struct FProsperitocracyPatchOfFire
-{
-	GENERATED_BODY()
-
-	/** A piece of the patch's own ground, nearest its middle — the light stands HERE, never in mid-air. */
-	UPROPERTY()
-	FVector WhereTheLightStands = FVector::ZeroVector;
-
-	/** Which way that piece of ground faces, so the light is stood off it along its own surface. */
-	UPROPERTY()
-	FVector WhichWayItFaces = FVector::UpVector;
-
-	/** How wide the patch actually reaches, in cm, from that piece to its furthest one. */
-	UPROPERTY()
-	float HowWideItIsCm = 0.0f;
-
-	/** How much ground is burning in it, in square metres — what its light is worth. */
-	UPROPERTY()
-	float HowMuchGroundIsBurningM2 = 0.0f;
-
-	/** The oldest fire burning any of this patch: whose light it is. */
-	UPROPERTY()
-	TObjectPtr<AProsperitocracyFireField> WhoseLightItIs = nullptr;
-};
-
-/**
  * THE FIRE A BANG LEAVES BURNING ON THE GROUND (PLANS/incendiary-strike.md §4 and "THE FIRE'S SHAPE").
  *
  * It is spawned by the ONE explosion pass, at the place the bang went off, and the only thing it is told is
@@ -137,9 +99,9 @@ struct FProsperitocracyPatchOfFire
  *   - ONE EFFECT, FED THE GROUND ITSELF. The whole fire is still ONE picture with one sim and one clock: the
  *     pieces are handed to it as the ground its flames stand on, and each flame stands out of the surface its
  *     piece is on. Nothing is scattered inside a circle any more (2026-10-15).
- *   - ONE LIGHT AND ONE SOUND PER BODY OF FIRE. Pieces that touch are one fire for this: the light sits on the
- *     fire where the fire is, sized to that body of fire, and never as one lamp over the whole patch. Two fires
- *     that meet read as one and come apart when one of them runs out.
+ *   - ONE SOUND PER BODY OF FIRE. Pieces that touch are one fire for this. It has NO LIGHT OF ITS OWN: the fire's
+ *     own flames are the light — they are emissive and bright — and the ground it burns is lit by nothing else
+ *     (his call, 2026-10-21, after the lamp was ripped out: it never read as firelight, whatever it was made of).
  *   - IT CATCHES ANYTHING STANDING IN IT — hit or not, no gate, no pen question, and it deals no damage of its
  *     own. The only thing it does to a body is apply the Burn the block names, again for as long as the body
  *     stands there. Walk out and the Burn's clock runs down on its own.
@@ -299,29 +261,6 @@ protected:
 
 
 	/**
-	 * GATHER THE WHOLE WORLD'S FIRE INTO PATCHES, and tell every fire which patches' lights it holds.
-	 *
-	 * A patch is GROUND THAT IS BURNING, gathered across every fire burning it — not one fire's own pieces (his
-	 * call, 2026-10-16). A bombardment over one area is therefore ONE patch and one light, instead of eighteen
-	 * fires' worth of lamps over the same ground adding up into spots, seams and flicker.
-	 *
-	 * Called when a fire is laid, when the ground changes hands, and when a fire goes.
-	 */
-	static void RegroupTheWorldsFire();
-
-	/**
-	 * HOLD THE LIGHTS FOR THESE PATCHES — ONE light each, standing on a piece of the patch's own ground, reaching
-	 * as wide as the patch reaches, as bright as the ground burning in it is worth.
-	 *
-	 * The components are KEPT, moved and retuned. Nothing is destroyed and re-created while a patch lives: a lamp
-	 * torn down and put up again three times a second is a lamp that flickers.
-	 */
-	void HoldTheLightsForThesePatches(const TArray<FProsperitocracyPatchOfFire>& ThePatchesItsLightsAreFor);
-
-	/** Retune the lights this fire holds to how much of it is still on the screen. */
-	void RetuneTheLightsItHolds(float Now);
-
-	/**
 	 * READ THE GROUND BACK — which of this fire's pieces are still its own.
 	 *
 	 * A newer fire owns the ground it covers (his call, 2026-10-01): a piece of an older fire inside a newer
@@ -349,7 +288,7 @@ protected:
 	 * second after it.
 	 *
 	 * Nothing catches in that second — the fire that could burn anybody is already over — so those flames are the
-	 * picture of a fire going out, and the same number dims the lamp so the light goes out with them.
+	 * picture of a fire going out.
 	 */
 	float HowMuchIsBeingPlaced(float Now) const;
 
@@ -375,14 +314,6 @@ protected:
 	/** WHERE THE FLAMES STAND — scattered spots over that ground, and what burns you. One box each. */
 	UPROPERTY()
 	TArray<FProsperitocracyFlameSpot> TheFlameSpots;
-
-	/** THE LIGHTS THIS FIRE HOLDS — one per patch of the world's fire whose light is this fire's to hold. They
-	 *  are KEPT and retuned as that fire changes, and destroyed only when the patch they stand for is gone. */
-	UPROPERTY()
-	TArray<TObjectPtr<UPointLightComponent>> TheLightsItHolds;
-
-	/** What each of those lights is worth with the fire at full strength, in candelas — the burning down scales it. */
-	TArray<float> WhatEachHeldLightIsWorth;
 
 	/** Which fire this is. */
 	UPROPERTY()
@@ -454,26 +385,6 @@ protected:
 	/** [TUNE] MINE — the least a fire ever asks for, so even a world at its ceiling still shows fire
 	 *  where the ground is burning. */
 	static constexpr float FewestFlamesASecondAFireMayAsk = 150.0f;
-
-	/** [TUNE] MINE — the most patches of fire in the WORLD that may have a light each. Past it the smallest
-	 *  patch is folded into the nearest: one light per patch of fire is the rule, and this is the ceiling that
-	 *  keeps a shattered fire from costing a lamp per shard. Few enough that the lights can cast shadows. */
-	static constexpr int32 MostPatchesOfFireWithALightInTheWorld = 8;
-
-	/** [TUNE] MINE — how light one body of fire is lit with, per square metre of that body, in candelas. */
-	static constexpr float CandelasASquareMetreOfFireIsWorth = 22.0f;
-
-	/** [TUNE] MINE — the brightest and dimmest a single body of fire is ever lit with, in candelas. */
-	static constexpr float BrightestOneBodyOfFireIsLit = 40000.0f;
-	static constexpr float DimmestOneBodyOfFireIsLit = 900.0f;
-
-	/** [TUNE] MINE — how far the light stands off the fire, along that piece of ground's own facing, in cm. */
-	static constexpr float HowFarTheLightStandsOffTheFireCm = 60.0f;
-
-	/** [TUNE] MINE — how far the light reaches, as a share of the body of fire's own width, plus a floor so
-	 *  a single piece of fire is still lit as fire rather than as a dot. */
-	static constexpr float HowWideTheLightOfABodyOfFireReaches = 1.6f;
-	static constexpr float TheLeastALightOfFireReachesCm = 250.0f;
 
 	/**
 	 * HOW LONG THE FIRE KEEPS PUTTING FLAMES DOWN AFTER ITS DURATION, in seconds — his number (2026-10-19).

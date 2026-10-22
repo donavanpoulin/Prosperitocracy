@@ -58,13 +58,31 @@ protected:
 	 *  bigger blast without ballooning when range and rate upgrades stack. */
 	static constexpr float ShareOfRangeGrowthInTheLook = 0.5f;
 
-	/** [TUNE] The light's reach at BASE range, in cm — the pack's own explosion ships 500 (5 m). It is
-	 *  scaled by the same factor as the effect, so a bigger blast is a bigger light. */
-	UPROPERTY(EditDefaultsOnly, Category = "Prosperitocracy|Blast")
-	float LightReachAtBaseCm = 500.0f;
+	/** [TUNE] MINE — what a bang throws, in candelas, and how wide its light is against the blast it makes. The
+	 *  blast's radius is HALF its Range — the same reading the fire takes of its own Range — and the number used is
+	 *  the FINAL one, so a Range perk makes a bigger light without a line of code here. */
+	static constexpr float CandelasABangIsLitWith = 4000.0f;
+	static constexpr float HowWideABangsLightIsAgainstItsRange = 1.5f;
+	static constexpr float TheLeastABangsLightReachesCm = 200.0f;
+
+	/** [TUNE] MINE — A FLASH IS NOT A LAMP. It comes up in a breath and is gone inside half a second, because the
+	 *  picture it belongs to is; a bang's light never outlives its bang. */
+	static constexpr float HowLongABangsFlashTakesToComeUpSeconds = 0.06f;
+	static constexpr float HowLongABangsFlashTakesToGoOutSeconds = 0.40f;
+	static constexpr float HowSoftABangsFlashIsCm = 40.0f;
+
+	/** When this bang's flash began, what it is worth at its brightest and how far it reaches — set once, when the
+	 *  bang is shown, and spent by the ramp in Tick. */
+	float WhenTheFlashStarted = 0.0f;
+	float WhatTheFlashIsWorth = 0.0f;
+	float HowFarTheFlashReachesCm = 0.0f;
+
+	/** The flash's own ramp: up in a breath, down over the rest of half a second, and then the light is nothing and
+	 *  this actor stops ticking — the picture stays, lighting nothing. */
+	virtual void Tick(float DeltaSeconds) override;
 
 	/** [TUNE] A ceiling on how long one bang's picture may live, so an effect that never reports an end
 	 *  cannot leave this actor standing in the world for the rest of the mission. */
 	UPROPERTY(EditDefaultsOnly, Category = "Prosperitocracy|Blast")
-	float LongestABangMayBeSeenSeconds = 30.0f;
+	float LongestABangMayBeSeenSeconds = 5.0f;
 };
