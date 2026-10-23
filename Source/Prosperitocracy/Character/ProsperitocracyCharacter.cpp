@@ -9,6 +9,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSequenceBase.h"
+#include "Camera/CameraComponent.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Character/ProsperitocracyPlayerStatsComponent.h"
 #include "CollisionQueryParams.h"
@@ -20,6 +21,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/SpringArmComponent.h"
 #include "InputAction.h"
 #include "ProsperitocracyGameplayTags.h"
 #include "ProsperitocracyLogChannels.h"
@@ -1032,6 +1034,50 @@ void AProsperitocracyCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// THE CAMERA'S RIG IS FOUND, AND EVERY FLAG IT NEEDS IS SET RATHER THAN READ. The blueprint assembles
+	// the rig (the same door the stats component comes through); from here the camera is C++'s, and the
+	// settings that make it ONE camera are written rather than inherited — a stored blueprint value must
+	// never be able to quietly make a second authority. The ORBIT is the player's look and the arm collides
+	// with the world; the two settings that are the rig's FEEL rather than its authority — its camera lag —
+	// are left exactly as the rig already has them, because nothing here asked to change them.
+	TheCameraBoom = FindComponentByClass<USpringArmComponent>();
+	TheFollowCamera = FindComponentByClass<UCameraComponent>();
+
+	if (TheCameraBoom)
+	{
+		TheCameraBoom->bUsePawnControlRotation = true;
+		TheCameraBoom->bDoCollisionTest = true;
+		TheCameraBoom->ProbeChannel = ECC_Camera;
+		TheCameraBoom->ProbeSize = ProsperitocracyCamera::ProbeSizeCm;
+		TheCameraBoom->TargetArmLength = ProsperitocracyCamera::HipArmLengthCm;
+		TheCameraBoom->SocketOffset = ProsperitocracyCamera::HipSocketOffset;
+	}
+
+	if (TheFollowCamera)
+	{
+		TheFollowCamera->bUsePawnControlRotation = false;
+	}
+
+	// HOW LOW HE GETS WHEN HE CROUCHES, set here rather than left to a stored component default: the
+	// number is measured (see ProsperitocracyBodyCrouch) and a crouch that keeps the engine's own number is
+	// a crouch whose collision never matches the body the player is looking at.
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		Movement->SetCrouchedHalfHeight(ProsperitocracyBodyCrouch::CrouchedHalfHeightCm);
+	}
+
+	// Said out loud, once, because a rig that was not found and a rig that is simply far away look the same
+	// in the world: the camera is a fact the body states, not one it assumes.
+	UE_LOG(LogProsperitocracy, Log,
+		TEXT("[Camera] %s: boom %s, camera %s, arm %.0f cm (aim %.0f cm), probe %.0f cm, orbit %s"),
+		*GetName(),
+		TheCameraBoom ? TEXT("found") : TEXT("MISSING"),
+		TheFollowCamera ? TEXT("found") : TEXT("MISSING"),
+		ProsperitocracyCamera::HipArmLengthCm,
+		ProsperitocracyCamera::AimArmLengthCm,
+		ProsperitocracyCamera::ProbeSizeCm,
+		(TheCameraBoom && TheCameraBoom->bUsePawnControlRotation) ? TEXT("the player's look") : TEXT("NOT the player's look (wrong)"));
+
 	// HIS PLACEMENT IS HIS OWN AND NEVER THE PHYSICS'. The engine's default hands the mesh's own place
 	// and tilt straight off the ragdoll every physics step (`GetComponentTransformFromBodyInstance`:
 	// `RootBodyData.TransformToRoot * BodyTransform`), and THAT is what made a hand-walk of his whole
@@ -1581,6 +1627,16 @@ void AProsperitocracyCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// THE BODY FIRST, THE VIEW AFTER IT — and the view on EVERY frame, including the frames the body's own
+	// half returns early because the physics has him. Two halves, one order, and it is the order that
+	// matters: his placement for this frame is settled before the camera asks where he is, so the boom is
+	// never a frame behind the man it is circling, and the view is never a thing the body has to skip.
+	TickTheBody(DeltaSeconds);
+	TickTheCamera(DeltaSeconds);
+}
+
+void AProsperitocracyCharacter::TickTheBody(float DeltaSeconds)
+{
 	// A THROWN BODY'S FRAME BELONGS TO THE PHYSICS AND TO NOBODY ELSE. Nothing of his own may write his
 	// facing or his placement while he is limp — an actor being dragged around under a simulating body
 	// is exactly what pumps velocity into it every frame — so the whole of his tick is the limp half.
@@ -1668,9 +1724,76 @@ void AProsperitocracyCharacter::TickAttack(float DeltaSeconds)
 
 float AProsperitocracyCharacter::GetAimingAlpha_Implementation() const
 {
-	// Same story: the template's Aim_Smooth timeline owns the ADS blend, so the blueprint reports it.
-	// Hipfire is the honest default.
-	return 0.0f;
+	// The camera's own blend, answered from the one place it is written. A body that overrides this is
+	// answering with a SECOND blend — the disagreement this round deleted — so the answer lives here.
+	return AimingAlpha;
+}
+
+void AProsperitocracyCharacter::TickTheCamera(float DeltaSeconds)
+{
+	if (!TheCameraBoom)
+	{
+		return;
+	}
+
+	// 1. HOW FAR INTO THE AIM HE IS — asked of the one thing that owns the fact, the gun in his hands, and
+	//    blended HERE, because the camera is the thing an aim LOOKS like. This number is also what
+	//    GetAimingAlpha answers, so the arm, the circle's fade and the Accuracy posture multiplier are all
+	//    reading one draw: they cannot be at different points of it, and no state keeps a copy.
+	const float AimTarget = IsTheWeaponInHandAiming() ? 1.0f : 0.0f;
+	const float AimRate = AimTarget > AimingAlpha ? ProsperitocracyCamera::AimInRate : ProsperitocracyCamera::AimOutRate;
+	AimingAlpha = FMath::FInterpTo(AimingAlpha, AimTarget, DeltaSeconds, AimRate);
+
+	// 2. WHERE THE VIEW ORBITS — THE HEIGHT IS HIS, THE GROUND IS THE CASE.
+	//
+	//    The height comes off the PELVIS, because a crouch in this project is the ANIMATION and never the
+	//    capsule: a height taken off the capsule stayed exactly where it was while he crouched, which is
+	//    why crouching never lowered the picture. His hips are where he actually is, so a crouch, a slide
+	//    or a body on the floor lowers the view by exactly as much as it lowered him.
+	//
+	//    X and Y come off the CAPSULE, because the pelvis's own X and Y are the ANIMATION's and would swing
+	//    the whole picture with every step. So the view rides the body's height and not its sway.
+	FVector Pivot = GetActorLocation();
+	if (const UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Pivot = Capsule->GetComponentLocation();
+	}
+
+	const USkeletalMeshComponent* Body = GetMesh();
+	const bool bPelvisIsReal = Body && Body->GetBoneIndex(ProsperitocracyCamera::PivotBone) != INDEX_NONE;
+	FVector BodyPivot = Pivot;
+	if (bPelvisIsReal)
+	{
+		BodyPivot = Body->GetSocketLocation(ProsperitocracyCamera::PivotBone)
+			+ FVector(0.0f, 0.0f, ProsperitocracyCamera::PivotAbovePelvisCm);
+		Pivot.Z = BodyPivot.Z;
+	}
+
+	// 3. AND WHILE THE PHYSICS HAS HIM, THE PIVOT IS THE BODY ITSELF — every part of it, not just its
+	//    height, because he is the thing being circled now and the view has to travel with him wherever the
+	//    bang put him. The hand-over is the body's OWN weight — the same 0→1→0 the pose is blended on — so
+	//    the pivot arrives at him and leaves him with him, and no frame cuts from one to the other.
+	const float HandOver = FMath::Clamp(BodyPhysicsBlendWeight, 0.0f, 1.0f);
+	if (HandOver > 0.0f && bPelvisIsReal)
+	{
+		Pivot = FMath::Lerp(Pivot, BodyPivot, HandOver);
+	}
+
+	// 4. THE ONE WRITE OF THE ARM AND THE OFFSET, and there is no second one anywhere: hip, aim, crouch and
+	//    throw are INPUTS to these two lines, never paths that each write a number of their own.
+	TheCameraBoom->TargetArmLength = FMath::Lerp(ProsperitocracyCamera::HipArmLengthCm,
+		ProsperitocracyCamera::AimArmLengthCm, AimingAlpha);
+	TheCameraBoom->SocketOffset = FMath::Lerp(ProsperitocracyCamera::HipSocketOffset,
+		ProsperitocracyCamera::AimSocketOffset, AimingAlpha);
+
+	// 5. THE PIVOT GOES ON THE BOOM, in the root's own space. The boom's ROTATION is the player's look
+	//    (bUsePawnControlRotation, set in BeginPlay), so the man's facing can never turn the view and no
+	//    state of his — limp, attacking, rising — can pin it: the orbit is the player's in every one of
+	//    them, and he is always the thing in the middle of it.
+	if (const USceneComponent* Root = GetRootComponent())
+	{
+		TheCameraBoom->SetRelativeLocation(Root->GetComponentTransform().InverseTransformPosition(Pivot));
+	}
 }
 
 USkeletalMeshComponent* AProsperitocracyCharacter::GetBodyMesh_Implementation() const

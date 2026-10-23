@@ -12,12 +12,14 @@
 
 class AProsperitocracyWeapon;
 class UAnimSequenceBase;
+class UCameraComponent;
 class UChildActorComponent;
 class UInputAction;
 class UInputComponent;
 class UProsperitocracyPlayerStatsComponent;
 class UProsperitocracyStatusComponent;
 class USkeletalMeshComponent;
+class USpringArmComponent;
 
 /**
  * The BODY's aim numbers: how the man himself comes round.
@@ -70,14 +72,16 @@ namespace ProsperitocracyBodyAimHandling
  * `GetBaseAimRotation`, so that one function is the whole of what the arms and the gun need in order
  * to come round with him.
  *
- * Three facts belong to the rig and cannot be guessed from C++, so the blueprint answers them. Each is
+ * Two facts belong to the rig and cannot be guessed from C++, so the blueprint answers them. Each is
  * a BlueprintNativeEvent with an honest empty default, which is the whole door:
  *   - which gun is in hand (`GetGunInHand`) — the template's equip state decides it;
- *   - how far into ADS we are (`GetAimingAlpha`) — the template's `Aim_Smooth` timeline owns it.
  *   - which mesh the body is DRAWN with (`GetBodyMesh`) — the rig put the visible body on it.
  *
- * Nobody recomputes either from a proxy: not from a mesh being visible, not from a camera boom
- * length. There is one answer, and it comes from the thing that owns the fact.
+ * The third — how far into ADS we are — is no longer the blueprint's: that blend is the CAMERA's and is
+ * written in one place in C++ (`TickTheCamera`), because the camera is the thing an aim looks like.
+ *
+ * Nobody recomputes either of the two from a proxy: not from a mesh being visible, not from a camera
+ * boom length. There is one answer, and it comes from the thing that owns the fact.
  *
  * This body also TAKES damage. It answers IAbilitySystemInterface — its ability system lives on the
  * stats component the template's blueprint gives it — and IProsperitocracyDamageReceiver, so a hit finds
@@ -102,6 +106,114 @@ namespace ProsperitocracyBodyAimHandling
 namespace ProsperitocracyEquipInput
 {
 	constexpr float HoldSeconds = 0.25f;
+}
+
+/**
+ * THE CROUCH — one number, and it is MEASURED, not chosen.
+ *
+ * A crouch here is the ANIMATION, so the game's own crouch has to be told how low the body gets: this is
+ * the half height his collision capsule drops to, and it decides what he fits under. The capsule is
+ * collision and never the hitbox (the Pawn profile answers Visibility with Ignore), so this number buys
+ * him nothing in a fight — it buys him doorways.
+ *
+ * WHERE 69 COMES FROM. `Prosperitocracy.CrouchFit` measured him in the pose he is actually drawn in: the
+ * tallest frame of the crouch-WALK cycle is 135.2 cm above his feet (the crouch IDLE is only 105.8 — it
+ * is the walk that has to fit, or he clips his head on every ceiling he walks under). A half height is
+ * half the capsule's total, so 135.2 wants 67.6, and the standing capsule's own clearance over his
+ * standing head is 1.2 cm (177.7 of head under a 180 cm capsule) — so 67.6 + 1.2 = 68.8, written as 69.
+ * The proportion of it that is a judgement is the 1.2 cm, and it is the number the standing capsule
+ * already ships with, taken from him rather than picked.
+ */
+namespace ProsperitocracyBodyCrouch
+{
+	constexpr float CrouchedHalfHeightCm = 69.0f;
+}
+
+/**
+ * THE CAMERA — one rig, one writer, and every number it has.
+ *
+ * The camera is not a gameplay value: it is the picture. It is not a row in the stat table, no perk
+ * moves it, and nothing else reads it. What it IS is one arm, one pivot and one aim blend, and all of
+ * them are written in exactly one place (`TickTheCamera`) — so the aim, a crouch and a throw are
+ * INPUTS to the same three numbers instead of three paths that each write one of them. That is the
+ * whole of what was wrong with the rig this replaces: two timelines and a dead shoulder node were all
+ * writing the arm, and the last one to run each frame won.
+ *
+ * [TUNE] — every number here is mine and every one of them is meant to be moved.
+ */
+namespace ProsperitocracyCamera
+{
+	/**
+	 * HOW FAR THE VIEW SITS FROM HIM AT REST, in cm.
+	 *
+	 * His words: the rig is too far, and this is one arm nearer than it. The rig this replaces stood at
+	 * **350** — read off its own arm lerp (`Aim_Smooth`'s Zoom track drove `Lerp(350, 150, Zoom)`), which
+	 * is the last thing that number was before the graph holding it was deleted — so 280 is 70 cm closer.
+	 */
+	constexpr float HipArmLengthCm = 280.0f;
+
+	/**
+	 * HOW FAR IT SITS WHEN HE IS AIMING, in cm — the SAME PROPORTION of the arm the old rig used.
+	 *
+	 * That rig pulled 350 → 150, i.e. to 43% of its standing arm; 43% of 280 is 120. Not the same 200 cm
+	 * of travel: on a nearer stand that would end 80 cm from his back, which is inside the man. A zoom is
+	 * read as a proportion, so this is the amount the game has today. The gap to `HipArmLengthCm` is the
+	 * whole of the pull-in, so that gap is the number to move.
+	 */
+	constexpr float AimArmLengthCm = 120.0f;
+
+	/**
+	 * THE OFFSET THE VIEW SITS AT, in the boom's own space — over his right shoulder.
+	 *
+	 * Both are the OLD RIG'S OWN NUMBERS, carried over rather than invented: its aim chain lerped the
+	 * socket offset `(0, 80, 40) → (0, 80, 60)` as it came into the aim, so standing carries 80 right and
+	 * 40 up, and the aim adds 20 more of height.
+	 *
+	 * The shoulder swap that rig also had — the same 80 flipped to -80 on the other side — is NOT in this
+	 * build: the key stays unbound, and the Y here is the right shoulder that rig defaulted to.
+	 */
+	const FVector HipSocketOffset(0.0f, 80.0f, 40.0f);
+	const FVector AimSocketOffset(0.0f, 80.0f, 60.0f);
+
+	/**
+	 * WHERE THE VIEW ORBITS, measured up from HIS PELVIS.
+	 *
+	 * This is the HEIGHT and only the height: a crouch in this project is the ANIMATION, not the capsule,
+	 * so a height taken off the capsule never moved when he crouched — the camera stayed up while he went
+	 * down. The pelvis is where his hips actually are, in the pose he is actually drawn in, so anything
+	 * that lowers him — a crouch, a slide, a body on the floor — lowers the view by exactly that much.
+	 *
+	 * Measured in the pose's own space, so it does not bob with the walk: the pelvis's X and Y are the
+	 * animation's and would shake the picture, so they are never used while he is on his feet — the capsule
+	 * answers those. Only Z is taken from him.
+	 */
+	constexpr float PivotAbovePelvisCm = 30.0f;
+
+	/**
+	 * THE BONE THE VIEW IS MEASURED OFF — his hips, the same bone the whole body hangs from.
+	 *
+	 * One name, one bone, standing and thrown alike: the rig's own pelvis, which is also what the physics
+	 * simulates from, so the view is measured off the thing that is actually moving either way.
+	 */
+	const FName PivotBone(TEXT("pelvis"));
+
+	/**
+	 * HOW FAST THE AIM ARRIVES AND LEAVES — FInterpTo's rate, i.e. how much of the way per second.
+	 *
+	 * Asymmetric on purpose, and it is the same asymmetry every shooter ships: going in is a decision and
+	 * comes quickly, coming out is a release and is allowed to be softer. A camera that snaps reads as
+	 * broken, which is what the old rig's two fights looked like.
+	 */
+	constexpr float AimInRate = 12.0f;
+	constexpr float AimOutRate = 8.0f;
+
+	/**
+	 * HOW THICK THE ARM'S OWN COLLISION PROBE IS.
+	 *
+	 * The boom shortens against walls, ceilings AND the floor — and a probe with no size slips through a
+	 * floor the view is lying on, which is exactly the frame a ragdoll puts it in.
+	 */
+	constexpr float ProbeSizeCm = 12.0f;
 }
 
 UCLASS()
@@ -467,10 +579,13 @@ public:
 	/**
 	 * How far into aiming down sights we are: 0 = hipfire, 1 = fully aiming.
 	 *
-	 * The template's `Aim_Smooth` timeline IS that blend — it already drives the camera boom and the
-	 * crosshair — so the blueprint reports its alpha here instead of anyone recomputing it from the
-	 * boom length. The same number drives the posture multiplier on Accuracy and the reticle
-	 * circle's fade, which is why the circle always appears with the camera, never on a separate clock.
+	 * THE CAMERA'S blend, and there is no other. `TickTheCamera` writes it once per frame from the
+	 * weapon's own answer, so the arm, the posture multiplier on Accuracy and the reticle circle's fade
+	 * all read the same number and can never be at different points of the same draw — which is why the
+	 * circle always appears WITH the camera and never on a separate clock.
+	 *
+	 * It stays a BlueprintNativeEvent because it is a question anything may ask; the answer is C++'s now,
+	 * and a body that overrides it is answering with a second blend and should not.
 	 */
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Prosperitocracy|Aim")
 	float GetAimingAlpha() const;
@@ -1063,4 +1178,47 @@ protected:
 
 	/** This body's own tick, which is where the aim's turn and a live attack are driven. */
 	virtual void Tick(float DeltaSeconds) override;
+
+	//~ The camera — one rig, one writer, and no state of its own ---------------------------------
+
+	/**
+	 * THE RIG THE TEMPLATE'S BLUEPRINT ASSEMBLES — found, never created here.
+	 *
+	 * The same shape as the stats component, and for the same reason: which components this actor has is
+	 * the rig's business, and the blueprint is what assembles it. Null when the body has none, and every
+	 * reader says so rather than guessing.
+	 */
+	UPROPERTY(Transient)
+	TObjectPtr<USpringArmComponent> TheCameraBoom;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UCameraComponent> TheFollowCamera;
+
+	/**
+	 * HOW FAR INTO THE AIM THE RIG IS — the ONE blend, 0 = hipfire.
+	 *
+	 * Written by `TickTheCamera` and read by everything that asks how far into ADS he is
+	 * (`GetAimingAlpha`): the arm, the circle's fade and the Accuracy posture multiplier are all looking
+	 * at this one number, so they cannot disagree about how far into the draw he is.
+	 */
+	float AimingAlpha = 0.0f;
+
+	/**
+	 * THE CAMERA'S WHOLE FRAME: the aim's blend, where the view orbits, and the one arm.
+	 *
+	 * Every state he can be in is an INPUT here — aiming, crouched, thrown — and never a path of its own.
+	 * Called from Tick after his body has been placed for the frame and on EVERY frame, so the view is
+	 * driven on the frames he is limp as well as the frames he is standing — and never one frame behind
+	 * the man it is circling.
+	 */
+	void TickTheCamera(float DeltaSeconds);
+
+	/**
+	 * THE BODY'S HALF OF THE FRAME — everything his tick did before the camera existed, unchanged.
+	 *
+	 * Split out so the view can be driven on every frame no matter which of this half's paths returns
+	 * early: a thrown body's frame is the physics', a rise owns the pose, and an attack owns the facing —
+	 * three early returns that would otherwise each have had to remember to move the camera too.
+	 */
+	void TickTheBody(float DeltaSeconds);
 };

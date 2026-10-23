@@ -9,6 +9,9 @@
 #include "AbilitySystem/ProsperitocracyStatusComponent.h"
 #include "Engine/Engine.h"
 #include "CollisionQueryParams.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Containers/Ticker.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
@@ -67,6 +70,9 @@
  * block of the gun that names it, which is the same pairing a round from that gun puts on a target.
  * Nothing in the game can damage you yet, so this is the only way to feel either status on the body
  * they would be felt on. The fire that comes with a burn is the status's own and arrives with it.
+ *
+ * `Prosperitocracy.CrouchFit` toggles a MEASUREMENT: how tall he actually is, in the pose he is
+ * actually in. It exists because a capsule half height is otherwise a guess — see its own block.
  *
  * Nothing here writes a value, spawns an actor, or adds a rule: each calls the one function that
  * already puts that thing on the body, and deleting this file would change no number in the game.
@@ -1224,4 +1230,172 @@ static FAutoConsoleCommandWithWorldAndArgs LightFireCommand(
 	TEXT("incendiary strike's block. Nothing explodes, nothing is dealt, nothing shakes — this is the fire ")
 	TEXT("pathway being walked by something that is NOT an explosion, through the same door a bang uses."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleLightFireCommand));
+}
+
+namespace ProsperitocracyDevCrouchFit
+{
+	/**
+	 * Prosperitocracy.CrouchFit — how tall he is, in the pose he is actually in.
+	 *
+	 * A capsule half height is otherwise a GUESS: whoever authored it picked a number, and a crouch needs
+	 * the same answer for a body that is lower without being a different shape. So this measures the
+	 * POSED BODY, not a bone, not the bind pose and not the capsule measuring itself.
+	 *
+	 * WHERE THE NUMBER COMES FROM. A skeletal mesh's bounds are its PHYSICS ASSET's bodies posed by the
+	 * animation that is playing — which is the shape a shot actually finds, since the capsule answers
+	 * Visibility with Ignore (the Pawn profile). A mesh with no physics asset answers its REFERENCE bounds
+	 * instead, so when that is missing this says so rather than handing over a bind-pose number.
+	 *
+	 * WHY IT LATCHES A MAXIMUM. A walk cycle bobs: one frame is not the body, and the tallest frame of the
+	 * cycle is what has to fit under a ceiling. Every state keeps the tallest it has seen.
+	 *
+	 * WHY IT IS A TOGGLE. The body being measured is the one being driven, and crouch-walking cannot
+	 * happen while a line is being typed in the console. Turn it on, walk in the state you care about,
+	 * turn it off, read the answer. Nothing here writes anything: it reads a pose and prints a height.
+	 */
+	bool bMeasuring = false;
+	FTSTicker::FDelegateHandle TickerHandle;
+
+	/** Tallest seen per state, in cm ABOVE HIS FEET — which is exactly the half height that fits. */
+	float TallestStandingCm = 0.0f;
+	float TallestCrouchedCm = 0.0f;
+
+	/** What the live frame says, for the running half-second line. */
+	float CapsuleHalfHeightCm = 0.0f;
+	bool bCrouchedNow = false;
+	FString MeshName;
+
+	float SecondsSinceReport = 0.0f;
+	bool bSaidNoPhysicsAsset = false;
+
+	void Report(const FString& Message, int32 LineIndex = 0)
+	{
+		ProsperitocracyDev::Report(TEXT("CrouchFit"), /*OnScreenKey=*/ 0x900A + LineIndex, Message);
+	}
+
+	/** The local player's body in PIE or a game world, or null when there is nothing to measure. */
+	AProsperitocracyCharacter* FindMeasuredBody()
+	{
+		if (!GEngine)
+		{
+			return nullptr;
+		}
+
+		for (const FWorldContext& Context : GEngine->GetWorldContexts())
+		{
+			UWorld* World = Context.World();
+			if (!World || (Context.WorldType != EWorldType::PIE && Context.WorldType != EWorldType::Game))
+			{
+				continue;
+			}
+
+			const APlayerController* Controller = World->GetFirstPlayerController();
+			if (AProsperitocracyCharacter* Body = Controller ? Cast<AProsperitocracyCharacter>(Controller->GetPawn()) : nullptr)
+			{
+				return Body;
+			}
+		}
+
+		return nullptr;
+	}
+
+	void ReportSummary()
+	{
+		int32 Line = 0;
+		Report(TEXT("— tallest seen, measured above his feet: that IS the capsule half height that fits —"), Line++);
+		Report(FString::Printf(TEXT("standing %.1f cm    crouched %.1f cm   <- crouched half height"),
+			TallestStandingCm, TallestCrouchedCm), Line++);
+		Report(FString::Printf(TEXT("his capsule right now: %.1f cm half height, crouched=%s, measured on %s"),
+			CapsuleHalfHeightCm, bCrouchedNow ? TEXT("yes") : TEXT("no"), *MeshName), Line++);
+	}
+
+	bool TickMeasure(float DeltaSeconds)
+	{
+		const AProsperitocracyCharacter* Body = FindMeasuredBody();
+		if (!Body)
+		{
+			return true;
+		}
+
+		USkeletalMeshComponent* Mesh = Body->GetBodyMesh();
+		if (!Mesh)
+		{
+			Mesh = Body->GetMesh();
+		}
+
+		const UCapsuleComponent* Capsule = Body->GetCapsuleComponent();
+		if (!Mesh || !Capsule)
+		{
+			return true;
+		}
+
+		if (!Mesh->GetPhysicsAsset() && !bSaidNoPhysicsAsset)
+		{
+			bSaidNoPhysicsAsset = true;
+			Report(TEXT("that mesh has NO physics asset, so its bounds are the bind pose and NOT the pose on screen — this reading is not valid."));
+		}
+
+		// The top of the body as it is POSED, and his feet as the capsule puts them: the difference is the
+		// one number a half height is — how far above his own feet the body reaches.
+		const FBoxSphereBounds Bounds = Mesh->Bounds;
+		const float TopOfBodyCm = static_cast<float>(Bounds.Origin.Z + Bounds.BoxExtent.Z);
+		const float FeetCm = static_cast<float>(Capsule->GetComponentLocation().Z - Capsule->GetScaledCapsuleHalfHeight());
+		const float AboveFeetCm = TopOfBodyCm - FeetCm;
+
+		bCrouchedNow = Body->bIsCrouched;
+		CapsuleHalfHeightCm = Capsule->GetScaledCapsuleHalfHeight();
+		MeshName = Mesh->GetName();
+
+		if (bCrouchedNow)
+		{
+			TallestCrouchedCm = FMath::Max(TallestCrouchedCm, AboveFeetCm);
+		}
+		else
+		{
+			TallestStandingCm = FMath::Max(TallestStandingCm, AboveFeetCm);
+		}
+
+		SecondsSinceReport += DeltaSeconds;
+		if (SecondsSinceReport >= 0.5f)
+		{
+			SecondsSinceReport = 0.0f;
+			Report(FString::Printf(TEXT("%s: %.1f cm above his feet — tallest so far: standing %.1f, crouched %.1f (capsule %.1f)"),
+				bCrouchedNow ? TEXT("CROUCHED") : TEXT("standing"), AboveFeetCm,
+				TallestStandingCm, TallestCrouchedCm, CapsuleHalfHeightCm));
+		}
+
+		return true;
+	}
+
+	void Toggle()
+	{
+		if (bMeasuring)
+		{
+			bMeasuring = false;
+			if (TickerHandle.IsValid())
+			{
+				FTSTicker::GetCoreTicker().RemoveTicker(TickerHandle);
+				TickerHandle.Reset();
+			}
+
+			ReportSummary();
+			return;
+		}
+
+		TallestStandingCm = 0.0f;
+		TallestCrouchedCm = 0.0f;
+		SecondsSinceReport = 0.0f;
+		bSaidNoPhysicsAsset = false;
+		bMeasuring = true;
+		TickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateStatic(&TickMeasure));
+
+		Report(TEXT("measuring: stand a moment, then crouch, then crouch-walk each stance. Type it again to read the answer."));
+	}
+
+	static FAutoConsoleCommand CrouchFitCommand(
+		TEXT("Prosperitocracy.CrouchFit"),
+		TEXT("Toggle a measurement of how tall the body is IN THE POSE IT IS IN: the tallest frame each state has ")
+		TEXT("been, in cm above his feet — which is the capsule half height that fits him. Turning it off prints ")
+		TEXT("the answer. It reads the posed mesh (the shape a shot finds), never a bone and never the bind pose."),
+		FConsoleCommandDelegate::CreateStatic(&Toggle));
 }
