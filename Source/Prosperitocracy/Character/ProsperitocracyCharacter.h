@@ -118,11 +118,11 @@ namespace ProsperitocracyEquipInput
  *
  * WHERE 69 COMES FROM. `Prosperitocracy.CrouchFit` measured him in the pose he is actually drawn in: the
  * tallest frame of the crouch-WALK cycle is 135.2 cm above his feet (the crouch IDLE is only 105.8 — it
- * is the walk that has to fit, or he clips his head on every ceiling he walks under). A half height is
- * half the capsule's total, so 135.2 wants 67.6, and the standing capsule's own clearance over his
- * standing head is 1.2 cm (177.7 of head under a 180 cm capsule) — so 67.6 + 1.2 = 68.8, written as 69.
- * The proportion of it that is a judgement is the 1.2 cm, and it is the number the standing capsule
- * already ships with, taken from him rather than picked.
+ * is the walk that has to fit, or he clips his head on every ceiling he walks under). The standing
+ * capsule's own clearance over his standing head is 2.3 cm (his head reaches 177.7 of the 180 cm the
+ * capsule's 90 half height puts on him), so the crouched half height that keeps that same clearance is
+ * (135.2 + 2.3) / 2 = 68.75 — written as 69. The only judgement in it is keeping the standing capsule's
+ * clearance instead of picking a new one, and that number is his.
  */
 namespace ProsperitocracyBodyCrouch
 {
