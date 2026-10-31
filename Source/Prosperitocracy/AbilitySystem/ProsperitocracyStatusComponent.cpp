@@ -94,11 +94,40 @@ UAbilitySystemComponent* UProsperitocracyStatusComponent::GetOwnerAbilitySystemC
 	return UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(GetOwner());
 }
 
-FProsperitocracyLiveStatus* UProsperitocracyStatusComponent::FindLive(const FGameplayTag& StatusTag)
+FProsperitocracyStatusQueue* UProsperitocracyStatusComponent::FindQueue(const FGameplayTag& StatusTag)
 {
-	for (FProsperitocracyLiveStatus& Live : LiveStatuses)
+	for (FProsperitocracyStatusQueue& Queue : Queues)
 	{
-		if (Live.StatusTag == StatusTag)
+		if (Queue.StatusTag == StatusTag)
+		{
+			return &Queue;
+		}
+	}
+
+	return nullptr;
+}
+
+const FProsperitocracyStatusQueue* UProsperitocracyStatusComponent::FindQueue(const FGameplayTag& StatusTag) const
+{
+	for (const FProsperitocracyStatusQueue& Queue : Queues)
+	{
+		if (Queue.StatusTag == StatusTag)
+		{
+			return &Queue;
+		}
+	}
+
+	return nullptr;
+}
+
+FProsperitocracyLiveStatus* UProsperitocracyStatusComponent::FindWaiting(FProsperitocracyStatusQueue& Queue, const UProsperitocracyStatTable* Block)
+{
+	// IDENTITY IS THE BLOCK, never the tag. The rifle's burn and the fire's burn are the same STATUS and
+	// different versions, so a version already on the body is the one that refreshes, and a different one
+	// goes behind it — which is the whole reason two things that both set alight can both be felt.
+	for (FProsperitocracyLiveStatus& Live : Queue.Waiting)
+	{
+		if (Live.Block == Block)
 		{
 			return &Live;
 		}
@@ -131,11 +160,6 @@ bool UProsperitocracyStatusComponent::DoesTick(const FProsperitocracyLiveStatus&
 		&& Live.Block->Carries(EProsperitocracyStat::PiercingDamage);
 }
 
-float UProsperitocracyStatusComponent::GetSecondsLeft(const FProsperitocracyLiveStatus& Live, float Now) const
-{
-	return FMath::Max(0.0f, Live.EndTime - Now);
-}
-
 float UProsperitocracyStatusComponent::GetTickInterval(const FProsperitocracyLiveStatus& Live) const
 {
 	const float Rate = GetStatusStat(Live, EProsperitocracyStat::Rate);
@@ -164,8 +188,33 @@ void UProsperitocracyStatusComponent::ApplyStatus(const FGameplayTag& StatusTag,
 
 	const float Now = World->GetTimeSeconds();
 
-	// The status's numbers, read through their own home — the same evaluator every other number takes.
-	// Spawned before the comparison because the comparison IS a question about these numbers.
+	// THE QUEUE THIS STATUS BELONGS TO, when this body already has one of that kind — one per kind, and
+	// the two are parallel, so a body can be burning and stunned at the same time.
+	//
+	// THE SAME BLOCK LANDS AGAIN: it keeps its place and its next tick, and only its clock moves — a
+	// full one, from now. The clock is read off the entry's own home, so a refresh is priced exactly the
+	// way it was first priced.
+	//
+	// Its TICK must not move with it. Standing in fire re-applies every fifth of a second, and a refresh
+	// that pushed the first tick back again is the bug that once left a body burning on screen while
+	// taking no damage at all until it walked out.
+	FProsperitocracyStatusQueue* Queue = FindQueue(StatusTag);
+	if (Queue)
+	{
+		if (FProsperitocracyLiveStatus* Already = FindWaiting(*Queue, Block))
+		{
+			const float RefreshDuration = GetStatusStat(*Already, EProsperitocracyStat::Duration);
+			if (RefreshDuration > 0.0f)
+			{
+				Already->EndTime = Now + RefreshDuration;
+			}
+			return;
+		}
+	}
+
+	// A DIFFERENT BLOCK — a different version of the status, whether it is worth more or less. Its own
+	// GAS home is minted only now: a refresh above never needs one, and a host spawned to be thrown away
+	// is a spawn per fifth of a second for nothing.
 	AProsperitocracyStatHostActor* NewHost = World->SpawnActor<AProsperitocracyStatHostActor>();
 	if (!NewHost)
 	{
@@ -174,7 +223,6 @@ void UProsperitocracyStatusComponent::ApplyStatus(const FGameplayTag& StatusTag,
 	NewHost->InitializeFromStatBlock(Block);
 
 	FProsperitocracyLiveStatus Prepared;
-	Prepared.StatusTag = StatusTag;
 	Prepared.Block = Block;
 	Prepared.Host = NewHost;
 	Prepared.SourceAbilitySystemComponent = SourceAbilitySystemComponent;
@@ -184,56 +232,55 @@ void UProsperitocracyStatusComponent::ApplyStatus(const FGameplayTag& StatusTag,
 	const float Duration = GetStatusStat(Prepared, EProsperitocracyStat::Duration);
 	if (Duration <= 0.0f)
 	{
-		// A status with no Duration is not a status: nothing to carry, nothing to compare. Left alone
+		// A status with no Duration is not a status: nothing to carry, nothing to queue. Left alone
 		// rather than applied forever, and said out loud because it is an authoring bug.
 		UE_LOG(LogProsperitocracy, Warning, TEXT("[Status] %s applied with no Duration in its block — nothing applied."), *StatusTag.ToString());
 		NewHost->Destroy();
 		return;
 	}
 
-	// NO STACKING, AND NO TAKING OVER EITHER (his rule, 2026-10-01). A body keeps the status it is
-	// carrying until that one EXPIRES, and only then can the next one start: the burn runs its own clock
-	// and deals its own ticks, and a fire that keeps setting a body alight lights it again the moment the
-	// last one runs out.
-	//
-	// What this replaces, and why it had to go: the older rule kept whichever instance was worth more —
-	// the newcomer's whole value against what was LEFT of the one on the body — and a winner RESET the
-	// clock. Standing in fire re-applies every fifth of a second, so every re-application beat the burn
-	// left on the body and pushed its first tick back again: a body turned on screen and took no damage
-	// at all until it walked out. And a stronger thing in the room overrode every burn in it, which is
-	// the balance he called out. A status that is carried is not re-decided.
-	FProsperitocracyLiveStatus* Live = FindLive(StatusTag);
-	if (Live)
-	{
-		// The instance on the body keeps its block, its numbers, its clock and its look; nothing about it
-		// moves and the arriving one is thrown away.
-		NewHost->Destroy();
-		return;
-	}
-
-	LiveStatuses.Add(Prepared);
-	Live = &LiveStatuses.Last();
-
-	Live->EndTime = Now + Duration;
+	// ITS CLOCK STARTS NOW, WHETHER IT APPLIES NOW OR NOT. That is the whole difference between a queue
+	// and a line of turns: the one behind is already burning down while it waits, and takes over with
+	// what it has left — or is dropped, if its own time runs out first.
+	Prepared.EndTime = Now + Duration;
 	// A ticking status's first tick comes one interval after it lands, not on the same frame: N ticks
 	// over N intervals is what "X damage every X seconds for X seconds" says.
-	const float Interval = DoesTick(*Live) ? GetTickInterval(*Live) : 0.0f;
-	Live->NextTickTime = (Interval > 0.0f) ? (Now + Interval) : Live->EndTime;
+	const float Interval = DoesTick(Prepared) ? GetTickInterval(Prepared) : 0.0f;
+	Prepared.NextTickTime = (Interval > 0.0f) ? (Now + Interval) : Prepared.EndTime;
 
-	// The tag is the status's identity while it lasts, stamped once however many times it is applied —
-	// a count written, never added to, so a hundred shots are still one status.
-	if (UAbilitySystemComponent* TargetAbilitySystemComponent = GetOwnerAbilitySystemComponent())
+	// A QUEUE IS ITS CONTENTS: made here, only when there is something to put in it, so a status refused
+	// above never leaves an empty queue behind it. Asked for again because minting the status's GAS home
+	// above can run that actor's BeginPlay, and nothing may hold a pointer into an array across that.
+	Queue = FindQueue(StatusTag);
+	if (!Queue)
 	{
-		TargetAbilitySystemComponent->SetLooseGameplayTagCount(StatusTag, 1);
+		Queue = &Queues.Add_GetRef(FProsperitocracyStatusQueue());
+		Queue->StatusTag = StatusTag;
 	}
 
-	// The status's own look goes on with it — once, at the moment it lands, and there is only ever one
-	// landing now that a status is never taken over. This is the only place a look is ever put on a
-	// body, so any body that can carry a burn wears it the same way.
-	BeginStatusEffect(*Live);
+	// Only the head applies, so only the first one in is the status landing on this body.
+	const bool bBecomesTheHead = (Queue->Waiting.Num() == 0);
+	Queue->Waiting.Add(Prepared);
+
+	if (bBecomesTheHead)
+	{
+		// The tag is the status's identity while it lasts, stamped once however many versions are behind
+		// it — a count written, never added to, so a hundred shots are still one status.
+		if (UAbilitySystemComponent* TargetAbilitySystemComponent = GetOwnerAbilitySystemComponent())
+		{
+			TargetAbilitySystemComponent->SetLooseGameplayTagCount(StatusTag, 1);
+		}
+
+		// And the LOOK goes on with the first one, for the body — never again at a handover, because the
+		// fire belongs to the body and a handover changes the numbers, not the fire.
+		BeginStatusEffect(*Queue);
+	}
 
 	ProsperitocracyStatus::Report(StatusTag, /*OnScreenKey=*/ 0x9010,
-		FString::Printf(TEXT("%s on %s — %.1fs"), *StatusTag.ToString(), *Owner->GetName(), Duration));
+		bBecomesTheHead
+			? FString::Printf(TEXT("%s on %s — %.1fs"), *StatusTag.ToString(), *Owner->GetName(), Duration)
+			: FString::Printf(TEXT("%s joins %s — %.1fs, %d ahead of it, its clock already running"),
+				*StatusTag.ToString(), *Owner->GetName(), Duration, Queue->Waiting.Num() - 1));
 }
 
 void UProsperitocracyStatusComponent::ApplyTickDamage(const FProsperitocracyLiveStatus& Live)
@@ -302,10 +349,10 @@ USceneComponent* UProsperitocracyStatusComponent::WhereTheFireHangsOnThisBody(FN
 	return Owner->GetRootComponent();
 }
 
-void UProsperitocracyStatusComponent::BeginStatusEffect(FProsperitocracyLiveStatus& Live)
+void UProsperitocracyStatusComponent::BeginStatusEffect(FProsperitocracyStatusQueue& Queue)
 {
 	AActor* Owner = GetOwner();
-	UNiagaraSystem* Effect = Owner ? ProsperitocracyStatus::FindStatusEffect(Live.StatusTag) : nullptr;
+	UNiagaraSystem* Effect = Owner ? ProsperitocracyStatus::FindStatusEffect(Queue.StatusTag) : nullptr;
 
 	// A status with no look of its own is left alone — presence is scope, asked here exactly as it is
 	// asked of a stat. Nothing below belongs to any particular body.
@@ -328,38 +375,38 @@ void UProsperitocracyStatusComponent::BeginStatusEffect(FProsperitocracyLiveStat
 	// itself once its last flame dies, so nothing has to remember to clean this up.
 	// KeepRelativeOffset and not SnapToTarget: snapped, the bone's own scale comes with it, and the fire would
 	// take the rig's scale. At the socket with no offset is the chest, at the effect's own size.
-	Live.Effect = UNiagaraFunctionLibrary::SpawnSystemAttached(Effect, AttachTo, TheBone,
+	Queue.Effect = UNiagaraFunctionLibrary::SpawnSystemAttached(Effect, AttachTo, TheBone,
 		FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::KeepRelativeOffset,
 		/*bAutoDestroy=*/ true, /*bAutoActivate=*/ true);
 
-	if (!Live.Effect)
+	if (!Queue.Effect)
 	{
 		UE_LOG(LogProsperitocracy, Warning, TEXT("[Status] %s names a look that could not be put on %s — nothing spawned."),
-			*Live.StatusTag.ToString(), *GetNameSafe(Owner));
+			*Queue.StatusTag.ToString(), *GetNameSafe(Owner));
 		return;
 	}
 
 	// THE FLAMES KEEP RISING, whichever way the body falls: it rides the chest for its POSITION and keeps its own
 	// upright rotation, so a body on its side has fire standing out of it rather than fire lying flat on it.
-	Live.Effect->SetUsingAbsoluteRotation(true);
+	Queue.Effect->SetUsingAbsoluteRotation(true);
 
 	// A burning body an enemy can see burning is burning on every client that can see it, so the fire
 	// is replicated with the body it stands on rather than drawn on one machine only.
-	Live.Effect->SetIsReplicated(true);
+	Queue.Effect->SetIsReplicated(true);
 
 	// AND ITS LIGHT IS OURS — one per body, on its own clock. The effect's own light is gone from the asset,
 	// because a light per particle is a light that strobes as the cards spawn and die. It hangs on the SAME bone the
 	// flames do: on the body's component alone it sat at the mesh's origin, which is between the feet.
-	BeginTheLightOnThisBody(Live, AttachTo, TheBone, Now);
+	BeginTheLightOnThisBody(Queue, AttachTo, TheBone, Now);
 
-	ProsperitocracyStatus::Report(Live.StatusTag, /*OnScreenKey=*/ 0x9012,
+	ProsperitocracyStatus::Report(Queue.StatusTag, /*OnScreenKey=*/ 0x9012,
 		FString::Printf(TEXT("%s — its fire is on %s, on its chest, with one light of ours"),
-			*Live.StatusTag.ToString(), *GetNameSafe(Owner)));
+			*Queue.StatusTag.ToString(), *GetNameSafe(Owner)));
 }
 
-void UProsperitocracyStatusComponent::BeginTheLightOnThisBody(FProsperitocracyLiveStatus& Live, USceneComponent* AttachTo, FName OnBone, float Now)
+void UProsperitocracyStatusComponent::BeginTheLightOnThisBody(FProsperitocracyStatusQueue& Queue, USceneComponent* AttachTo, FName OnBone, float Now)
 {
-	if (!AttachTo || Live.Light.TheLight)
+	if (!AttachTo || Queue.Light.TheLight)
 	{
 		return;
 	}
@@ -378,27 +425,27 @@ void UProsperitocracyStatusComponent::BeginTheLightOnThisBody(FProsperitocracyLi
 	TheLight->SetIntensity(0.0f);
 	TheLight->RegisterComponent();
 
-	Live.Light.TheLight = TheLight;
-	Live.Light.WhatItIsWorth = CandelasABurningBodyIsLitWith;
-	Live.Light.WhenItWasLit = Now;
+	Queue.Light.TheLight = TheLight;
+	Queue.Light.WhatItIsWorth = CandelasABurningBodyIsLitWith;
+	Queue.Light.WhenItWasLit = Now;
 }
 
 void UProsperitocracyStatusComponent::RetuneTheLightsOfBurningBodies(float Now)
 {
 	// WHILE IT BURNS: up over its own short ramp, then full worth for as long as the burn lasts. Every frame, so
 	// the ramp is a ramp and not a step.
-	for (FProsperitocracyLiveStatus& Live : LiveStatuses)
+	for (FProsperitocracyStatusQueue& Queue : Queues)
 	{
-		UPointLightComponent* TheLight = Live.Light.TheLight;
+		UPointLightComponent* TheLight = Queue.Light.TheLight;
 		if (!TheLight)
 		{
 			continue;
 		}
 
 		const float HowFarUpItIs = (HowLongABurningBodysLightTakesToComeUpSeconds <= 0.0f) ? 1.0f
-			: FMath::Clamp((Now - Live.Light.WhenItWasLit) / HowLongABurningBodysLightTakesToComeUpSeconds, 0.0f, 1.0f);
+			: FMath::Clamp((Now - Queue.Light.WhenItWasLit) / HowLongABurningBodysLightTakesToComeUpSeconds, 0.0f, 1.0f);
 
-		TheLight->SetIntensity(Live.Light.WhatItIsWorth * HowFarUpItIs);
+		TheLight->SetIntensity(Queue.Light.WhatItIsWorth * HowFarUpItIs);
 	}
 
 	// AND THE ONES WHOSE BURN HAS ENDED: out over the second the last flames on the body take, then gone.
@@ -425,25 +472,25 @@ void UProsperitocracyStatusComponent::RetuneTheLightsOfBurningBodies(float Now)
 	}
 }
 
-void UProsperitocracyStatusComponent::EndStatusEffect(FProsperitocracyLiveStatus& Live)
+void UProsperitocracyStatusComponent::EndStatusEffect(FProsperitocracyStatusQueue& Queue)
 {
-	if (UNiagaraComponent* Effect = Live.Effect)
+	if (UNiagaraComponent* Effect = Queue.Effect)
 	{
 		// A STOP, not a cut: the effect spawns nothing more and puts itself out — the flames already on
 		// the body burn for as long as their own particles last, and the component destroys itself when
 		// the last one dies. Nothing is killed here and nothing is held on to.
 		Effect->Deactivate();
-		Live.Effect = nullptr;
+		Queue.Effect = nullptr;
 	}
 
 	// THE LIGHT LEAVES WITH THE FLAMES, NOT WITH THE STATUS: the burn's own second is how long the last cards on
 	// the body take to die, so the light is handed to the ones going out and fades across exactly that.
-	if (Live.Light.TheLight)
+	if (Queue.Light.TheLight)
 	{
-		FProsperitocracyBurningBodyLight GoingOut = Live.Light;
+		FProsperitocracyBurningBodyLight GoingOut = Queue.Light;
 		GoingOut.WhenItStartedGoingOut = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 		LightsGoingOut.Add(GoingOut);
-		Live.Light = FProsperitocracyBurningBodyLight();
+		Queue.Light = FProsperitocracyBurningBodyLight();
 	}
 }
 
@@ -452,15 +499,12 @@ bool UProsperitocracyStatusComponent::IsMovementStopped() const
 	// The movement gate asks by IDENTITY, not by numbers: Stun is the status whose tag says movement
 	// stops. A status being short or long is not what stops you — a slow, a bubble or a bleed can have
 	// any duration and none of them take your legs.
-	for (const FProsperitocracyLiveStatus& Live : LiveStatuses)
-	{
-		if (Live.StatusTag == ProsperitocracyGameplayTags::Status_Stun)
-		{
-			return true;
-		}
-	}
-
-	return false;
+	//
+	// And it is the HEAD that stops you — but a queue with anything in it always has a head, so the
+	// question is simply whether this body is carrying a stun at all. The one behind does not stun you
+	// early, and the one that takes over does not stun you late: it stuns you from the frame it is the head.
+	const FProsperitocracyStatusQueue* Queue = FindQueue(ProsperitocracyGameplayTags::Status_Stun);
+	return Queue != nullptr && Queue->Waiting.Num() > 0;
 }
 
 void UProsperitocracyStatusComponent::UpdateMovementGate()
@@ -524,25 +568,38 @@ void UProsperitocracyStatusComponent::TickComponent(float DeltaTime, ELevelTick 
 
 	const float Now = World->GetTimeSeconds();
 
-	for (int32 Index = LiveStatuses.Num() - 1; Index >= 0; --Index)
+	// Backwards, because ending a queue that has nothing left removes it from the array.
+	for (int32 QueueIndex = Queues.Num() - 1; QueueIndex >= 0; --QueueIndex)
 	{
-		FProsperitocracyLiveStatus& Live = LiveStatuses[Index];
+		FProsperitocracyStatusQueue& Queue = Queues[QueueIndex];
 
-		// Out of time: the status ends. Nothing lingers — the body keeps no memory of a burn that is
-		// over, so a re-application starts from full value like any other.
-		if (Now >= Live.EndTime)
+		// THE ONES STILL WAITING CAN DIE BEFORE THEIR TURN — their clocks have been running since they
+		// landed, so one whose own time is up while it waits never applies at all.
+		DropExpiredWaiters(Queue, Now);
+
+		if (Queue.Waiting.Num() == 0)
 		{
-			EndStatus(Index);
+			Queues.RemoveAt(QueueIndex);
 			continue;
 		}
 
-		if (DoesTick(Live) && Now >= Live.NextTickTime)
+		FProsperitocracyLiveStatus& Head = Queue.Waiting[0];
+
+		// Out of time: the head ends and the one behind it takes over with what it has left.
+		if (Now >= Head.EndTime)
 		{
-			const float Interval = GetTickInterval(Live);
-			ApplyTickDamage(Live);
+			EndTheHead(QueueIndex);
+			continue;
+		}
+
+		// ONLY THE HEAD APPLIES. The ones behind it tick nothing and wear nothing while they wait.
+		if (DoesTick(Head) && Now >= Head.NextTickTime)
+		{
+			const float Interval = GetTickInterval(Head);
+			ApplyTickDamage(Head);
 			// The next tick is one interval on, from the tick that just fired — a late frame shifts the
 			// ticks, it never fires two at once.
-			Live.NextTickTime = (Interval > 0.0f) ? (Live.NextTickTime + Interval) : Live.EndTime;
+			Head.NextTickTime = (Interval > 0.0f) ? (Head.NextTickTime + Interval) : Head.EndTime;
 		}
 	}
 
@@ -551,51 +608,97 @@ void UProsperitocracyStatusComponent::TickComponent(float DeltaTime, ELevelTick 
 	UpdateMovementGate();
 }
 
-void UProsperitocracyStatusComponent::EndStatus(int32 Index)
+void UProsperitocracyStatusComponent::EndTheHead(int32 QueueIndex)
 {
-	if (!LiveStatuses.IsValidIndex(Index))
+	if (!Queues.IsValidIndex(QueueIndex) || Queues[QueueIndex].Waiting.Num() == 0)
 	{
 		return;
 	}
 
-	const FGameplayTag StatusTag = LiveStatuses[Index].StatusTag;
+	FProsperitocracyStatusQueue& Queue = Queues[QueueIndex];
+	const FGameplayTag StatusTag = Queue.StatusTag;
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 
-	// The status's look goes off with it, told to stop BEFORE the entry leaves, so the effect is never
-	// orphaned: from here it puts itself out and cleans itself up.
-	EndStatusEffect(LiveStatuses[Index]);
-
-	if (AProsperitocracyStatHostActor* Host = LiveStatuses[Index].Host)
+	// The head's own GAS home goes with it, and nothing lingers behind it.
+	if (AProsperitocracyStatHostActor* Host = Queue.Waiting[0].Host)
 	{
 		Host->Destroy();
 	}
 
-	LiveStatuses.RemoveAt(Index);
+	Queue.Waiting.RemoveAt(0);
 
-	// The tag comes off only when NOTHING of that status is left on the body — the identity is per
-	// status, not per instance.
-	if (!FindLive(StatusTag))
+	// THE ONE BEHIND IT IS THE HEAD NOW, with the time it has LEFT — not a fresh clock, because its clock
+	// has been running since the moment it landed. The look does not move: the fire belongs to the body,
+	// and what changes at a handover is the tick's damage and how often it lands.
+	if (Queue.Waiting.Num() > 0)
 	{
-		if (UAbilitySystemComponent* TargetAbilitySystemComponent = GetOwnerAbilitySystemComponent())
+		const float SecondsLeft = FMath::Max(0.0f, Queue.Waiting[0].EndTime - Now);
+		ProsperitocracyStatus::Report(StatusTag, /*OnScreenKey=*/ 0x9010,
+			FString::Printf(TEXT("%s on %s takes over — %.1fs left of its own clock"),
+				*StatusTag.ToString(), *GetNameSafe(GetOwner()), SecondsLeft));
+		return;
+	}
+
+	// Nothing of this status is left on the body: the look goes out, the tag comes off, the queue goes.
+	EndStatusEffect(Queue);
+
+	if (UAbilitySystemComponent* TargetAbilitySystemComponent = GetOwnerAbilitySystemComponent())
+	{
+		TargetAbilitySystemComponent->SetLooseGameplayTagCount(StatusTag, 0);
+	}
+
+	ProsperitocracyStatus::Report(StatusTag, /*OnScreenKey=*/ 0x9010,
+		FString::Printf(TEXT("%s ended on %s"), *StatusTag.ToString(), *GetNameSafe(GetOwner())));
+
+	Queues.RemoveAt(QueueIndex);
+}
+
+void UProsperitocracyStatusComponent::DropExpiredWaiters(FProsperitocracyStatusQueue& Queue, float Now)
+{
+	// From the back down to the head: the head's own ending is the queue's business (EndTheHead), and this
+	// only removes the ones whose clock ran out before they ever got to apply.
+	for (int32 Index = Queue.Waiting.Num() - 1; Index >= 1; --Index)
+	{
+		FProsperitocracyLiveStatus& Live = Queue.Waiting[Index];
+		if (Now < Live.EndTime)
 		{
-			TargetAbilitySystemComponent->SetLooseGameplayTagCount(StatusTag, 0);
+			continue;
 		}
 
-		ProsperitocracyStatus::Report(StatusTag, /*OnScreenKey=*/ 0x9010,
-			FString::Printf(TEXT("%s ended on %s"), *StatusTag.ToString(), *GetNameSafe(GetOwner())));
+		if (AProsperitocracyStatHostActor* Host = Live.Host)
+		{
+			Host->Destroy();
+		}
+
+		// Said out loud: a version that never landed and a version that hit are one silence otherwise.
+		ProsperitocracyStatus::Report(Queue.StatusTag, /*OnScreenKey=*/ 0x9010,
+			FString::Printf(TEXT("%s died waiting on %s — never applied"),
+				*Queue.StatusTag.ToString(), *GetNameSafe(GetOwner())));
+
+		Queue.Waiting.RemoveAt(Index);
 	}
 }
 
 void UProsperitocracyStatusComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// A body that goes away takes its statuses and their GAS homes with it.
-	for (FProsperitocracyLiveStatus& Live : LiveStatuses)
+	// A body that goes away takes its statuses and their GAS homes with it — and the lights they throw,
+	// rather than leaving a lamp hanging in the world with nothing burning under it.
+	for (FProsperitocracyStatusQueue& Queue : Queues)
 	{
-		if (AProsperitocracyStatHostActor* Host = Live.Host)
+		for (FProsperitocracyLiveStatus& Live : Queue.Waiting)
 		{
-			Host->Destroy();
+			if (AProsperitocracyStatHostActor* Host = Live.Host)
+			{
+				Host->Destroy();
+			}
+		}
+
+		if (Queue.Light.TheLight)
+		{
+			Queue.Light.TheLight->DestroyComponent();
 		}
 	}
-	LiveStatuses.Reset();
+	Queues.Reset();
 
 	// AND THE LIGHTS OF BURNS THAT ARE STILL GOING OUT — a body that goes away takes them too, rather than leaving
 	// a lamp hanging in the world with nothing burning under it.

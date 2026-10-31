@@ -50,21 +50,21 @@ struct FProsperitocracyBurningBodyLight
 /**
  * FProsperitocracyLiveStatus
  *
- * ONE status running on one body: which status it is, the block that IS its numbers, the GAS home
- * those numbers are evaluated on, who set it, and when it runs out.
+ * ONE status running on one body: which block it came from, the GAS home that block's numbers are
+ * evaluated on, who set it, when it lands, when it runs out and when it next ticks.
  *
- * Nothing here is a number of its own. Every value (how long it lasts, how often it ticks, what a
- * tick is worth) is read off the status's own block through the ONE evaluator, so a Duration perk
- * moves a stun's length the same way it would move a burn's, and a status can never be priced at a
- * companion's numbers.
+ * The block IS the identity — two things that set the same block are the same version, however many of
+ * them hit — and the block is also the only source of every number: how long it lasts, how often it
+ * ticks, what a tick is worth. Nothing here is a number of its own, so a Duration perk moves a stun's
+ * length the same way it would move a burn's.
+ *
+ * Its LOOK is not here, and never was one-per-status in the way that matters: the fire a burning body
+ * wears belongs to the body, and lives on the queue below.
  */
 USTRUCT()
 struct FProsperitocracyLiveStatus
 {
 	GENERATED_BODY()
-
-	/** Which status this is — the tag the body carries while it lasts (Status.Stun / Status.Burn). */
-	FGameplayTag StatusTag;
 
 	/** The status's OWN block. Its Duration is this status's length, never the applier's. */
 	UPROPERTY()
@@ -94,22 +94,43 @@ struct FProsperitocracyLiveStatus
 
 	/** World seconds of the next tick — only meaningful for a status that ticks (Burn). */
 	float NextTickTime = 0.0f;
+};
+
+/**
+ * FProsperitocracyStatusQueue
+ *
+ * ONE KIND of status on one body, oldest first. Only Waiting[0] — the head — applies: it ticks, it is
+ * the one stunning you, it is what the body looks like. The rest are behind it, and their clocks have
+ * been running since the moment each of them landed, because a status's clock is its own and no
+ * application starts it.
+ *
+ * What that buys, in his words: you feel the full burn, you cannot cheese it by taking a less bad burn,
+ * and you cannot cheese it by leaving the fire when the first burn ends.
+ *
+ * The LOOK and the LIGHT live here rather than on one entry, because they belong to the body: a body
+ * that is burning is on fire once, and a handover changes the damage and the rate, never the fire.
+ */
+USTRUCT()
+struct FProsperitocracyStatusQueue
+{
+	GENERATED_BODY()
+
+	/** Which status this queue is — the tag the body carries while anything in it lasts. */
+	FGameplayTag StatusTag;
+
+	/** Oldest first. Waiting[0] is the head, and only the head applies. */
+	UPROPERTY()
+	TArray<FProsperitocracyLiveStatus> Waiting;
 
 	/**
-	 * The status's own LOOK — the effect that stands on the body for as long as this status lasts.
-	 *
-	 * It is hung on the body's CHEST, not on its origin: a body that falls over lies down while its capsule stays
-	 * standing, and fire left standing on the capsule is fire in mid-air over a man on the ground. The effect takes
-	 * no scale, and keeps its own upright rotation so the flames rise whichever way the body falls.
-	 *
-	 * Null for a status that wears no effect (the pairing is one place, and a status absent from it has
-	 * no look), and null again the moment the status ends — the effect is told to stop and destroys
-	 * itself once its last particle dies.
+	 * The effect this body wears for as long as THIS queue has anything in it — on the chest, never on
+	 * the capsule, and told to stop when the last one leaves. A status absent from the look pairing has
+	 * none, and is left alone.
 	 */
 	UPROPERTY()
 	TObjectPtr<UNiagaraComponent> Effect = nullptr;
 
-	/** The light this body's status throws. OURS, one per body, never a light per particle in the effect. */
+	/** The light this body throws while this queue is live. OURS, one per body, never one per particle. */
 	UPROPERTY()
 	FProsperitocracyBurningBodyLight Light;
 };
@@ -131,13 +152,14 @@ struct FProsperitocracyLiveStatus
  *
  * Behaviour a status has, beyond its numbers:
  *
- *   - **No stacking, and no taking over either** (his rule, 2026-10-01). A body keeps the status it is
- *     carrying until that one EXPIRES; while one is on, the same status landing again does nothing at
- *     all - no refresh, no reset, no comparison - and the next application starts a fresh one the
- *     moment the last runs out. Universal: every status, every body, every source.
- *     What this replaced: the newcomer's whole value against what was LEFT of the one on the body,
- *     with a winner that reset the clock - and a fire re-applying every fifth of a second reset it
- *     before the burn's first tick could ever land, so a body burned and took no damage at all.
+ *   - **A queue per kind, and only the head applies** (his rule, 2026-10-30). Every kind of status has
+ *     its own queue, oldest first; the two queues are parallel, so a body can be burning and stunned at
+ *     once. Each status's clock runs from the moment IT landed, whether it is applying or not: the one
+ *     behind is already burning down while it waits, and it takes over with what it has left when the
+ *     head expires — or is dropped, if its own time runs out first.
+ *     The same block landing again moves that status's end time to a full clock and NOT its next tick:
+ *     a fire re-applies every fifth of a second, and a refresh that pushed the tick back once left a
+ *     body burning with no damage at all until it walked out.
  *   - **A tick's damage is a normal Piercing damage line**, through the same pen-gate → resist path as
  *     a bullet, from the status's own block (its Penetration against the part it caught). It carries no
  *     falloff, because the block carries no Range/Falloff — presence is scope, not a special case.
@@ -157,14 +179,13 @@ public:
 	 * Put ONE status on this body, from the entry that applied it (UProsperitocracyStatTable::
 	 * AppliedEffects). The status's own block is the only source of its numbers.
 	 *
+	 * A block this body is already carrying refreshes its own place; a different block joins the back.
+	 *
 	 * Server-authoritative: a status is decided once, where the hit was resolved.
 	 */
 	void ApplyStatus(const FGameplayTag& StatusTag, const UProsperitocracyStatTable* Block,
 		UAbilitySystemComponent* SourceAbilitySystemComponent,
 		TSubclassOf<UGameplayEffect> DamageEffectClass, const FHitResult& Hit);
-
-	/** The statuses running on this body right now — read by anything that must ask, never to re-decide. */
-	const TArray<FProsperitocracyLiveStatus>& GetLiveStatuses() const { return LiveStatuses; }
 
 	/** True while a status that stops movement is on this body. */
 	bool IsMovementStopped() const;
@@ -178,14 +199,15 @@ private:
 	/** This body's ability system — where a status's tag is stamped and read. */
 	UAbilitySystemComponent* GetOwnerAbilitySystemComponent() const;
 
-	/** The live entry for a status tag, if this body has one. */
-	FProsperitocracyLiveStatus* FindLive(const FGameplayTag& StatusTag);
+	/** The queue for a status tag, or null when this body carries none of it. */
+	FProsperitocracyStatusQueue* FindQueue(const FGameplayTag& StatusTag);
+	const FProsperitocracyStatusQueue* FindQueue(const FGameplayTag& StatusTag) const;
+
+	/** The entry in this queue that came from that block — the status's identity — or null. */
+	static FProsperitocracyLiveStatus* FindWaiting(FProsperitocracyStatusQueue& Queue, const UProsperitocracyStatTable* Block);
 
 	/** A status's FINAL value read off its own block through the one evaluator. 0 = the block lacks it. */
 	float GetStatusStat(const FProsperitocracyLiveStatus& Live, EProsperitocracyStat Stat) const;
-
-	/** Seconds left on a status, never negative. */
-	float GetSecondsLeft(const FProsperitocracyLiveStatus& Live, float Now) const;
 
 	/** Does this status tick damage? True when its block carries Rate and Piercing Damage. */
 	static bool DoesTick(const FProsperitocracyLiveStatus& Live);
@@ -193,30 +215,37 @@ private:
 	/** How often a ticking status ticks: one over its own Rate. 0 when it carries none. */
 	float GetTickInterval(const FProsperitocracyLiveStatus& Live) const;
 
-	/** A status's time is up: it ends, and its GAS home goes with it. */
-	void EndStatus(int32 Index);
+	/**
+	 * The head's time is up: it ends, its GAS home goes with it, and the one behind it becomes the head
+	 * with the time it has left. When nothing is left, the queue's look goes out and the tag comes off.
+	 */
+	void EndTheHead(int32 QueueIndex);
+
+	/** Drop the ones whose own clock ran out while they were still waiting: they never apply at all. */
+	void DropExpiredWaiters(FProsperitocracyStatusQueue& Queue, float Now);
 
 	/** One tick of a ticking status: one normal Piercing damage line, through the one pipeline. */
 	void ApplyTickDamage(const FProsperitocracyLiveStatus& Live);
 
 	/**
-	 * Put this status's own look on the body, on its chest. Called once, when the status LANDS — never on a
-	 * re-application, because a status that is already burning does not light a second fire.
+	 * Put this queue's own look on the body, on its chest. Called when the queue goes from empty to one —
+	 * never again while it lasts, because the fire belongs to the body and a handover changes numbers,
+	 * not the fire.
 	 */
-	void BeginStatusEffect(FProsperitocracyLiveStatus& Live);
+	void BeginStatusEffect(FProsperitocracyStatusQueue& Queue);
 
 	/**
-	 * Tell this status's look to stop: no more fire is spawned and the flames already on the body burn
+	 * Tell this queue's look to stop: no more fire is spawned and the flames already on the body burn
 	 * out at their own pace, then the effect destroys itself. A stop, never a cut. The light is handed to the
 	 * ones going out, so it leaves over the same second the flames do instead of cutting with the status.
 	 */
-	void EndStatusEffect(FProsperitocracyLiveStatus& Live);
+	void EndStatusEffect(FProsperitocracyStatusQueue& Queue);
 
 	/**
 	 * THE LIGHT THIS BURNING BODY THROWS — made once, when the burn lands, hung on the same chest the fire hangs
 	 * on. Ours, not the effect's: one light that rides the body instead of one light per particle strobing on it.
 	 */
-	void BeginTheLightOnThisBody(FProsperitocracyLiveStatus& Live, USceneComponent* AttachTo, FName OnBone, float Now);
+	void BeginTheLightOnThisBody(FProsperitocracyStatusQueue& Queue, USceneComponent* AttachTo, FName OnBone, float Now);
 
 	/** Its brightness this frame: up over its own ramp, and out over the second after the burn ends. */
 	void RetuneTheLightsOfBurningBodies(float Now);
@@ -242,9 +271,9 @@ private:
 	/** Take the controls away / give them back, as the movement-stopping status lands and ends. */
 	void UpdateMovementGate();
 
-	/** Every status this body is carrying. */
+	/** Every status this body is carrying, one queue per kind, oldest first. */
 	UPROPERTY()
-	TArray<FProsperitocracyLiveStatus> LiveStatuses;
+	TArray<FProsperitocracyStatusQueue> Queues;
 
 	/** The lights of burns that have ENDED and are still going out: they outlive the status by that second. */
 	UPROPERTY()
