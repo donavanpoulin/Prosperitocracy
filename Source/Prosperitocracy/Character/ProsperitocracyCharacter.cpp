@@ -247,6 +247,11 @@ UAnimMontage* AProsperitocracyCharacter::GetMeleeMontageOfTheWeaponInHand() cons
 
 bool AProsperitocracyCharacter::MeleeWithGunInHand()
 {
+	if (!IsAllowedToAct())
+	{
+		return false;
+	}
+
 	// THE MELEE KEY ASKS THE THING IN HAND, exactly as the fire, the reload and the second button do:
 	// a gun answers with the bash, a blade with its blood-mode toggle, and the body never learns which
 	// of them it asked.
@@ -262,6 +267,11 @@ bool AProsperitocracyCharacter::MeleeWithGunInHand()
 
 bool AProsperitocracyCharacter::RunTheBash()
 {
+	if (!IsAllowedToAct())
+	{
+		return false;
+	}
+
 	// The bash is an ABILITY (UProsperitocracyGameplayAbility_Bash): this body does not swing anything
 	// itself, it asks the character's ability system to run the bash — and the bash owns the swing, its
 	// reach (its Range stat) and its damage. Nothing in hand is the ability's own business: it refuses
@@ -281,6 +291,11 @@ bool AProsperitocracyCharacter::RunTheBash()
 
 bool AProsperitocracyCharacter::ReloadTheWeaponInHand()
 {
+	if (!IsAllowedToAct())
+	{
+		return false;
+	}
+
 	// The thing in hand answers for itself, and the body knows nothing else about it — not what it is,
 	// not whether it has a magazine. A gun reloads; a melee's answer is nothing, because it has no
 	// magazine to swap and never will.
@@ -296,6 +311,11 @@ bool AProsperitocracyCharacter::ReloadTheWeaponInHand()
 
 bool AProsperitocracyCharacter::PrimaryActionTheWeaponInHand()
 {
+	if (!IsAllowedToAct())
+	{
+		return false;
+	}
+
 	// The left mouse button, on exactly the same terms as the reload and the right press below: the
 	// thing in hand answers for itself. A gun's primary action is its shot, the blade's is its swing,
 	// and a thing with neither answers with nothing at all. Nothing here learns which of them it asked
@@ -314,6 +334,11 @@ bool AProsperitocracyCharacter::PrimaryActionTheWeaponInHand()
 
 bool AProsperitocracyCharacter::SecondaryActionTheWeaponInHand()
 {
+	if (!IsAllowedToAct())
+	{
+		return false;
+	}
+
 	// The right mouse button, on exactly the same terms as the reload above: the thing in hand answers
 	// for itself. A gun's secondary action is its aim; the blade's is its dash; a thing with neither
 	// answers with nothing at all. Nothing here learns which of them it asked.
@@ -340,6 +365,20 @@ bool AProsperitocracyCharacter::SecondaryActionReleasedTheWeaponInHand()
 
 	Weapon->SecondaryActionReleased();
 	return true;
+}
+
+bool AProsperitocracyCharacter::IsAllowedToAct() const
+{
+	// THE ONE GATE. A body with no status component has nothing on it that forbids acting, so the answer
+	// is yes; a body that has one gets the single answer the whole game asks for.
+	return !Statuses || Statuses->AllowsActing();
+}
+
+bool AProsperitocracyCharacter::CanJumpInternal_Implementation() const
+{
+	// A jump is the one verb the ENGINE asks itself about, so the gate is asked here once and the
+	// blueprint's own jump node needs no edit at all.
+	return IsAllowedToAct() && Super::CanJumpInternal_Implementation();
 }
 
 bool AProsperitocracyCharacter::IsTheWeaponInHandAiming() const
@@ -452,6 +491,11 @@ bool AProsperitocracyCharacter::SetSlotOut(FGameplayTag Slot, bool bOut)
 
 bool AProsperitocracyCharacter::CycleSlot(int32 Step)
 {
+	if (!IsAllowedToAct())
+	{
+		return false;
+	}
+
 	// The ORDER is the loadout's own, built from the one place a slot's name lives, so no graph and no
 	// second list here can disagree with it.
 	const UProsperitocracyLoadoutComponent* Loadout = FindComponentByClass<UProsperitocracyLoadoutComponent>();
@@ -508,6 +552,11 @@ bool AProsperitocracyCharacter::CycleSlot(int32 Step)
 
 bool AProsperitocracyCharacter::ToggleTheChosenSlot()
 {
+	if (!IsAllowedToAct())
+	{
+		return false;
+	}
+
 	const UProsperitocracyLoadoutComponent* Loadout = FindComponentByClass<UProsperitocracyLoadoutComponent>();
 	if (!Loadout)
 	{
@@ -1626,6 +1675,19 @@ float AProsperitocracyCharacter::GetThrowWeightMultiplier() const
 void AProsperitocracyCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	// THE GATE CLOSING TAKES WHAT HE WAS HOLDING WITH IT. Aiming is a HOLD, so a man who may not act is
+	// not still holding anything. One check on the answer FLIPPING — the body asks, nothing calls in from
+	// the status — because the body is the thing that owns its own verbs.
+	const bool bMayAct = IsAllowedToAct();
+	if (bMayAct != bCouldActLastFrame)
+	{
+		bCouldActLastFrame = bMayAct;
+		if (!bMayAct)
+		{
+			SecondaryActionReleasedTheWeaponInHand();
+		}
+	}
 
 	// THE BODY FIRST, THE VIEW AFTER IT — and the view on EVERY frame, including the frames the body's own
 	// half returns early because the physics has him. Two halves, one order, and it is the order that

@@ -16,7 +16,7 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyAbilitySystemComponent)
 
-UE_DEFINE_GAMEPLAY_TAG(TAG_Gameplay_AbilityInputBlocked, "Gameplay.AbilityInputBlocked");
+#include "AbilitySystem/ProsperitocracyStatusComponent.h"
 
 UProsperitocracyAbilitySystemComponent::UProsperitocracyAbilitySystemComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -301,6 +301,15 @@ bool UProsperitocracyAbilitySystemComponent::TryActivateAbilityByInputTag(const 
 		return false;
 	}
 
+	// THE ONE GATE, on the door that skips ProcessAbilityInput: this path calls TryActivateAbility
+	// straight away, so it asks the same question — otherwise an ability could be started through a door
+	// a stun cannot close.
+	const UProsperitocracyStatusComponent* Statuses = GetOwner() ? GetOwner()->FindComponentByClass<UProsperitocracyStatusComponent>() : nullptr;
+	if (Statuses && !Statuses->AllowsActing())
+	{
+		return false;
+	}
+
 	// The same resolution the input path above uses: the granted spec carries the tag, so a door can
 	// ask for "the bash" without knowing the ability class or holding its handle.
 	for (const FGameplayAbilitySpec& AbilitySpec : ActivatableAbilities.Items)
@@ -316,7 +325,11 @@ bool UProsperitocracyAbilitySystemComponent::TryActivateAbilityByInputTag(const 
 
 void UProsperitocracyAbilitySystemComponent::ProcessAbilityInput(float DeltaTime, bool bGamePaused)
 {
-	if (HasMatchingGameplayTag(TAG_Gameplay_AbilityInputBlocked))
+	// THE ONE GATE, asked where abilities start: the body's own statuses answer it. Nothing else in the
+	// game records "may not act", so a stun cannot disagree with itself — and the held set is dropped, so
+	// a trigger already down dies with the gate.
+	const UProsperitocracyStatusComponent* Statuses = GetOwner() ? GetOwner()->FindComponentByClass<UProsperitocracyStatusComponent>() : nullptr;
+	if (Statuses && !Statuses->AllowsActing())
 	{
 		ClearAbilityInput();
 		return;

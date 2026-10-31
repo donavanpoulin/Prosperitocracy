@@ -161,11 +161,13 @@ struct FProsperitocracyStatusQueue
  *     a fire re-applies every fifth of a second, and a refresh that pushed the tick back once left a
  *     body burning with no damage at all until it walked out.
  *   - **A tick's damage is a normal Piercing damage line**, through the same pen-gate → resist path as
- *     a bullet, from the status's own block (its Penetration against the part it caught). It carries no
- *     falloff, because the block carries no Range/Falloff — presence is scope, not a special case.
- *   - **Stun takes the controls away and nothing else.** The body is stopped dead at the instant it
- *     lands, and its own input is gone for as long as the status lasts. Everything else keeps running:
- *     a shove still moves it, gravity still pulls it, so a body stunned in the air drops and lands.
+ *     a bullet — but it carries NO pen: a status is not an attack that penetrates anything, so nothing
+ *     can bounce it off a plate and what answers it is the target's own Piercing Resist. It carries no
+ *     falloff either, because the block carries no Range/Falloff — presence is scope, not a special case.
+ *   - **A stun closes one gate and takes part of his speed** (PLANS/effects.md). It is not the controller,
+ *     not the input stack and not a tag: the head stun says when he may act again, every door the player
+ *     has asks that one question, and the speed he keeps is ONE number for every stun in the game.
+ *     Gravity and a shove are untouched: a body stunned in the air drops and lands.
  */
 UCLASS(ClassGroup = (Prosperitocracy), meta = (BlueprintSpawnableComponent))
 class UProsperitocracyStatusComponent : public UActorComponent
@@ -187,12 +189,30 @@ public:
 		UAbilitySystemComponent* SourceAbilitySystemComponent,
 		TSubclassOf<UGameplayEffect> DamageEffectClass, const FHitResult& Hit);
 
-	/** True while a status that stops movement is on this body. */
-	bool IsMovementStopped() const;
+	/**
+	 * Whether this body may act at all — THE ONE GATE, and the only answer to it in the game.
+	 *
+	 * A stun is the status that forbids acting: every door the player has asks this, the ability system's
+	 * own input door asks this, and the jump asks this. There is no tag, no controller and no input stack
+	 * involved, and nothing else records "stunned" anywhere.
+	 */
+	bool AllowsActing() const;
+
+	/**
+	 * The share of his own Move Speed this body may use right now — 1 when nothing takes any.
+	 *
+	 * It is the head stun as the wire carries it: when it ends, and the share he keeps — resolved on the
+	 * server off the block's own row, through the one evaluator. Its last half second hands the share
+	 * back, reaching 1 on the tick the status ends, so the legs coming back and the controls coming back
+	 * are one event.
+	 */
+	float GetSpeedShare() const;
 
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 protected:
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
@@ -220,6 +240,13 @@ private:
 	 * with the time it has left. When nothing is left, the queue's look goes out and the tag comes off.
 	 */
 	void EndTheHead(int32 QueueIndex);
+
+	/**
+	 * The tick phase of a status that has just BECOME the front — landing on an empty queue, or being
+	 * promoted when the one ahead ends. Nothing strikes while a status waits, so nothing is owed when it
+	 * takes over: its intervals count from the turn it got.
+	 */
+	void BeginItsTicks(FProsperitocracyLiveStatus& Head, float Now);
 
 	/** Drop the ones whose own clock ran out while they were still waiting: they never apply at all. */
 	void DropExpiredWaiters(FProsperitocracyStatusQueue& Queue, float Now);
@@ -268,8 +295,24 @@ private:
 	static constexpr float HowLongABurningBodysLightTakesToComeUpSeconds = 0.2f;
 	static constexpr float HowLongTheLightOnABurningBodyTakesToGoOutSeconds = 1.0f;
 
-	/** Take the controls away / give them back, as the movement-stopping status lands and ends. */
-	void UpdateMovementGate();
+	/** The share of his own speed a stunned body keeps — ONE number for every stun in the game. A stun
+	 *  does not get better or worse, only longer or shorter: its Duration is the only thing a source
+	 *  authors, and that lives on the source's own block. HIS 15%. */
+	static constexpr float HowMuchSpeedAStunLeavesHim = 0.15f;
+
+	/** How long a stun takes to give his speed back at the end — HIS 0.5 s, and its own number: the
+	 *  shot's push window is a different feature's half second and tuning one must not move the other. */
+	static constexpr float HowLongAStunGivesTheSpeedBackSeconds = 0.5f;
+
+	/**
+	 * THE HEAD STUN, AS THE WIRE CARRIES IT, written from the queue on the server and read by both sides.
+	 *
+	 * A client cannot own a clock, so the server resolves the two facts a client needs — when the stun
+	 * ends, and the share of his speed he keeps — off the head's own block. That is the one truth
+	 * serialised, not a second copy of a mechanism: every read goes through these two numbers on both
+	 * machines, so the server and a client can never disagree about whether he may act.
+	 */
+	void PublishTheStun();
 
 	/** Every status this body is carrying, one queue per kind, oldest first. */
 	UPROPERTY()
@@ -279,6 +322,11 @@ private:
 	UPROPERTY()
 	TArray<FProsperitocracyBurningBodyLight> LightsGoingOut;
 
-	/** True while the movement gate is closed, so a status landing and ending each act exactly once. */
-	bool bMovementStopped = false;
+	/** World seconds the head stun ends — past, or in the future, this is when he may act again. */
+	UPROPERTY(Replicated)
+	float StunEndsAt = 0.0f;
+
+	/** The share of his own Move Speed the head stun leaves him while it lasts. 1 when nothing is on him. */
+	UPROPERTY(Replicated)
+	float StunSpeedKeep = 1.0f;
 };

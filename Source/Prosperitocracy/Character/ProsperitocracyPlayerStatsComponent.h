@@ -70,10 +70,9 @@ namespace ProsperitocracyArmor
  * the character movement component. Anything that wants a stat asks GAS for its FINAL value, through
  * the same door as everything else (`UProsperitocracyStatSystemStatics::GetStatFinal`).
  *
- * The template's movement is untouched: its walk and run states still decide WHEN each speed
- * applies, and its graph asks this component for the number instead of holding one of its own. That
- * is deliberate — the number has one owner, and a stat that is not set never zeroes the body out
- * (movement keeps whatever it had).
+ * The template's movement still owns WHICH speed the body wants: its walk and run states write the
+ * number, and this component reads that write as one bit — running or walking — and then answers it
+ * from the stat. So the state keeps its say and the number still has one writer.
  *
  * There is ONE speed stat (Move Speed = the run speed) and every speed the body can move at is a
  * fraction of it. Walking is not a second stat: it is that same number times one universal constant,
@@ -307,26 +306,6 @@ public:
 	 */
 	void NotifyViewShake(float ShakeDegrees);
 
-	/**
-	 * What the live shot is doing to this character's speed right now, signed and in cm/s — the
-	 * number the body is actually being pushed by this frame.
-	 *
-	 * Positive when the character is moving BACK along the shot's line — the push is carrying them, so
-	 * their speed goes up. Negative when they are moving forward — they are spending speed fighting
-	 * it, so their speed goes down. Zero when they are standing still or moving across the line: there
-	 * is nothing to fight and nothing to ride.
-	 *
-	 * It is a share of the speed the character is actually at, so the same push bites the same at a
-	 * walk, at a sprint and crouched. The sign, the share and the decay are one number — the two
-	 * "ways" are not two rules.
-	 *
-	 * Forward the share is the gun's own Drag; backwards it is its Carry, which is Drag at half — so
-	 * the ride back is always the weaker half of one push. Both are the gun's stats, read off the one
-	 * evaluator by the gun that owns them.
-	 */
-	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
-	float GetShotPushDrag() const;
-
 	/** The jump's launch velocity: Jump Velocity through the weight penalty, onto the movement component. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Stats")
 	float GetJumpVelocity() const { return GetStat(EProsperitocracyStat::JumpVelocity) * GetWeightSpeedMultiplier(); }
@@ -499,35 +478,16 @@ private:
 	UCharacterMovementComponent* GetMovementComponent() const;
 
 	/**
-	 * The body, and which of its speed numbers it is moving at right now.
+	 * THE ONE PATH. The body's ground speed, in one product: the stat's own run speed (the walk is half
+	 * of it), times every share that is live on him — the shot's push, a status's slow.
 	 *
-	 * Crouching moves at its own number — slot 1 — and every other way of moving on the ground is the
-	 * standing number, slot 0. The push rides whichever one the body is actually using, which is what
-	 * makes it land crouched without a crouch rule anywhere.
-	 */
-	UCharacterMovementComponent* GetMovingBody(int32& OutSlot) const;
-
-	/**
-	 * Take the numbers the push rides on, each from whoever owns it: the standing number from the
-	 * movement state, the crouch number from the stat.
+	 * Nothing else in the game writes `MaxWalkSpeed` or `MaxWalkSpeedCrouched`: not a blueprint, not a
+	 * movement state, not another component. Every speed modification anyone ever adds is a factor in
+	 * this product, read every frame, and the body's number is never borrowed, adopted or handed back.
 	 *
-	 * A standing number that is what THIS component last wrote is ours, not the state's, and is left
-	 * out — so adopting can never mistake the push for the state's number and compound it with
-	 * itself. The crouch number is never adopted off the body: this component is the only thing that
-	 * writes it (it is the walk number, off the stat), so whatever is read back is this component's
-	 * own write — adopting it would leave the push riding, and later handing back, nothing.
+	 * Floored at a standstill, so a share can stop him and can never walk him backwards.
 	 */
-	void AdoptBodySpeedNumbers();
-
-	/**
-	 * Every speed number the body moves at, onto it: walk/run, crouch, and the jump. The one place
-	 * MaxWalkSpeed and MaxWalkSpeedCrouched are written from stats.
-	 *
-	 * Floored at a standstill: a shot push big enough to take the last of the character's speed must
-	 * be able to stop them, never to walk them backwards (the same reasoning as the weight penalty's
-	 * floor). A stat that is not set still leaves the body alone.
-	 */
-	void PushWalkSpeed();
+	void PublishGroundSpeed();
 
 	/**
 	 * The animation rate onto the body: how fast its animation should play for what a shot is doing to
@@ -551,16 +511,16 @@ private:
 	float GetAnimationRate() const;
 
 	/**
-	 * The body's speed number with the live push folded in: what the body is actually moving at while
-	 * a shot's push is running.
+	 * The share of its own speed the body actually has this frame, before it is written: the shot's
+	 * push and whatever a status is taking, multiplied. 1.0 when neither is running.
 	 *
-	 * The push cannot simply overwrite MaxWalkSpeed, because the movement state owns that number and
-	 * writes it whenever the character changes between walking and running — and while a sprint is
-	 * held it writes it every frame. So the push ADOPTS whatever the body's own number is at that
-	 * moment, rides on top of it, and gives it back untouched when the window lapses: the state's
-	 * number is never lost and a sprint is never quietly turned into a walk.
+	 * The push is a PERCENT of the body's speed (its Drag, or its Carry when it is moving back along
+	 * the shot's line), so its effect is a scale and never a number of cm/s — which is why nothing in
+	 * here has to know, or remember, what the body's speed happens to be. The status's share comes
+	 * from the body's own status queue, so a stun slows him through the same one read the drag pulls
+	 * him by.
 	 */
-	void ApplyShotPushToWalkSpeed();
+	float GetGroundSpeedScale() const;
 
 	/**
 	 * How much of the shot's push is left, 1 on the shot down to 0 when the window lapses.
@@ -646,19 +606,20 @@ private:
 	 */
 	static const FName ArmorColorParameterName;
 
-	/**
-	 * The walk and run numbers this component last published, so a re-price knows which of the two the
-	 * body is already moving at: a change re-prices the speed the body is IN — walk stays walk, run
-	 * stays run — and never picks one for it.
-	 */
-	float LastPublishedWalkSpeed = 0.0f;
-	float LastPublishedRunSpeed = 0.0f;
-
-	//~ The live shot push. One slot per speed number, and one push: a shot refreshes it, it never
-	//~ stacks. Slot 0 = the standing number (walk/run/sprint), slot 1 = the crouch number.
+	//~ The live shot push. One push: a shot refreshes it, it never stacks.
 
 	/** True while a shot's push is running. */
 	bool bShotPushActive = false;
+
+	/**
+	 * Whether the body is running rather than walking — the ONE bit of movement state the speed product
+	 * reads. Set by the sprint key through SetWantsToRun; walking is half the stat, so this chooses which
+	 * half the body uses and nothing else about it.
+	 */
+	bool bWantsToRun = false;
+
+	/** What this path last wrote onto the body — so a number it did not write is told apart from its own. */
+	float LastWrittenMaxWalkSpeed = 0.0f;
 
 	/** When the push lapses, in world seconds. A new shot pushes this out, it never adds to it. */
 	float ShotPushEndTime = 0.0f;
@@ -673,16 +634,6 @@ private:
 
 	/** Straight BACK down the line the shot went down (horizontal), the axis the push rides. */
 	FVector ShotPushBackwardAxis = FVector::ZeroVector;
-
-	/**
-	 * What the push rides on, per slot — each from its own owner, not two owners: slot 0 is the
-	 * standing number (walk/run/sprint) as the movement state last set it, slot 1 is the crouch
-	 * number off the stat (the walk number).
-	 */
-	float ShotPushBaseSpeed[2] = { 0.0f, 0.0f };
-
-	/** What this component last wrote into each number, so somebody else's write can be told apart. */
-	float ShotPushLastWritten[2] = { 0.0f, 0.0f };
 
 	/** The animation rate currently on the mesh, eased toward the target so a change is never a snap. */
 	float CurrentAnimationRate = 1.0f;

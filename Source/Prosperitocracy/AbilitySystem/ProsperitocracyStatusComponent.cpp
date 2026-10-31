@@ -12,12 +12,10 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
-#include "GameFramework/Character.h"
-#include "GameFramework/CharacterMovementComponent.h"
-#include "GameFramework/PlayerController.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+#include "Net/UnrealNetwork.h"
 #include "ProsperitocracyGameplayTags.h"
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStatSystemStatics.h"
@@ -85,6 +83,19 @@ UProsperitocracyStatusComponent::UProsperitocracyStatusComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = true;
+
+	// The stun's two facts are the ONLY thing this component puts on the wire: a client has to know
+	// whether the man may act, and how much of his speed he has. There is no second record of "stunned"
+	// for it to disagree with — these are written from the queue and read on both machines.
+	SetIsReplicatedByDefault(true);
+}
+
+void UProsperitocracyStatusComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(UProsperitocracyStatusComponent, StunEndsAt);
+	DOREPLIFETIME(UProsperitocracyStatusComponent, StunSpeedKeep);
 }
 
 UAbilitySystemComponent* UProsperitocracyStatusComponent::GetOwnerAbilitySystemComponent() const
@@ -207,6 +218,7 @@ void UProsperitocracyStatusComponent::ApplyStatus(const FGameplayTag& StatusTag,
 			if (RefreshDuration > 0.0f)
 			{
 				Already->EndTime = Now + RefreshDuration;
+				PublishTheStun();
 			}
 			return;
 		}
@@ -243,10 +255,6 @@ void UProsperitocracyStatusComponent::ApplyStatus(const FGameplayTag& StatusTag,
 	// and a line of turns: the one behind is already burning down while it waits, and takes over with
 	// what it has left — or is dropped, if its own time runs out first.
 	Prepared.EndTime = Now + Duration;
-	// A ticking status's first tick comes one interval after it lands, not on the same frame: N ticks
-	// over N intervals is what "X damage every X seconds for X seconds" says.
-	const float Interval = DoesTick(Prepared) ? GetTickInterval(Prepared) : 0.0f;
-	Prepared.NextTickTime = (Interval > 0.0f) ? (Now + Interval) : Prepared.EndTime;
 
 	// A QUEUE IS ITS CONTENTS: made here, only when there is something to put in it, so a status refused
 	// above never leaves an empty queue behind it. Asked for again because minting the status's GAS home
@@ -264,17 +272,16 @@ void UProsperitocracyStatusComponent::ApplyStatus(const FGameplayTag& StatusTag,
 
 	if (bBecomesTheHead)
 	{
-		// The tag is the status's identity while it lasts, stamped once however many versions are behind
-		// it — a count written, never added to, so a hundred shots are still one status.
-		if (UAbilitySystemComponent* TargetAbilitySystemComponent = GetOwnerAbilitySystemComponent())
-		{
-			TargetAbilitySystemComponent->SetLooseGameplayTagCount(StatusTag, 1);
-		}
-
-		// And the LOOK goes on with the first one, for the body — never again at a handover, because the
+		// The LOOK goes on with the first one, for the body — never again at a handover, because the
 		// fire belongs to the body and a handover changes the numbers, not the fire.
 		BeginStatusEffect(*Queue);
+
+		// And its ticks start with it: nothing strikes until it is the front (§ BeginItsTicks).
+		BeginItsTicks(Queue->Waiting.Last(), Now);
 	}
+
+	// And the body's gate and its speed are told, on the same frame it lands — never a frame later.
+	PublishTheStun();
 
 	ProsperitocracyStatus::Report(StatusTag, /*OnScreenKey=*/ 0x9010,
 		bBecomesTheHead
@@ -494,66 +501,72 @@ void UProsperitocracyStatusComponent::EndStatusEffect(FProsperitocracyStatusQueu
 	}
 }
 
-bool UProsperitocracyStatusComponent::IsMovementStopped() const
+float UProsperitocracyStatusComponent::GetSpeedShare() const
 {
-	// The movement gate asks by IDENTITY, not by numbers: Stun is the status whose tag says movement
-	// stops. A status being short or long is not what stops you — a slow, a bubble or a bleed can have
-	// any duration and none of them take your legs.
-	//
-	// And it is the HEAD that stops you — but a queue with anything in it always has a head, so the
-	// question is simply whether this body is carrying a stun at all. The one behind does not stun you
-	// early, and the one that takes over does not stun you late: it stuns you from the frame it is the head.
-	const FProsperitocracyStatusQueue* Queue = FindQueue(ProsperitocracyGameplayTags::Status_Stun);
-	return Queue != nullptr && Queue->Waiting.Num() > 0;
+	// The head stun as the wire carries it — the same two numbers on the server and on a client, so the
+	// legs and the movement read one answer wherever they run.
+	const float Keep = FMath::Clamp(StunSpeedKeep, 0.0f, 1.0f);
+	const UWorld* World = GetWorld();
+	const float Now = World ? World->GetTimeSeconds() : 0.0f;
+
+	// Nothing on him.
+	const float SecondsLeft = StunEndsAt - Now;
+	if (SecondsLeft <= 0.0f)
+	{
+		return 1.0f;
+	}
+
+	// FULL FROM THE FRAME IT LANDS — no ease-in — and then given back across its last half second, so
+	// the share reaches 1 on the same tick the status ends and the controls come back.
+	if (SecondsLeft >= HowLongAStunGivesTheSpeedBackSeconds)
+	{
+		return Keep;
+	}
+
+	const float GivenBack = 1.0f - (SecondsLeft / HowLongAStunGivesTheSpeedBackSeconds);
+	return FMath::Lerp(Keep, 1.0f, GivenBack);
 }
 
-void UProsperitocracyStatusComponent::UpdateMovementGate()
+bool UProsperitocracyStatusComponent::AllowsActing() const
 {
-	const bool bStopped = IsMovementStopped();
-	if (bStopped == bMovementStopped)
+	// ONE QUESTION, ONE ANSWER, on both machines: the head stun's own end time is the whole of it. No
+	// tag, no controller, no input stack, and nothing else recording "stunned" to disagree with.
+	const UWorld* World = GetWorld();
+	return !World || World->GetTimeSeconds() >= StunEndsAt;
+}
+
+void UProsperitocracyStatusComponent::PublishTheStun()
+{
+	// A CLIENT CANNOT OWN A CLOCK, so the server resolves the two facts a client needs and the wire
+	// carries them. Every read — the gate, the movement, the legs — goes through these numbers on both
+	// machines, so there is one answer and no branch on authority anywhere.
+	AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority())
 	{
 		return;
 	}
 
-	bMovementStopped = bStopped;
-	AActor* Owner = GetOwner();
-
-	if (bStopped)
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	const FProsperitocracyStatusQueue* Queue = FindQueue(ProsperitocracyGameplayTags::Status_Stun);
+	if (!Queue || Queue->Waiting.Num() == 0)
 	{
-		// The instant it lands: stopped dead. Its own speed is gone — and that is all that is gone.
-		if (ACharacter* Character = Cast<ACharacter>(Owner))
-		{
-			if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
-			{
-				Movement->StopMovementImmediately();
-			}
-		}
+		StunEndsAt = 0.0f;
+		StunSpeedKeep = 1.0f;
 
-		ProsperitocracyStatus::Report(ProsperitocracyGameplayTags::Status_Stun, /*OnScreenKey=*/ 0x9011,
-			FString::Printf(TEXT("Stun — stopped dead, controls gone%s"),
-				Cast<ACharacter>(Owner) && Cast<ACharacter>(Owner)->GetCharacterMovement()
-					&& Cast<ACharacter>(Owner)->GetCharacterMovement()->IsFalling() ? TEXT(" (in the air: still falling)") : TEXT("")));
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Status] no stun on the wire for %s — he may act"), *GetNameSafe(Owner));
+		return;
 	}
 
-	// The controls, both ways, and nothing else touched. Taking the input away IS the mechanic: with
-	// no input the body cannot walk, jump, fire or use anything, while a shove still shoves it and
-	// gravity still drops it — which is exactly why a body stunned in the air lands instead of hanging.
-	if (APawn* Pawn = Cast<APawn>(Owner))
-	{
-		if (APlayerController* PlayerController = Cast<APlayerController>(Pawn->GetController()))
-		{
-			if (bStopped)
-			{
-				PlayerController->DisableInput(PlayerController);
-			}
-			else
-			{
-				PlayerController->EnableInput(PlayerController);
-				ProsperitocracyStatus::Report(ProsperitocracyGameplayTags::Status_Stun, /*OnScreenKey=*/ 0x9011,
-					TEXT("Stun over — controls back"));
-			}
-		}
-	}
+	const FProsperitocracyLiveStatus& Head = Queue->Waiting[0];
+	StunEndsAt = Head.EndTime;
+
+	// ONE NUMBER FOR EVERY STUN IN THE GAME. A stun does not get better or worse, only longer or shorter:
+	// its Duration is the only thing a source authors, on that source's own block. The slow is the
+	// stun's, so nothing about it is authored per gun, per thing, or per hit.
+	StunSpeedKeep = HowMuchSpeedAStunLeavesHim;
+
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Status] stun on the wire for %s: ends in %.2fs, keeps %.0f%% of his speed"),
+		*GetNameSafe(Owner), FMath::Max(0.0f, StunEndsAt - Now), StunSpeedKeep * 100.0f);
 }
 
 void UProsperitocracyStatusComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -604,8 +617,6 @@ void UProsperitocracyStatusComponent::TickComponent(float DeltaTime, ELevelTick 
 	}
 
 	RetuneTheLightsOfBurningBodies(Now);
-
-	UpdateMovementGate();
 }
 
 void UProsperitocracyStatusComponent::EndTheHead(int32 QueueIndex)
@@ -627,11 +638,19 @@ void UProsperitocracyStatusComponent::EndTheHead(int32 QueueIndex)
 
 	Queue.Waiting.RemoveAt(0);
 
+	// The head is either the next one or nobody — either way the body's gate and its speed are told now,
+	// so the man may act on the tick the last one ends and never a frame later.
+	PublishTheStun();
+
 	// THE ONE BEHIND IT IS THE HEAD NOW, with the time it has LEFT — not a fresh clock, because its clock
 	// has been running since the moment it landed. The look does not move: the fire belongs to the body,
 	// and what changes at a handover is the tick's damage and how often it lands.
 	if (Queue.Waiting.Num() > 0)
 	{
+		// It strikes from NOW — the phase of its ticks starts with the turn it gets, never with the
+		// moment it landed. It was owed nothing while it waited, because it did nothing.
+		BeginItsTicks(Queue.Waiting[0], Now);
+
 		const float SecondsLeft = FMath::Max(0.0f, Queue.Waiting[0].EndTime - Now);
 		ProsperitocracyStatus::Report(StatusTag, /*OnScreenKey=*/ 0x9010,
 			FString::Printf(TEXT("%s on %s takes over — %.1fs left of its own clock"),
@@ -639,18 +658,25 @@ void UProsperitocracyStatusComponent::EndTheHead(int32 QueueIndex)
 		return;
 	}
 
-	// Nothing of this status is left on the body: the look goes out, the tag comes off, the queue goes.
+	// Nothing of this status is left on the body: the look goes out and the queue goes with it.
 	EndStatusEffect(Queue);
-
-	if (UAbilitySystemComponent* TargetAbilitySystemComponent = GetOwnerAbilitySystemComponent())
-	{
-		TargetAbilitySystemComponent->SetLooseGameplayTagCount(StatusTag, 0);
-	}
 
 	ProsperitocracyStatus::Report(StatusTag, /*OnScreenKey=*/ 0x9010,
 		FString::Printf(TEXT("%s ended on %s"), *StatusTag.ToString(), *GetNameSafe(GetOwner())));
 
 	Queues.RemoveAt(QueueIndex);
+}
+
+void UProsperitocracyStatusComponent::BeginItsTicks(FProsperitocracyLiveStatus& Head, float Now)
+{
+	// A STATUS ONLY EVER STRIKES WHILE IT IS THE FRONT, so its tick phase starts when it BECOMES the front
+	// — not when it landed, and never resumed from a schedule it was not keeping while it waited.
+	//
+	// This is the whole rule, and it is why a promoted burn takes over with no back-payment: the ticks it
+	// did not make are not owed, because it was not applying. N ticks over N intervals is what "X damage
+	// every X seconds for X seconds" says, and the intervals only count from the turn it got.
+	const float Interval = DoesTick(Head) ? GetTickInterval(Head) : 0.0f;
+	Head.NextTickTime = (Interval > 0.0f) ? (Now + Interval) : Head.EndTime;
 }
 
 void UProsperitocracyStatusComponent::DropExpiredWaiters(FProsperitocracyStatusQueue& Queue, float Now)

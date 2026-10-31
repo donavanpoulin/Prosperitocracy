@@ -7,6 +7,7 @@
 #include "AbilitySystem/Abilities/ProsperitocracyGameplayAbility.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyStatHostActor.h"
+#include "AbilitySystem/ProsperitocracyStatusComponent.h"
 #include "Camera/ProsperitocracyViewShake.h"
 #include "Character/ProsperitocracyCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -833,16 +834,9 @@ UCharacterMovementComponent* UProsperitocracyPlayerStatsComponent::GetMovementCo
 	return Owner ? Owner->FindComponentByClass<UCharacterMovementComponent>() : nullptr;
 }
 
-UCharacterMovementComponent* UProsperitocracyPlayerStatsComponent::GetMovingBody(int32& OutSlot) const
-{
-	UCharacterMovementComponent* Movement = GetMovementComponent();
-	OutSlot = (Movement && Movement->IsCrouching()) ? 1 : 0;
-	return Movement;
-}
-
 void UProsperitocracyPlayerStatsComponent::ApplyToMovement()
 {
-	PushWalkSpeed();
+	PublishGroundSpeed();
 	ApplyJumpVelocity();
 
 	const UCharacterMovementComponent* Movement = GetMovementComponent();
@@ -868,7 +862,7 @@ void UProsperitocracyPlayerStatsComponent::ApplyJumpVelocity()
 	}
 }
 
-void UProsperitocracyPlayerStatsComponent::PushWalkSpeed()
+void UProsperitocracyPlayerStatsComponent::PublishGroundSpeed()
 {
 	UCharacterMovementComponent* Movement = GetMovementComponent();
 	if (!Movement)
@@ -876,88 +870,48 @@ void UProsperitocracyPlayerStatsComponent::PushWalkSpeed()
 		return;
 	}
 
-	// A stat that is not set must never zero the body out: movement keeps whatever it had until there
-	// is a number to give it.
-	if (GetStat(EProsperitocracyStat::MoveSpeed) <= 0.0f)
+	const float RunSpeed = FMath::Max(0.0f, GetRunSpeed());
+	if (RunSpeed <= 0.0f)
 	{
+		// A stat that is not set must never zero the body out: movement keeps whatever it had until
+		// there is a number to give it.
 		return;
 	}
 
-	// Every speed the body moves at on the ground is this one number: the walk/run number, and the
-	// crouch number, which IS the walk number — a crouch is not faster than a walk, so there is no
-	// third fraction to keep in step with the stat. (Crouch speed used to be the engine's own default
-	// with no stat behind it at all: it is the one speed Move Speed never reached, and now it is.)
-	//
-	// Floored at a standstill: a shot's push can take the last of the character's speed away, but it
-	// can never walk them backwards — the same floor the weight penalty keeps, for the same reason.
-	const float WalkSpeed = FMath::Max(0.0f, GetWalkSpeed());
-	const float RunSpeed = FMath::Max(0.0f, GetRunSpeed());
+	// ONE PRODUCT, AND IT IS THE WHOLE OF THE BODY'S SPEED: the stat's own number, the walk being a
+	// fraction of it, and every share that is live on him multiplied in — the shot's push and a status's
+	// slow. There is no other writer of this number anywhere and no state to adopt or hand back: the share
+	// is read fresh every frame, so when it ends the stat's number is simply what comes out again.
+	const float WalkSpeed = RunSpeed * WalkSpeedMultiplier;
 
-	// WHICH of the two the body is moving at is the BODY's business: the walk/run choice belongs to the
-	// movement state and its sprint key, not to this component. So the number already on the body
-	// decides — a change re-prices the speed the body is IN (walk stays walk, run stays run) and never
-	// picks one for it. It is told apart by which of the two numbers this component last published it
-	// matched; there are only these two, so there is no third number being guessed at.
-	const bool bMovingAtRunSpeed =
-		FMath::Abs(Movement->MaxWalkSpeed - LastPublishedRunSpeed) < FMath::Abs(Movement->MaxWalkSpeed - LastPublishedWalkSpeed);
-
-	Movement->MaxWalkSpeed = bMovingAtRunSpeed ? RunSpeed : WalkSpeed;
-
-	// Crouch is not a third speed: a crouch is not faster than a walk, so it IS the walk number.
-	Movement->MaxWalkSpeedCrouched = WalkSpeed;
-
-	LastPublishedWalkSpeed = WalkSpeed;
-	LastPublishedRunSpeed = RunSpeed;
-
-	// If a shot's push is riding the body right now, the speed it rides ON changed too. The push
-	// re-applies its base every frame and hands that base back when its window lapses, so leaving the
-	// old base sitting in there would undo this re-price — and leave the body at the old weight's speed
-	// for good. The base written is the pure state number, never the pushed one: a push must never be
-	// compounded with itself.
-	if (bShotPushActive)
+	// THE MOVEMENT STATE SPEAKS BY WRITING THE NUMBER IT WANTS — sprint writes the run number, everything
+	// else the walk number. Anything on the body that is not what THIS path last wrote is that request,
+	// read here as the one bit the product needs and then replaced by the product itself. One writer,
+	// and the state still gets its say.
+	const float OnTheBody = Movement->MaxWalkSpeed;
+	if (!FMath::IsNearlyEqual(OnTheBody, LastWrittenMaxWalkSpeed, 0.01f))
 	{
-		int32 Slot = 0;
-		if (GetMovingBody(Slot))
-		{
-			ShotPushBaseSpeed[Slot] = (Slot == 1) ? WalkSpeed : (bMovingAtRunSpeed ? RunSpeed : WalkSpeed);
-		}
+		bWantsToRun = FMath::Abs(OnTheBody - RunSpeed) < FMath::Abs(OnTheBody - WalkSpeed);
 	}
 
-	ShotPushLastWritten[0] = Movement->MaxWalkSpeed;
-	ShotPushLastWritten[1] = Movement->MaxWalkSpeedCrouched;
+	const float Share = GetGroundSpeedScale();
+
+	Movement->MaxWalkSpeed = FMath::Max(0.0f, (bWantsToRun ? RunSpeed : WalkSpeed) * Share);
+	Movement->MaxWalkSpeedCrouched = FMath::Max(0.0f, WalkSpeed * Share);
+
+	LastWrittenMaxWalkSpeed = Movement->MaxWalkSpeed;
 }
 
 float UProsperitocracyPlayerStatsComponent::GetAnimationRate() const
 {
-	// NORMAL, unless a shot is pushing the body. Nothing else slows the animation: not walking, not a
-	// heavy load, not crouching. That is deliberate — a body that is permanently a little slower would
-	// slow everything it plays, and a reload or a mantle is not something the gun in their hands gets
-	// to re-time. The one thing that moves it is a shot's push, which is already moving the body and
-	// is already fading on its own.
-	if (!bShotPushActive)
-	{
-		return 1.0f;
-	}
-
-	int32 Slot = 0;
-	const UCharacterMovementComponent* Movement = GetMovingBody(Slot);
-	if (!Movement)
-	{
-		return 1.0f;
-	}
-
-	const float BodySpeed = ShotPushBaseSpeed[Slot];
-	if (BodySpeed <= 0.0f)
-	{
-		return 1.0f;
-	}
-
-	// The push's own share, in the same percent form the movement gets: the speed the push is worth
-	// this frame over the speed the body would have without it. Moving forward it is negative and the
-	// legs slow; backpedalling it is positive and they cycle faster; across the shot's line, or
-	// standing still, there is no push to ride and the animation is left at normal.
-	const float PushShare = GetShotPushDrag() / BodySpeed;
-	return FMath::Clamp(1.0f + PushShare, MinAnimationRate, 2.0f);
+	// ONE READ, and it is the body's own speed share: a shot's push and a status's slow move the legs
+	// through the same number the movement takes, so the walk cycle and the speed can never disagree —
+	// a man dragged to a crawl and a man stunned to one animate alike.
+	//
+	// Crouching, a heavy load and walking itself are NOT in here: a body that is permanently a little
+	// slower would slow everything it plays, and a reload or a mantle is not something the gun in their
+	// hands gets to re-time.
+	return FMath::Clamp(GetGroundSpeedScale(), MinAnimationRate, 2.0f);
 }
 
 void UProsperitocracyPlayerStatsComponent::PushAnimationRate(float DeltaSeconds)
@@ -1010,13 +964,14 @@ void UProsperitocracyPlayerStatsComponent::NotifyShotFired(float DragPercent, fl
 	bShotPushActive = true;
 
 	// The shot is felt on the frame it happened, not on the next tick.
-	ApplyShotPushToWalkSpeed();
+	PublishGroundSpeed();
 
 	if (bWasIdle)
 	{
 		UE_LOG(LogProsperitocracy, Log,
-			TEXT("%s on %s: shot push — %.0f%% drag / %.0f%% carry of speed back along the shot's line, decaying over %.2fs | walk %.0f | anim x%.2f"),
-			*GetName(), *GetNameSafe(GetOwner()), ShotPushDragPercent, ShotPushCarryPercent, ShotPushSeconds, GetWalkSpeed(), GetAnimationRate());
+			TEXT("%s on %s: shot push — %.0f%% drag / %.0f%% carry, decaying over %.2fs | speed %.0f of %.0f"),
+			*GetName(), *GetNameSafe(GetOwner()), ShotPushDragPercent, ShotPushCarryPercent, ShotPushSeconds,
+			GetMovementComponent() ? GetMovementComponent()->MaxWalkSpeed : 0.0f, GetWalkSpeed());
 	}
 }
 
@@ -1095,146 +1050,75 @@ float UProsperitocracyPlayerStatsComponent::GetShotPushDecay() const
 	return FMath::Clamp(1.0f - (Elapsed / ShotPushSeconds), 0.0f, 1.0f);
 }
 
-float UProsperitocracyPlayerStatsComponent::GetShotPushDrag() const
+float UProsperitocracyPlayerStatsComponent::GetGroundSpeedScale() const
 {
-	if (!bShotPushActive || (ShotPushDragPercent <= 0.0f && ShotPushCarryPercent <= 0.0f))
+	// THE PUSH, as a share. Its Drag and its Carry are percents of whatever speed the body is at, so the
+	// push is a multiplier and never a number of cm/s — which is why this needs no base speed, no stored
+	// state and nothing handed back when it lapses.
+	float PushScale = 1.0f;
+	if (bShotPushActive && (ShotPushDragPercent > 0.0f || ShotPushCarryPercent > 0.0f))
 	{
-		return 0.0f;
-	}
+		const UCharacterMovementComponent* Movement = GetMovementComponent();
+		FVector MoveDirection = Movement ? Movement->Velocity : FVector::ZeroVector;
+		MoveDirection.Z = 0.0f;
+		const float Speed = MoveDirection.Size();
 
-	int32 Slot = 0;
-	UCharacterMovementComponent* Movement = GetMovingBody(Slot);
-	if (!Movement)
-	{
-		return 0.0f;
-	}
-
-	FVector MoveDirection = Movement->Velocity;
-	MoveDirection.Z = 0.0f;
-	const float Speed = MoveDirection.Size();
-	if (Speed <= UE_KINDA_SMALL_NUMBER)
-	{
 		// Standing still: the push is along a line the character is not moving along, so there is
-		// nothing to fight and nothing to ride. It is also why firing on the spot never slides
-		// anybody anywhere.
-		return 0.0f;
-	}
-	MoveDirection /= Speed;
+		// nothing to fight and nothing to ride. It is also why firing on the spot never slides anybody.
+		if (Speed > UE_KINDA_SMALL_NUMBER)
+		{
+			MoveDirection /= Speed;
 
-	// The whole mechanic, in one dot product: moving back along the shot's line rides the push
-	// (positive — faster), moving forward fights it (negative — slower), moving across it is neither.
-	// There is no branch anywhere for "walking backwards" or "walking forwards": the character's own
-	// movement direction picks between the two, which is why it is the same one push either way.
-	const float Along = FMath::Clamp(FVector::DotProduct(MoveDirection, ShotPushBackwardAxis), -1.0f, 1.0f);
+			// The whole mechanic, in one dot product: moving back along the shot's line rides the push
+			// (positive — faster), moving forward fights it (negative — slower), moving across it is
+			// neither. No branch anywhere for "walking backwards" or "walking forwards".
+			const float Along = FMath::Clamp(FVector::DotProduct(MoveDirection, ShotPushBackwardAxis), -1.0f, 1.0f);
 
-	// Which of the gun's two numbers this is worth is decided by which way the character is spending
-	// it: moving forward it is Drag (you are fighting it), moving back it is Carry (you are riding it,
-	// and Carry is Drag at half). No branch on "walking backwards", no second mechanic.
-	const float PushPercent = (Along >= 0.0f) ? ShotPushCarryPercent : ShotPushDragPercent;
+			// Which of the gun's two numbers this is worth is decided by which way the character is
+			// spending it: moving forward it is Drag (you are fighting it), moving back it is Carry
+			// (you are riding it, and Carry is Drag at half).
+			const float PushPercent = (Along >= 0.0f) ? ShotPushCarryPercent : ShotPushDragPercent;
 
-	// And it is that percent OF THE SPEED THE BODY IS AT — the number the movement state put on it for
-	// this frame, standing or crouched, walking, running or sprinting — so the same gun drags the same
-	// at any of them. Then the decay: full on the shot, nothing by the end of the window.
-	const float PushSpeed = ShotPushBaseSpeed[Slot] * (PushPercent * 0.01f);
-	return PushSpeed * Along * GetShotPushDecay();
-}
-
-void UProsperitocracyPlayerStatsComponent::AdoptBodySpeedNumbers()
-{
-	UCharacterMovementComponent* Movement = GetMovementComponent();
-	if (!Movement)
-	{
-		return;
+			// Then the decay: full on the shot, nothing by the end of the window.
+			PushScale = 1.0f + (PushPercent * 0.01f) * Along * GetShotPushDecay();
+		}
 	}
 
-	// The standing number — walk, run, sprint, and whatever the movement state put on the body this
-	// frame — is the STATE's, taken as its own. A number that is what this component last wrote is
-	// ours (the push), not the state's, and is left out — so adopting can never mistake the push for
-	// the state's number and compound it with itself.
-	if (!FMath::IsNearlyEqual(Movement->MaxWalkSpeed, ShotPushLastWritten[0]))
-	{
-		ShotPushBaseSpeed[0] = Movement->MaxWalkSpeed;
-	}
+	// AND ONE STATUS'S SLOW ON TOP, read off the body's own queue: the share of his own speed he keeps.
+	// A body with no status on it answers 1, so this is the same read whether or not anything is on him.
+	const AActor* Owner = GetOwner();
+	const UProsperitocracyStatusComponent* Statuses = Owner ? Owner->FindComponentByClass<UProsperitocracyStatusComponent>() : nullptr;
+	const float StatusScale = Statuses ? Statuses->GetSpeedShare() : 1.0f;
 
-	// The crouch number is NOT the state's and is never adopted off the body: it comes from the stat,
-	// through the one place that writes it (PushWalkSpeed), and a crouch IS the walk number — so the
-	// test above can never tell this component's own crouch write apart from a state's write sitting
-	// on the same value. Read that way the push was left holding the zero it starts life with: it
-	// rode nothing while crouched, and it handed that zero to the body when the window lapsed, which
-	// is what made crouching crawl after the first shot. Ask the same door PushWalkSpeed asks.
-	ShotPushBaseSpeed[1] = FMath::Max(0.0f, GetWalkSpeed());
-}
-
-void UProsperitocracyPlayerStatsComponent::ApplyShotPushToWalkSpeed()
-{
-	int32 Slot = 0;
-	UCharacterMovementComponent* Movement = GetMovingBody(Slot);
-	if (!Movement)
-	{
-		return;
-	}
-
-	// The state's own numbers are taken first — both of them, so the push can move between standing
-	// and crouched without ever riding on one of its own values.
-	AdoptBodySpeedNumbers();
-
-	// Then the push goes onto whichever number the body is actually moving at. The share is always
-	// taken from the state's number, never from an already-pushed one, so it can never compound with
-	// itself.
-	float& BodySpeed = (Slot == 1) ? Movement->MaxWalkSpeedCrouched : Movement->MaxWalkSpeed;
-
-	// Floored at a standstill, exactly as the stat's own number is: the push can stop the character
-	// but it can never walk them backwards.
-	BodySpeed = FMath::Max(0.0f, ShotPushBaseSpeed[Slot] + GetShotPushDrag());
-	ShotPushLastWritten[Slot] = BodySpeed;
+	// Floored at a standstill: a share big enough to take the last of his speed stops him, and can never
+	// walk him backwards.
+	return FMath::Max(0.0f, PushScale) * StatusScale;
 }
 
 void UProsperitocracyPlayerStatsComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	// The animation rate is read every frame, shot or no shot: the push's own decay moves it while a
-	// shot runs, and the ease back to normal keeps going after the push has lapsed.
-	PushAnimationRate(DeltaTime);
-
-	if (!bShotPushActive)
+	// A push whose window is out is no longer live — its decay is spent, and the write below leaves it
+	// out of the product, so the body's own speed is back without anything being handed back to it.
+	if (bShotPushActive)
 	{
-		return;
-	}
-
-	const UWorld* World = GetWorld();
-	if (!World || World->GetTimeSeconds() >= ShotPushEndTime)
-	{
-		// The window lapsed. The body gets its own numbers back — the push never leaves a slower (or
-		// faster) body behind it, crouched or standing — and this component goes quiet until the next
-		// shot.
-		if (UCharacterMovementComponent* Movement = GetMovementComponent())
+		const UWorld* World = GetWorld();
+		if (!World || World->GetTimeSeconds() >= ShotPushEndTime)
 		{
-			Movement->MaxWalkSpeed = ShotPushBaseSpeed[0];
-			Movement->MaxWalkSpeedCrouched = ShotPushBaseSpeed[1];
-			ShotPushLastWritten[0] = Movement->MaxWalkSpeed;
-			ShotPushLastWritten[1] = Movement->MaxWalkSpeedCrouched;
+			bShotPushActive = false;
+			ShotPushDragPercent = 0.0f;
+			ShotPushCarryPercent = 0.0f;
+			ShotPushBackwardAxis = FVector::ZeroVector;
+
+			UE_LOG(LogProsperitocracy, Log, TEXT("%s on %s: shot push done"), *GetName(), *GetNameSafe(GetOwner()));
 		}
-
-		bShotPushActive = false;
-		ShotPushDragPercent = 0.0f;
-		ShotPushCarryPercent = 0.0f;
-		ShotPushBackwardAxis = FVector::ZeroVector;
-
-		// The tick stays ON: it is what eases the animation back to normal after the push lapses. The
-		// push's own work is gated on bShotPushActive, so a body that is not firing pays only for the
-		// animation rate.
-
-		const UCharacterMovementComponent* Movement = GetMovementComponent();
-		UE_LOG(LogProsperitocracy, Log,
-			TEXT("%s on %s: shot push done — walk speed back to %.0f | crouch %.0f"),
-			*GetName(), *GetNameSafe(GetOwner()), Movement ? Movement->MaxWalkSpeed : 0.0f,
-			Movement ? Movement->MaxWalkSpeedCrouched : 0.0f);
-		return;
 	}
 
-	// Still alive: the push is re-applied every frame — the decay has moved it down, the character's
-	// own movement may have turned under it, and the movement state may have written a fresh number
-	// for the frame that this has to ride on top of.
-	ApplyShotPushToWalkSpeed();
+	// THE ONE PATH, ONCE A FRAME: the push decays and a status's slow gives itself back on clocks of
+	// their own, so the body's speed is recomputed from the stat and its shares every frame.
+	PublishGroundSpeed();
+
+	// And the legs follow the same share, eased, so a change is never a snap.
+	PushAnimationRate(DeltaTime);
 }

@@ -18,8 +18,6 @@ class UObject;
 struct FFrame;
 struct FGameplayAbilityTargetDataHandle;
 
-PROSPERITOCRACY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Gameplay_AbilityInputBlocked);
-
 /**
  * Fired on a player's OWN client when damage THEY dealt landed: everything that damage is owed — which
  * of the three markers the blow earns, what each line took off, and where the numbers come up (see

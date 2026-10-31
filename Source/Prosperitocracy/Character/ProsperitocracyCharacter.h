@@ -334,6 +334,14 @@ public:
 	bool SecondaryActionReleasedTheWeaponInHand();
 
 	/**
+	 * THE ONE GATE, asked. False while a status forbids acting — the tag the ability system already
+	 * checks (`Gameplay.AbilityInputBlocked`), read here so every door the player has answers the same
+	 * question in one line. Walking is not one of those doors: that is the whole point of the status.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Action")
+	bool IsAllowedToAct() const;
+
+	/**
 	 * Whether the thing in this body's hand is being AIMED right now — the one question the aim's own
 	 * chain asks, every time the right button changes.
 	 *
@@ -767,6 +775,12 @@ public:
 
 protected:
 	/**
+	 * THE GATE, on the one verb the engine asks itself about: a jump is refused while a status forbids
+	 * acting, and the blueprint's own jump node respects this without being told anything.
+	 */
+	virtual bool CanJumpInternal_Implementation() const override;
+
+	/**
 	 * Where a STATUS on this body lives — the one component that carries a status's numbers, its
 	 * ticking, and the movement gate a stun closes.
 	 *
@@ -776,6 +790,9 @@ protected:
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Prosperitocracy|Status")
 	TObjectPtr<UProsperitocracyStatusComponent> Statuses;
+
+	/** What the gate answered last frame, so the body acts on it CHANGING and never every frame. */
+	bool bCouldActLastFrame = true;
 
 	/**
 	 * The direction a live attack travels and faces, taken once when it began and then held.
