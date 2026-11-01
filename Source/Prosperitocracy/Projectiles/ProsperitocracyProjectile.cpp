@@ -7,6 +7,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "ProsperitocracyLogChannels.h"
+#include "Stats/ProsperitocracyStatTable.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ProsperitocracyProjectile)
 
@@ -45,10 +46,9 @@ AProsperitocracyProjectile::AProsperitocracyProjectile(const FObjectInitializer&
 	Flight->MaxSpeed = FlightSpeedMetersPerSecond * 100.0f;
 }
 
-void AProsperitocracyProjectile::LaunchAt(const FVector& LandingPlace, AActor* InInstigator, TSubclassOf<UGameplayEffect> InDamageEffectClass)
+void AProsperitocracyProjectile::LaunchAt(const FVector& LandingPlace, AActor* InInstigator)
 {
 	TheOneWhoCalledIt = InInstigator;
-	DamageEffectClass = InDamageEffectClass;
 
 	// ITS OWN ANGLE: the azimuth is drawn per strike, so two strikes on one place never come in the same
 	// way, and every strike arrives at the place it was sent to. Only the LANDING POINT has to be inside the
@@ -137,7 +137,12 @@ void AProsperitocracyProjectile::OnItHitSomething(UPrimitiveComponent* HitCompon
 	// WHEN IS MINE; WHAT HAPPENS IS THE PASS'S. This is the whole trigger: a projectile's "now" is the
 	// moment it hits something, and the bang is handed over unsaid — the pass asks this thing's own block
 	// whether it is an explosion at all, answers for itself, and puts up the look that block names.
-	UProsperitocracyExplosionStatics::DetonateExplosion(this, TheOneWhoCalledIt, Place, DamageEffectClass);
+	//
+	// THE EFFECT ITS DAMAGE RUNS ON comes off that same block, so nothing is handed in and a caller cannot
+	// pass one that disagrees with the numbers it is applied to.
+	const UProsperitocracyStatTable* MyBlock = GetStatBlock();
+	UProsperitocracyExplosionStatics::DetonateExplosion(this, TheOneWhoCalledIt, Place,
+		MyBlock ? MyBlock->DamageEffectClass : nullptr);
 
 	// And then it is gone — AFTER the bang, because the pass resolves the damage and the falloff off this
 	// thing's own home and a dead source answers nothing.

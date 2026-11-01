@@ -36,9 +36,9 @@ namespace ProsperitocracyProjectileHandling
  * wall, enemy, prop. It is never placed on the ground.
  *
  * It IS the thing that goes off, so it is a thing's GAS home (AProsperitocracyStatHostActor): the block
- * handed to it answers the explosion mark, its damage lines, its Pen, its Range (the ball's width) and the
- * falloff, all through the ONE evaluator. Nothing about the bang is decided here — this class owns WHEN,
- * and the pass owns what happens then.
+ * handed to it answers the explosion mark, its damage lines, its Pen, its Range (how far the ball reaches from
+ * the middle) and the effect its damage runs on, all through the ONE evaluator. Nothing about the bang is
+ * decided here — this class owns WHEN, and the pass owns what happens then.
  */
 UCLASS()
 class AProsperitocracyProjectile : public AProsperitocracyStatHostActor
@@ -53,10 +53,12 @@ public:
 	 *
 	 * LandingPlace — the point it is aimed at, on the ground or on whatever is standing there.
 	 * InInstigator — whose strike it is: the bang is credited to him and the shake is his screen's.
-	 * InDamageEffectClass — the one effect the damage pipeline runs on, handed over by whoever called it.
+	 *
+	 * Nothing else is handed over: what the bang is worth AND the effect its damage runs on are this thing's own
+	 * block's (see AProsperitocracyStatHostActor), so a caller cannot pass numbers that disagree with it.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Projectile")
-	void LaunchAt(const FVector& LandingPlace, AActor* InInstigator, TSubclassOf<UGameplayEffect> InDamageEffectClass);
+	void LaunchAt(const FVector& LandingPlace, AActor* InInstigator);
 
 	/**
 	 * WHERE IT COMES IN FROM — how high, how far back along its own line, and how fast, in metres.
@@ -107,10 +109,6 @@ protected:
 	/** Who called it: the bang is credited to him and the shake lands on his screen. */
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> TheOneWhoCalledIt;
-
-	/** The one effect the damage pipeline runs on, handed over on the launch. */
-	UPROPERTY(Transient)
-	TSubclassOf<UGameplayEffect> DamageEffectClass;
 
 private:
 	/** One thing goes off once, however many things it hits in the frame it lands. */

@@ -95,9 +95,6 @@ private:
 	/** What the move is played at: this ability's FINAL Rate over its own base Rate. */
 	float GetPlayRate() const;
 
-	/** The dash's own Cooldown, in seconds, read FINAL through this ability's own GAS home. */
-	float GetCooldownSeconds() const;
-
 	/** The arc's forward length in cm — one reading of the one Range row, in the unit a body moves in. */
 	float GetReachCm() const;
 
@@ -135,9 +132,6 @@ private:
 	 * runs out and lasts the recovery's ORIGINAL length, whether or not its picture is still playing.
 	 */
 	float WindowRemaining = 0.0f;
-
-	/** The world time this ability's Cooldown has run out at. Started on the press. */
-	float ReadyAt = 0.0f;
 
 	/** How many times this dash has been thrown, so its log lines mark each one. */
 	int32 DashCount = 0;

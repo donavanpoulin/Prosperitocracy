@@ -136,10 +136,13 @@ public:
 	virtual float GetStatFinalValue(EProsperitocracyStat Stat) const override;
 
 	/**
-	 * The ability's own block — what the ability IS: its rows, the statuses it applies, and any mark it
-	 * wears. Null for an ability with no block of its own (see StatBlock below).
+	 * THE BLOCK THIS ABILITY IS DRESSED WITH, right now — the one door every reader asks.
+	 *
+	 * A grant may name its own block (the loadout does: an ability slot carries an ability AND the block it
+	 * is dressed with), so one ability class serves every thing a slot has room for. The ability's own block
+	 * is the fallback for one nobody dressed, which is what a dash and a bash are.
 	 */
-	virtual const UProsperitocracyStatTable* GetStatBlock() const override { return StatBlock; }
+	virtual const UProsperitocracyStatTable* GetStatBlock() const override;
 
 	/**
 	 * Stamps the ability's GAS-evaluated damage lines (from its stat host — the ONE evaluator)
@@ -254,6 +257,18 @@ protected:
 	TObjectPtr<UProsperitocracyStatTable> StatBlock = nullptr;
 
 	/**
+	 * THE BLOCK THE GRANT NAMED, if it named one — read off the spec's source object when the ability is
+	 * given, and it WINS over the class's own block.
+	 *
+	 * This is what lets a loadout slot say "the strike ability, with THIS strike's block": the block is a
+	 * per-grant fact, so one ability class is every strike, every warhead, anything a slot can hold. It is
+	 * resolved at give time because that is the one moment the spec is in hand, and a loadout change gives
+	 * the ability again — so it can never be a stale copy.
+	 */
+	UPROPERTY(Transient)
+	TObjectPtr<UProsperitocracyStatTable> GrantedStatBlock = nullptr;
+
+	/**
 	 * The weapon slot whose SECOND PRESS this ability is — see GetSecondPressOfSlot above.
 	 *
 	 * Empty for every ability that is not a weapon's second press, which is nearly all of them. A weapon
@@ -287,6 +302,26 @@ protected:
 
 	/** Spawns the ability's stat host if it doesn't exist yet and pushes the block's bases. */
 	void EnsureStatHost(const FGameplayAbilityActorInfo* ActorInfo);
+
+	/**
+	 * THE COOLDOWN — one clock, one question, one line in the log, for every ability that has one.
+	 *
+	 * The number is a stat like any other (Cooldown, read FINAL through this ability's own GAS home), and the
+	 * clock starts on the CALL, never on an animation or on the last thing the ability did. It lives HERE
+	 * rather than in each ability because a gate written out three times is three answers to one question,
+	 * and the three can only drift apart: an ability that has a cooldown asks this, starts this, and carries
+	 * no clock of its own.
+	 */
+	float GetCooldownSeconds() const;
+
+	/** Still cooling down? Says so out loud with what is left — a press that does nothing has to be readable. */
+	bool IsStillOnCooldown() const;
+
+	/** The clock starts now, for this ability's own Cooldown row. */
+	void StartTheCooldown();
+
+	/** World seconds this ability's Cooldown runs out at; zero until it has ever been used. */
+	float CooldownReadyAt = 0.0f;
 
 	/** Called when this ability is granted to the ability system component. */
 	UFUNCTION(BlueprintImplementableEvent, Category = Ability, DisplayName = "OnAbilityAdded")

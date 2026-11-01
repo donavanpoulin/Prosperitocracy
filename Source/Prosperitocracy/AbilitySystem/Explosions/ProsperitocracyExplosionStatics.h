@@ -38,8 +38,13 @@ namespace ProsperitocracyExplosionHandling
 	/**
 	 * [TUNE] How far an explosion's SHAKE reaches, as a multiple of the thing's own FINAL Range.
 	 *
-	 * **10 — MINE, and HIS to move.** He called the DIRECTION (the shake's reach does the work, not its
-	 * strength) and not a number: any crank of this is his to say.
+	 * **20 — MINE, and HIS to move.** It was 10 while Range was read as a ball's WIDTH; Range is now the
+	 * DISTANCE it reaches from the middle (his call, 2026-11-01), so the multiple doubles to keep the same reach
+	 * on the same blast — 4 × 20 is the 80 m that 8 × 10 used to be. The bang is felt exactly as far as it was;
+	 * only the row's meaning changed.
+	 *
+	 * He called the DIRECTION (the shake's reach does the work, not its strength) and not a number: any crank
+	 * of this is his to say.
 	 *
 	 * What it is FOR: a blast's damage zone against its FELT zone is about twenty to one in the world (a
 	 * grenade kills inside ~5 m and is felt ~100 m out), and the ball reaches 4 m, so 80 m — whose
@@ -53,7 +58,7 @@ namespace ProsperitocracyExplosionHandling
 	 * THE SOUND WILL USE THIS SAME NUMBER AND THE SAME RAMP when it exists — it reaches the same range, as
 	 * volume — because it is the same bang read two ways, which is why the constant is named for both.
 	 */
-	constexpr float ShakeAndSoundRangeMultiplier = 10.0f;
+	constexpr float ShakeAndSoundRangeMultiplier = 20.0f;
 
 	/**
 	 * [TUNE] The shove, in cm/s per point of damage that ACTUALLY CAME OFF the body.
@@ -146,7 +151,7 @@ struct FProsperitocracyExplosionTarget
  * the pass says so out loud rather than half-running.
  *
  * WHAT THE THING OWNS, and what this pass never decides for it:
- *   - its Range (which is the ball's WIDTH),
+ *   - its Range (the distance the ball reaches from the middle),
  *   - its Impact Damage and its Pen — its damage travels the ONE pipeline, falloff and all, exactly as a
  *     gun's does,
  *   - the statuses it sets, and the block that carries their numbers,

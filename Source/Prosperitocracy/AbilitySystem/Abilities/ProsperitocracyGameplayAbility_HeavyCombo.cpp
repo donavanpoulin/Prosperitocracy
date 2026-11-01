@@ -138,12 +138,6 @@ float UProsperitocracyGameplayAbility_HeavyCombo::GetPlayRate() const
 	return FinalRate / BaseRate;
 }
 
-float UProsperitocracyGameplayAbility_HeavyCombo::GetCooldownSeconds() const
-{
-	// FINAL through this ability's own GAS home, so a Cooldown perk reaches it like any other stat.
-	return GetStatFinalValue(EProsperitocracyStat::Cooldown);
-}
-
 float UProsperitocracyGameplayAbility_HeavyCombo::GetRangeCm() const
 {
 	// The ONE Range row, in the unit a body is placed and a swing is sized in. It carries the body and
@@ -274,11 +268,8 @@ bool UProsperitocracyGameplayAbility_HeavyCombo::StartTheHeavyCombo(AProsperitoc
 	}
 
 	// THE COOLDOWN, asked before anything is spent, and its answer is a refusal rather than a silence.
-	UWorld* World = GetWorld();
-	if (World && World->GetTimeSeconds() < ReadyAt)
+	if (IsStillOnCooldown())
 	{
-		UE_LOG(LogProsperitocracy, Log, TEXT("[Heavy] %s: on cooldown — %.2fs of %.2fs left"),
-			*GetPathName(), FMath::Max(0.0f, ReadyAt - World->GetTimeSeconds()), GetCooldownSeconds());
 		return false;
 	}
 
@@ -308,10 +299,7 @@ bool UProsperitocracyGameplayAbility_HeavyCombo::StartTheHeavyCombo(AProsperitoc
 
 	// The clock he watches starts the moment he spends it: the cooldown belongs to the move he asked for,
 	// not to the animation finishing.
-	if (World)
-	{
-		ReadyAt = World->GetTimeSeconds() + GetCooldownSeconds();
-	}
+	StartTheCooldown();
 
 	RunningOn = Body;
 	bRunning = true;

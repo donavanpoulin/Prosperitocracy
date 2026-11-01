@@ -27,16 +27,16 @@
 
 float ProsperitocracyExplosionHandling::ComputeAttenuation(const UProsperitocracyStatTable* Block, float DistanceCm, float RangeFinalMeters, float FalloffFinalMeters)
 {
-	// AN EXPLOSION'S RANGE IS THE WIDTH OF ITS BALL, so the two numbers the ONE falloff formula wants are
-	// not the row itself: the damage reaches 0 at the ball's EDGE — half the Range — and the ramp starts
-	// halfway out to there. Nothing is authored for either: the rule is the number, and both are worked
-	// out here from the FINAL Range the caller just read, so a Range perk moves the ball and the ramp
-	// together and no stored copy can go stale.
+	// AN EXPLOSION'S RANGE IS HOW FAR ITS BALL REACHES FROM THE MIDDLE — a distance, the same thing a gun's
+	// Range is, in the same unit, which is why nothing is converted here. The damage reaches 0 at the EDGE,
+	// which IS the Range, and the ramp starts halfway out to it: the rule is the number, read live off the
+	// FINAL Range the caller handed in, so a Range perk moves the ball and the ramp together and no stored
+	// copy can go stale.
 	if (Block && Block->IsExplosive())
 	{
-		// The ball's EDGE is half the Range, because the Range stat IS the ball's width: a sphere is built
-		// from its radius, and that half is geometry rather than a number anyone carries, stores or shows.
-		const float EdgeMeters = RangeFinalMeters * 0.5f;
+		// THE EDGE IS THE RANGE. A sphere is built from its radius and that radius IS the row, so there is no
+		// halving anywhere — no second number carried, stored, shown or derived.
+		const float EdgeMeters = RangeFinalMeters;
 		return UProsperitocracyStatSystemStatics::ComputeDistanceAttenuation(
 			DistanceCm, EdgeMeters, EdgeMeters * FalloffStartsHalfwayOut);
 	}
@@ -85,11 +85,10 @@ void UProsperitocracyExplosionStatics::DetonateExplosion(IProsperitocracyAbility
 	}
 
 // ---------------------------------------------------------------------------------------------------
-// STAGE 2 — THE BALL IS AS WIDE AS THE THING'S RANGE SAYS, and that stat is the only size there is:
-// no radius row, no converted number stored or shown, nothing derived off it that becomes a second size.
-// A sphere is built from its radius, so the ball is made at half the Range — geometry, and the same
-// halving the falloff read below does for the ball's edge. The Range comes off the thing's own GAS home,
-// read FINAL like every other number in this game.
+// STAGE 2 — THE BALL REACHES AS FAR AS THE THING'S RANGE SAYS. Range is a DISTANCE — how far it reaches
+// from the middle — exactly as a gun's Range is, so the sphere is built straight from the row and nothing is
+// halved, converted, carried or shown. It comes off the thing's own GAS home, read FINAL like every other
+// number in this game.
 // ---------------------------------------------------------------------------------------------------
 	const float RangeMeters = Explosive->GetStatFinalValue(EProsperitocracyStat::Range);
 	if (RangeMeters <= 0.0f)
@@ -100,7 +99,7 @@ void UProsperitocracyExplosionStatics::DetonateExplosion(IProsperitocracyAbility
 		return;
 	}
 
-	const float RadiusCm = RangeMeters * 100.0f * 0.5f;
+	const float RadiusCm = RangeMeters * 100.0f;
 
 	TArray<FProsperitocracyExplosionTarget> Caught;
 	GatherTheBall(World, Place, RadiusCm, Cast<AActor>(Explosive), Caught);
@@ -292,7 +291,7 @@ if (Block->BlastVisual)
 			*GetNameSafe(Target.Actor), Target.DistanceCm / 100.0f);
 	}
 
-	UE_LOG(LogProsperitocracy, Log, TEXT("[Explosion] %s went off at %s — the ball is %.1fm wide and it caught %d %s: %s. %d of them were shoved."),
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Explosion] %s went off at %s — the ball reaches %.1fm and it caught %d %s: %s. %d of them were shoved."),
 		*GetNameSafe(Block), *Place.ToCompactString(), RangeMeters, Caught.Num(),
 		Caught.Num() == 1 ? TEXT("body") : TEXT("bodies"),
 		CaughtNames.IsEmpty() ? TEXT("nothing") : *CaughtNames, ShovedCount);

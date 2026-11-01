@@ -42,11 +42,11 @@ void AProsperitocracyBlastVisual::ShowTheBang(float RangeFinalMeters, float Rang
 
 	SetActorScale3D(FVector(LookScale));
 
-	// THE FLASH IS SIZED BY THE BLAST IT BELONGS TO. A blast's radius is HALF its Range — the same reading every
-	// Range in this game takes — and the number used is the FINAL one, so a Range perk makes a bigger flash with no
-	// line of code here. Its worth grows with the ground it covers, which is the square of the same growth.
+	// THE FLASH IS SIZED BY THE BLAST IT BELONGS TO: a blast's Range IS the distance it reaches from the middle,
+	// so the flash is built straight off the FINAL row — a Range perk makes a bigger flash with no line of code
+	// here. Its worth grows with the ground it covers, which is the square of the same growth.
 	HowFarTheFlashReachesCm = FMath::Max(TheLeastABangsLightReachesCm,
-		RangeFinalMeters * 100.0f * 0.5f * HowWideABangsLightIsAgainstItsRange);
+		RangeFinalMeters * 100.0f * HowWideABangsLightIsAgainstItsRange);
 	WhatTheFlashIsWorth = CandelasABangIsLitWith * LookScale * LookScale;
 
 	const UWorld* World = GetWorld();

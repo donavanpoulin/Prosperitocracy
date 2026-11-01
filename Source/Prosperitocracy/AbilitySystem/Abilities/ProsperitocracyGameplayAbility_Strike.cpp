@@ -41,17 +41,8 @@ bool UProsperitocracyGameplayAbility_Strike::CanActivateAbility(const FGameplayA
 	}
 
 	// THE COOLDOWN IS COUNTED FROM THE CALL (the plan's rule), and until it is up the number does nothing.
-	// Read FINAL through the ability's own GAS home, so a Cooldown perk reaches it like any other stat, and
-	// refused OUT LOUD rather than silently — a call that does nothing has to be readable.
-	const UWorld* World = GetWorld();
-	if (World && World->GetTimeSeconds() < ReadyAt)
-	{
-		UE_LOG(LogProsperitocracy, Log, TEXT("[Strike] %s: on cooldown — %.1fs of %.1fs left"),
-			*GetPathName(), FMath::Max(0.0f, ReadyAt - World->GetTimeSeconds()), GetCooldownSeconds());
-		return false;
-	}
-
-	return true;
+	// One gate, on the base ability, so this refuses in the same words a dash does — and out loud.
+	return !IsStillOnCooldown();
 }
 
 void UProsperitocracyGameplayAbility_Strike::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
@@ -63,16 +54,22 @@ void UProsperitocracyGameplayAbility_Strike::ActivateAbility(const FGameplayAbil
 	AActor* Caller = ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr;
 	UWorld* World = GetWorld();
 
-	if (!Caller || !World || !StatBlock || !StrikeProjectile || !StrikeStatBlock || !StrikeDamageEffectClass)
+	// WHAT THIS CALL IS — all of it off its OWN block: the shell it drops and the block that shell wears.
+	// Nothing here is a field of the ability's, which is why one Blueprint of this class is every strike
+	// there will ever be.
+	const UProsperitocracyStatTable* TheCallBlock = GetStatBlock();
+	const bool bHasAShell = TheCallBlock && TheCallBlock->WhatFalls;
+	const bool bHasALanding = TheCallBlock && TheCallBlock->WhatLands;
+
+	if (!Caller || !World || !TheCallBlock || !bHasAShell || !bHasALanding)
 	{
 		// Said out loud with the half that is missing: an unauthored ability is a bug, not a missing feature.
 		const TCHAR* WhatIsMissing =
 			!Caller ? TEXT("there is nobody calling it")
 			: !World ? TEXT("there is no world")
-			: !StatBlock ? TEXT("the ability has no block, so it has no Duration, Rate, Range or Cooldown")
-			: !StrikeProjectile ? TEXT("no strike projectile is set")
-			: !StrikeStatBlock ? TEXT("the strike has no block, so its blast would carry no mark, no damage and no burn")
-			: TEXT("no damage effect is set, so the blast would deal nothing");
+			: !TheCallBlock ? TEXT("the ability has no block, so it has no Duration, Rate, Range, Cooldown or strike")
+			: !bHasAShell ? TEXT("the call's block names nothing that falls, so there is no shell")
+			: TEXT("the call's block names nothing that lands, so its blast would carry no mark, no damage and no burn");
 
 		UE_LOG(LogProsperitocracy, Warning,
 			TEXT("[Strike] %s: nothing falls — %s. This is a bug or an unauthored ability, not a missing feature."),
@@ -84,7 +81,7 @@ void UProsperitocracyGameplayAbility_Strike::ActivateAbility(const FGameplayAbil
 
 	// THE CLOCK STARTS ON THE CALL, never on the last strike landing: what he waits for is the call he made.
 	CalledAt = World->GetTimeSeconds();
-	ReadyAt = CalledAt + GetCooldownSeconds();
+	StartTheCooldown();
 
 	// WHERE IT IS CALLED — the point he is aiming at. Everything after this happens inside the circle of the
 	// ability's own Range, sized around this one place.
@@ -95,27 +92,56 @@ void UProsperitocracyGameplayAbility_Strike::ActivateAbility(const FGameplayAbil
 		return;
 	}
 
-	UE_LOG(LogProsperitocracy, Log, TEXT("[Strike] %s called on %s — %.1fs at %.1f/s, the circle %.1fm across, next one ready in %.0fs"),
-		*GetPathName(), *TheCircleCentre.ToCompactString(), GetDurationSeconds(), GetRatePerSecond(),
-		GetStatFinalValue(EProsperitocracyStat::Range), GetCooldownSeconds());
+	// WHAT THE CALL SAID IT WOULD DO, in the terms it actually has — a single strike has no Duration and no
+	// Rate, and the log must not print zeros for a bombardment nobody asked for.
+	const float Duration = GetDurationSeconds();
+	const float Rate = GetRatePerSecond();
+	const float CircleMeters = GetStatFinalValue(EProsperitocracyStat::Range);
+
+	FString TheCall;
+	if (Rate > 0.0f)
+	{
+		TheCall = FString::Printf(TEXT("%.1fs at %.1f/s"), Duration, Rate);
+	}
+	else if (Duration > 0.0f)
+	{
+		TheCall = FString::Printf(TEXT("%.1fs"), Duration);
+	}
+	if (CircleMeters > 0.0f)
+	{
+		TheCall += FString::Printf(TEXT("%sthe strikes land within %.0fm"), TheCall.IsEmpty() ? TEXT("") : TEXT(", "), CircleMeters);
+	}
+	if (TheCall.IsEmpty())
+	{
+		TheCall = TEXT("one strike");
+	}
+
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Strike] %s called on %s — %s, next one ready in %.0fs"),
+		*GetPathName(), *TheCircleCentre.ToCompactString(), *TheCall, GetCooldownSeconds());
 
 	// THE FIRST STRIKE FALLS ON THE CALL, and then one every 1/Rate until the Duration is up — one timer and
 	// one clock, because the Duration is the only thing that says when a bombardment has had its run.
 	TheBombardmentKeepsFalling();
 
-	const float SecondsBetweenStrikes = (GetRatePerSecond() > 0.0f) ? (1.0f / GetRatePerSecond()) : 0.0f;
-	if (SecondsBetweenStrikes > 0.0f)
+	if (Rate > 0.0f)
 	{
 		World->GetTimerManager().SetTimer(FallingTimerHandle, this,
-			&UProsperitocracyGameplayAbility_Strike::TheBombardmentKeepsFalling, SecondsBetweenStrikes, /*bLoop=*/ true);
+			&UProsperitocracyGameplayAbility_Strike::TheBombardmentKeepsFalling, 1.0f / Rate, /*bLoop=*/ true);
+		return;
 	}
-	else
+
+	// NO RATE IS ONLY A MISTAKE IF THERE IS A DURATION TO FILL: a block that says how long it falls and never
+	// says how often is asking for strikes it cannot place, so one falls and it stops with a warning. A block
+	// with NEITHER is a single strike — a bomb, not a broken bombardment — and presence is scope, so it lands
+	// once, silently, and nothing is built around it.
+	if (Duration > 0.0f)
 	{
-		// A Rate that says nothing (or nothing per second) is an authoring bug: one strike fell, and the
-		// bombardment is over rather than falling forever.
-		UE_LOG(LogProsperitocracy, Warning, TEXT("[Strike] %s has no Rate — one strike fell and no more. The Rate row IS how fast they come down."), *GetPathName());
-		EndTheBombardment(TEXT("no Rate to fall at"));
+		UE_LOG(LogProsperitocracy, Warning, TEXT("[Strike] %s has a Duration and no Rate — one strike fell and no more. The Rate row IS how fast they come down."), *GetPathName());
+		EndTheBombardment(TEXT("a Duration with no Rate to fill it"));
+		return;
 	}
+
+	EndTheBombardment(TEXT("it is a single strike — no Rate and no Duration to fall after it"));
 }
 
 void UProsperitocracyGameplayAbility_Strike::TheBombardmentKeepsFalling()
@@ -146,13 +172,22 @@ void UProsperitocracyGameplayAbility_Strike::TheBombardmentKeepsFalling()
 	const FVector2D InsideTheCircle = FMath::RandPointInCircle(RadiusCm);
 	const FVector Landing = TheCircleCentre + FVector(InsideTheCircle.X, InsideTheCircle.Y, 0.0f);
 
+	// WHAT THIS CALL DROPS, off its own block — the shell and the block it wears. Read here rather than
+	// remembered, so a block edited between two strikes cannot leave the ability holding an old answer.
+	const UProsperitocracyStatTable* TheCallBlock = GetStatBlock();
+	if (!TheCallBlock || !TheCallBlock->WhatFalls || !TheCallBlock->WhatLands)
+	{
+		EndTheBombardment(TEXT("its block no longer names what falls"));
+		return;
+	}
+
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.Owner = Caller;
 	SpawnParams.Instigator = Cast<APawn>(Caller);
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
 	AProsperitocracyProjectile* Strike = World->SpawnActor<AProsperitocracyProjectile>(
-		StrikeProjectile, FTransform(FRotator::ZeroRotator, Landing), SpawnParams);
+		TheCallBlock->WhatFalls, FTransform(FRotator::ZeroRotator, Landing), SpawnParams);
 	if (!Strike)
 	{
 		UE_LOG(LogProsperitocracy, Warning, TEXT("[Strike] %s: a strike could not be spawned — nothing fell for that one."), *GetPathName());
@@ -162,8 +197,8 @@ void UProsperitocracyGameplayAbility_Strike::TheBombardmentKeepsFalling()
 	// The strike's OWN numbers, handed over where it is born: its block carries the explosion mark, so the
 	// ball, the damage, the Pen and the burn it sets are all answered by that one asset — this ability never
 	// touches what the bang is worth.
-	Strike->InitializeFromStatBlock(StrikeStatBlock);
-	Strike->LaunchAt(Landing, Caller, StrikeDamageEffectClass);
+	Strike->InitializeFromStatBlock(TheCallBlock->WhatLands);
+	Strike->LaunchAt(Landing, Caller);
 
 	++StrikesDropped;
 }
@@ -208,8 +243,8 @@ void UProsperitocracyGameplayAbility_Strike::EndTheBombardment(const TCHAR* Why)
 		World->GetTimerManager().ClearTimer(FallingTimerHandle);
 	}
 
-	UE_LOG(LogProsperitocracy, Log, TEXT("[Strike] %s: the bombardment is over — %d strikes fell, because %s."),
-		*GetPathName(), StrikesDropped, Why);
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Strike] %s: the bombardment is over — %d %s fell, because %s."),
+		*GetPathName(), StrikesDropped, StrikesDropped == 1 ? TEXT("strike") : TEXT("strikes"), Why);
 
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, /*bReplicateEndAbility=*/ true, /*bWasCancelled=*/ false);
 }
@@ -242,17 +277,10 @@ float UProsperitocracyGameplayAbility_Strike::GetRatePerSecond() const
 
 float UProsperitocracyGameplayAbility_Strike::GetCircleRadiusCm() const
 {
-	// EVERY RANGE IN THIS FEATURE IS A DIAMETER (his rule: "in every case its the diameter not the radius"),
-	// and this one is no exception: the ability's Range is how far ACROSS the circle the strikes land inside
-	// is — 20 means a circle 20 across, so the strikes land within 10 of the place it was called. A circle is
-	// placed and scattered inside from its radius, so that half is geometry here exactly as the ball's half is
-	// in the explosion pass. Read FINAL, so a Range perk widens the bombardment and nothing else has to know.
+	// RANGE IS A DISTANCE (his call, 2026-11-01): the ability's Range is how far from the place he called it the
+	// strikes may land — 6 means a circle 6 m out, 12 across. A circle is placed and scattered from its radius,
+	// and the row IS that radius, so nothing is halved. Read FINAL, so a Range perk widens the bombardment and
+	// nothing else has to know.
 	return GetStatFinalValue(EProsperitocracyStat::Range)
-		* ProsperitocracyStrikeHandling::CentimetersPerMeter * 0.5f;
-}
-
-float UProsperitocracyGameplayAbility_Strike::GetCooldownSeconds() const
-{
-	// FINAL through this ability's own GAS home, so a Cooldown perk reaches the call like any other stat.
-	return GetStatFinalValue(EProsperitocracyStat::Cooldown);
+		* ProsperitocracyStrikeHandling::CentimetersPerMeter;
 }

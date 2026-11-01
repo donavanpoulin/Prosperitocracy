@@ -78,24 +78,15 @@ namespace ProsperitocracyFireHandling
 	static constexpr float TheLeastAStepIsWorthCm = 15.0f;
 
 	/**
-	 * HOW WIDE ONE FLAME CARD IS, in cm — the biggest card the effect rolls (`User.FlameSizeMax`, 70).
+	 * HOW FAR A FLAME SPOT'S CARD IS SCATTERED OFF ITS PLACE, in cm — the fire's own LAYOUT, and nothing else.
 	 *
-	 * The cards keep their own random size; this is the LARGEST of them, and it is what a flame spot's box is
-	 * worth. So the smallest card sits inside its box rather than sticking out of it, and no burn reaches further
-	 * than a flame could be. Move it with the effect's own parameter, never alone.
+	 * The spots are scattered, never laid on a grid (his rule), and this is the last little drift so a spot never
+	 * reads as a single repeating stamp. It is NOT the effect's `Sphere Radius`: how far a card drifts off its
+	 * spot is the effect's own business, and nothing here reads it. The look never decides what burns — the
+	 * volume that burns comes off the fire's own step (GetBurnBoxReachCm), so a card may poke past it, because a
+	 * card is a picture.
 	 */
-	static constexpr float HowWideOneFlameCardIsCm = 70.0f;
-
-	/**
-	 * HOW FAR A FLAME MAY WANDER OFF ITS SPOT, in cm — the effect's own `Sphere Radius` on NE_Flame_02, and it
-	 * must be the same number here as there.
-	 *
-	 * The spots are scattered by the code; this is the last little drift each card gets so a spot never reads as a
-	 * single repeating stamp. It is also exactly how much wider than a card the box has to be, so a wandering
-	 * flame is still inside the thing that burns — no flame outside its box, and no box reaching past where a
-	 * flame could be.
-	 */
-	static constexpr float HowFarAFlameMayWanderOffItsSpotCm = 15.0f;
+	static constexpr float TheSpotsAreScatteredByCm = 15.0f;
 
 	/**
 	 * HOW MANY FLAME SPOTS ONE PATCH OF GROUND CARRIES.
@@ -104,15 +95,6 @@ namespace ProsperitocracyFireHandling
 	 * with no bare ground between them, and few enough that a bombardment is not paying for a box per flame card.
 	 */
 	static constexpr int32 SpotsEachPatchOfGroundCarries = 3;
-
-	/**
-	 * HOW FAR A BURN BOX REACHES OUT FROM THE MIDDLE OF ITS SPOT, in cm — half its width, so a card's half plus the
-	 * wander. THE WALK STOPS THIS FAR SHORT OF THE RANGE, so the box's outer edge lands exactly on the Range
-	 * (his rule: if the Range is 8.45m then it is 8.45m). A flame card can still poke a few centimetres past it,
-	 * because a card is a picture; the thing that burns you never does.
-	 */
-	static constexpr float HowFarABurnBoxReachesCm =
-		(HowWideOneFlameCardIsCm * 0.5f) + HowFarAFlameMayWanderOffItsSpotCm;
 
 	/** [DEV] On, every fire draws the exact volume that burns — the box, not a picture of it. */
 	static bool bShowTheBurnBoxes = false;
@@ -287,10 +269,10 @@ void AProsperitocracyFireField::LightTheGround(UProsperitocracyFireStatTable* In
 		return;
 	}
 
-	// THE RANGE IS THE DISTANCE THE FIRE MAY TRAVEL, and he reads it as the WIDTH of the fire he sees (every
-	// Range in this feature is a diameter): the walk is measured outward from where it landed, so the reach is
-	// half of it. On flat ground that is exactly the radius of the fire he sees.
-	HowFarItReachesCm = RangeMeters * 100.0f * 0.5f;
+	// THE RANGE IS THE DISTANCE THE FIRE MAY TRAVEL, measured outward from where it landed — a distance, like
+	// every Range in the game, so the row IS the reach and nothing is halved. On flat ground it is exactly how
+	// far the fire spreads from where it landed; up a slope the same number is spent climbing.
+	HowFarItReachesCm = RangeMeters * 100.0f;
 	EndsAt = World->GetTimeSeconds() + DurationSeconds;
 
 	// THE FIRE'S POWER ENDS ON THE DURATION; THE PICTURE HAS A MOMENT AFTER IT. The one second of thinning and the
@@ -361,26 +343,21 @@ void AProsperitocracyFireField::LightTheGround(UProsperitocracyFireStatTable* In
 }
 
 // ---------------------------------------------------------------------------------------------------
-// WHERE THE FIRE IS — the ground is SAMPLED, what touches is JOINED, and the reach is FLOODED over it.
+// WHERE THE FIRE IS — the ground is WALKED: one piece at a time, out along the surface it is standing on.
 //
-// What it replaced, and why (his call, 2026-10-16). The fire used to WALK: one piece at a time, six probing
-// directions out of each, every step guessing where the surface went next. That is fragile in a way that has
-// nothing to do with fire — the missile that had just gone off was still standing on the piece it started
-// from, every one of the six probes hit it, every step came back as a point 51cm above the fire, and every
-// one of them was thrown away as "ground it already has". One thing touching one piece killed the whole fire,
-// and it came out a dot.
-//
-// Sampling cannot fail that way, because NOTHING DEPENDS ON ANYTHING: every piece is found on its own by
-// asking the world what is nearest to it, and only afterwards are the pieces joined and measured. A piece that
-// lands somewhere silly costs that one piece.
+// What that replaced, and why (his call, 2026-10-18): the ground used to be SAMPLED — about nine hundred probes
+// thrown into a ball, each looking six ways. On the flat map that found ground for 162 of them; on the landscape
+// map it found ground for NONE of 905, so the fire came out as a single piece and burned nobody. A walk cannot
+// miss the surface it is standing on: it covers the ground at one piece per step by construction, and a bad step
+// costs one branch rather than the whole fire.
 //
 // The rules, and nothing else:
-//   - a piece is where a look found real ground: six short looks, nearest wins, air finds nothing;
-//   - two pieces TOUCH when they are within a step, do not face away from each other (a wall's far side faces
-//     the other way, which is why a fire never crosses one), and the step between them goes ALONG the surface
-//     rather than off it (which is why a floor never joins the shelf above it);
-//   - the reach is spent as the REAL DISTANCE TRAVELLED over those joins, so climbing costs it, and anything
-//     it cannot afford is not fire.
+//   - a piece is a place on a REAL surface the fire could reach from the piece before it: along a floor, up a
+//     slope, up a face and over its top, down the far side. Nothing exists where it could not walk, so being
+//     behind cover is not a test anybody runs — there is simply nothing there to burn you;
+//   - every step is spent out of the Range as the distance actually travelled, so a climb costs width;
+//   - the ways out lie in the piece's own surface plane and the ring is turned per piece, so the edge is ragged
+//     and never a lattice.
 // ---------------------------------------------------------------------------------------------------
 
 void AProsperitocracyFireField::FindTheGroundItIsBurning()
@@ -402,7 +379,6 @@ void AProsperitocracyFireField::FindTheGroundItIsBurning()
 	const float StepCm = GetPieceStepCm();
 	// THE FIRST PIECE IS THE GROUND THE BANG HIT, and it is the only piece anything is ever grown from.
 	TheFirst.WalkedToGetHereCm = 0.0f;
-	TheFirst.bItIsStillThisFires = true;
 	AddTheGroundPiece(TheFirst);
 
 	// THE WALK. The ground is found by MOVING ALONG IT, one step at a time — never by throwing probes into a
@@ -460,7 +436,7 @@ void AProsperitocracyFireField::FindTheGroundItIsBurning()
 
 			// THE RANGE IS THE RANGE: a piece is only kept if its burn box still fits inside it, so the volume
 			// that burns ends exactly on the Range and never a step past it.
-			if (WalkedToItCm + ProsperitocracyFireHandling::HowFarABurnBoxReachesCm > HowFarItReachesCm)
+			if (WalkedToItCm + GetBurnBoxReachCm() > HowFarItReachesCm)
 			{
 				++HowManyTheSurfaceRanOut;
 				continue;
@@ -473,7 +449,6 @@ void AProsperitocracyFireField::FindTheGroundItIsBurning()
 			}
 
 			Found.WalkedToGetHereCm = WalkedToItCm;
-			Found.bItIsStillThisFires = true;
 			HowFarTheFurthestWalked = FMath::Max(HowFarTheFurthestWalked, WalkedToItCm);
 
 			const int32 NewIndex = TheGroundItsBurningOn.Num();
@@ -554,7 +529,6 @@ bool AProsperitocracyFireField::TheSurfaceOneStepOn(const FProsperitocracyBurnin
 			OutPiece.Where = TheFace.ImpactPoint;
 			OutPiece.WhichWayIsUp = TheFace.ImpactNormal;
 			OutPiece.WalkedToGetHereCm = 0.0f;
-			OutPiece.bItIsStillThisFires = true;
 			return true;
 		}
 	}
@@ -571,7 +545,6 @@ bool AProsperitocracyFireField::TheSurfaceOneStepOn(const FProsperitocracyBurnin
 			OutPiece.Where = TheGround.ImpactPoint;
 			OutPiece.WhichWayIsUp = TheGround.ImpactNormal;
 			OutPiece.WalkedToGetHereCm = 0.0f;
-			OutPiece.bItIsStillThisFires = true;
 			return true;
 		}
 	}
@@ -824,12 +797,12 @@ void AProsperitocracyFireField::LayTheFlameSpots()
 	// SCATTERED, NOT A GRID (his rule): every spot is a random place on the ground this fire walked over, and a
 	// spot never leaves its own patch — so no flame, no box and no burn can stand outside the reach.
 	//
-	// Two spots per patch, a card's width apart at most, so the cards a patch ever shows overlap into one fire
-	// instead of reading as rows. The card's own random size is untouched: the biggest card (70cm, the effect's
-	// own `FlameSizeMax`) is what the spot's box is worth, so a small card is inside its box rather than outside.
+	// Three spots per patch, half a piece out at most, so the cards a patch ever shows overlap into one fire
+	// instead of reading as rows. How big those cards are and how far each drifts is the effect's own business
+	// and nothing here reads it: the ground decides where a flame stands, and the fire's step decides what burns.
 	const float PatchRadiusCm = GetPieceWidthCm();
 	const float HowFarApartSpotsSitCm = PatchRadiusCm * 0.5f;
-	const float TheJitterCm = ProsperitocracyFireHandling::HowFarAFlameMayWanderOffItsSpotCm;
+	const float TheJitterCm = ProsperitocracyFireHandling::TheSpotsAreScatteredByCm;
 
 	for (const FProsperitocracyBurningGround& Piece : TheGroundItsBurningOn)
 	{
@@ -865,7 +838,7 @@ void AProsperitocracyFireField::ShowTheBurnBoxes() const
 	}
 
 	// THE SAME NUMBERS THE BURN TEST USES, so the box on the screen is the box a body has to touch.
-	const float HalfAcrossCm = ProsperitocracyFireHandling::HowFarABurnBoxReachesCm;
+	const float HalfAcrossCm = GetBurnBoxReachCm();
 	const float AboveCm = GetPieceHeightCm();
 	const float BelowCm = ProsperitocracyFireHandling::HowFarBelowItsGroundTheFireReachesCm;
 	const FVector HalfExtent(HalfAcrossCm, HalfAcrossCm, (AboveCm + BelowCm) * 0.5f);
@@ -907,8 +880,8 @@ void AProsperitocracyFireField::ApplyTheBurnToWhateverIsTouchingIt()
 		FurthestSpotCm = FMath::Max(FurthestSpotCm, FVector::Dist2D(Spot.Where, GetActorLocation()));
 	}
 
-	const float HalfAcrossCm = (ProsperitocracyFireHandling::HowWideOneFlameCardIsCm * 0.5f)
-		+ ProsperitocracyFireHandling::HowFarAFlameMayWanderOffItsSpotCm;
+	// THE VOLUME THAT BURNS, off the fire's own step — never a flame's size, and never how far its card drifts.
+	const float HalfAcrossCm = GetBurnBoxReachCm();
 	const float AboveCm = GetPieceHeightCm();
 	const float BelowCm = ProsperitocracyFireHandling::HowFarBelowItsGroundTheFireReachesCm;
 
@@ -956,7 +929,10 @@ void AProsperitocracyFireField::ApplyTheBurnToWhateverIsTouchingIt()
 			// NO HIT, NO GATE, NO PEN QUESTION (his spec): the fire's door asks nothing about damage, because
 			// a fire has none. It applies its Burn again, every beat, for as long as the body is touching it —
 			// and a body that walks out keeps the Burn it has, running down on its own clock.
-			UProsperitocracyDamageStatics::ApplyStatusesOnContact(Body, Source, FireBlock, DamageEffectClass);
+			//
+			// THE HIT A FIRE IS: none. No context, so the ONE status door puts them on the body as a whole —
+			// a fire is not a hit and has no damage to bounce, so there is nothing to gate on and no part.
+			UProsperitocracyDamageStatics::ApplyEffectsToHit(FGameplayEffectContextHandle(), Body, Source, FireBlock, DamageEffectClass);
 			++HowManyBodiesTouching;
 			break;
 		}
@@ -1164,6 +1140,14 @@ float AProsperitocracyFireField::GetPieceHeightCm() const
 {
 	// KNEE HIGH (his words): how far up off its own ground a piece of fire reaches a body.
 	return FireBlock ? FMath::Max(10.0f, FireBlock->HowTallOnePieceBurnsCm) : 60.0f;
+}
+
+float AProsperitocracyFireField::GetBurnBoxReachCm() const
+{
+	// HALF A STEP: pieces are laid a step apart, so a box this wide meets its neighbours' exactly — no holes
+	// between pieces, and no square metre of ground burning twice. His rule decides the rest: the thing that
+	// burns you ends exactly on the Range, and a flame card may poke past it because a card is a picture.
+	return GetPieceStepCm() * 0.5f;
 }
 
 float AProsperitocracyFireField::GetPieceStepCm() const

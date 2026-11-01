@@ -126,9 +126,6 @@ private:
 	/** What the move is played at: this ability's FINAL Rate over its own base Rate. */
 	float GetPlayRate() const;
 
-	/** This ability's own Cooldown, in seconds, read FINAL through its own GAS home. */
-	float GetCooldownSeconds() const;
-
 	/** The Range in cm — the one number that carries the body and sizes the swing. */
 	float GetRangeCm() const;
 
@@ -219,9 +216,6 @@ private:
 	 * slice it is in — and no later press can resurrect it, because the run it belonged to is over.
 	 */
 	bool bButtonCameUp = false;
-
-	/** The world time this ability's Cooldown has run out at. Started on the press. */
-	float ReadyAt = 0.0f;
 
 	/** How many times this move has been thrown, so its log lines mark each one. */
 	int32 HeavyCount = 0;

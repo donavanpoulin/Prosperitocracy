@@ -47,6 +47,36 @@ struct FProsperitocracyWeaponSlot
 };
 
 /**
+ * ONE ABILITY SLOT: the ability that sits in it, and the block that slot DRESSES it with.
+ *
+ * The same split the weapon slots already make (see FProsperitocracyWeaponSlot): a BODY and a BLOCK, and the
+ * block is the numbers. A weapon slot carries a gun body plus its block; an ability slot carries an ability
+ * plus its block, so ONE ability class can be every thing a slot has room for.
+ *
+ * It is one record and not two parallel fields on purpose — a slot cannot then hold an ability with the wrong
+ * block, or an ability with a block nobody meant for it.
+ */
+USTRUCT(BlueprintType)
+struct FProsperitocracyAbilitySlot
+{
+	GENERATED_BODY()
+
+	/** What sits in this slot. Empty is a real loadout (Design/loadout.md), not a gap. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Slot")
+	TSubclassOf<UProsperitocracyGameplayAbility> Ability;
+
+	/**
+	 * THE BLOCK THIS SLOT HANDS ITS ABILITY — optional, and presence is scope.
+	 *
+	 * Every strike in the game is ONE ability class: what makes a rocket strike a rocket strike is this block
+	 * (what falls, what it lands as, its own numbers), never a class of its own. An empty block means the
+	 * ability wears the block its class already carries, which is the right answer for a move like a dash.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Slot")
+	TObjectPtr<UProsperitocracyStatTable> StatBlock;
+};
+
+/**
  * What a loadout answers when it is asked to dress a gun.
  *
  * The loadout identifies a gun the rig created without saying which slot it is, so it can and does
@@ -161,18 +191,21 @@ public:
 	 * Four fields and not a list, because four is the design's number — 4 slots, the ult included
 	 * (Design/abilities.md) — so a fifth cannot be authored. The pool these are picked FROM is the
 	 * class's roster; what the character owns is these four, never the whole roster.
+	 *
+	 * A slot is an ABILITY plus the BLOCK it is dressed with, so a strike is chosen by naming its block
+	 * here — one ability class, six strikes, and nothing to copy.
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout|Abilities")
-	TSubclassOf<UProsperitocracyGameplayAbility> Ability1;
+	FProsperitocracyAbilitySlot Ability1;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout|Abilities")
-	TSubclassOf<UProsperitocracyGameplayAbility> Ability2;
+	FProsperitocracyAbilitySlot Ability2;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout|Abilities")
-	TSubclassOf<UProsperitocracyGameplayAbility> Ability3;
+	FProsperitocracyAbilitySlot Ability3;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout|Abilities")
-	TSubclassOf<UProsperitocracyGameplayAbility> Ability4;
+	FProsperitocracyAbilitySlot Ability4;
 
 	/**
 	 * What every gun's shot applies. One asset for all guns, owned HERE rather than baked into each

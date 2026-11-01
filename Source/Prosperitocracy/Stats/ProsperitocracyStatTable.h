@@ -13,6 +13,8 @@
 struct FProsperitocracyStatTableEntry;
 
 class AProsperitocracyBlastVisual;
+class AProsperitocracyProjectile;
+class UGameplayEffect;
 class UProsperitocracyFireStatTable;
 
 /**
@@ -160,6 +162,42 @@ public:
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fire")
 	TSoftObjectPtr<UProsperitocracyFireStatTable> Fire;
+
+	/**
+	 * THE THING THAT FALLS — a strike's shell: the projectile its call sends down. Null for a thing that is
+	 * not called out of the sky.
+	 *
+	 * It is here, on the CALL's own block, because that is what a new strike costs: its numbers, what it drops,
+	 * what that is worth, and the one effect its damage runs on. Nothing about a strike lives on a Blueprint,
+	 * so six strikes are six blocks and ONE ability dressed with any of them.
+	 *
+	 * The shell's own body — its mesh and its scale — is its Blueprint's, never in code.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Strike")
+	TSubclassOf<AProsperitocracyProjectile> WhatFalls;
+
+	/**
+	 * WHAT LANDS — the block the falling thing wears: its bang's width, its Impact and Pen, the burn it sets,
+	 * the look it puts up and the fire it leaves.
+	 *
+	 * The falling thing is handed this at the moment it is born, so the call never learns what its bang is
+	 * worth and the bang never learns how it was called.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Strike")
+	TObjectPtr<UProsperitocracyStatTable> WhatLands;
+
+	/**
+	 * THE ONE EFFECT THIS THING'S OWN DAMAGE RUNS ON — the asset the damage pipeline is applied with, so
+	 * every number stays where it belongs: the lines, the Pen and the falloff are read off this block, and
+	 * the effect is only the shape they are delivered in.
+	 *
+	 * It is a THING-level fact, named on the block, because every source that deals damage through the one
+	 * pipeline needs one and none of them should have to be handed one by a caller: a bang's blast, a
+	 * fire's Burn tick. A thing that names no effect and names statuses says so out loud at the door and
+	 * still runs — the ground is still a fire and a bang is still a bang.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Damage")
+	TSubclassOf<UGameplayEffect> DamageEffectClass;
 
 	/**
 	 * Whether this block carries the explosion mark — the one question the explosion pass asks of a

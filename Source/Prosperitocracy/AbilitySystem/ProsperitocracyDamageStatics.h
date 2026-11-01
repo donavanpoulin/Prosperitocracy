@@ -46,13 +46,22 @@ public:
 	static void ApplyDamageEffectToHit(FGameplayEffectContextHandle Context, AActor* HitActor, UAbilitySystemComponent* SourceAbilitySystemComponent, TSubclassOf<UGameplayEffect> DamageEffectClass);
 
 	/**
-	 * Put every STATUS this thing's block names onto what it just hit — the one door a status is
-	 * applied through, walked by every hit that deals damage.
+	 * Put every STATUS this thing's block names onto a body — the ONE door a status is applied through,
+	 * whether it arrived as a hit or as a touch.
 	 *
 	 * The thing only NAMES its statuses (UProsperitocracyStatTable::AppliedEffects); each status's
 	 * numbers are its own block, so a status can never be priced at the numbers of the thing that
 	 * applied it (Design/abilities.md — a thing may have a Duration of its own AND hand out a stun of
 	 * a different length).
+	 *
+	 * WHETHER IT WAS A HIT ARRIVES AS THE CONTEXT, and that is the whole difference:
+	 *   - a VALID context is a hit: it carries the part that was struck and the answer to "did this do
+	 *     anything", so a shot that bounced off a plate sets nothing alight and a status that works on a
+	 *     part keeps working on that part;
+	 *   - NO context is a contact: a fire is not a hit and has no damage to bounce, so standing in it is
+	 *     the whole of the reason. The status goes on the body as a whole — no gate, no part, no pen.
+	 * One loop, one list, one status component, one warning. A second door here was two answers to one
+	 * question, and they could only ever drift apart.
 	 *
 	 * DamageEffectClass is the effect the ONE damage pipeline runs on — the same asset the shot itself
 	 * used — so a burn's tick is a normal damage line through the same pen-gate → resist path and
@@ -62,23 +71,6 @@ public:
 	static void ApplyEffectsToHit(FGameplayEffectContextHandle Context, AActor* HitActor,
 		UAbilitySystemComponent* SourceAbilitySystemComponent, const UProsperitocracyStatTable* SourceStatBlock,
 		TSubclassOf<UGameplayEffect> DamageEffectClass);
-
-	/**
-	 * Put every STATUS this thing's block names onto a body it is TOUCHING — the fire's door
-	 * (PLANS/incendiary-strike.md §4: "no hit, no gate, no pen question").
-	 *
-	 * The same list, the same blocks and the same one status component as ApplyEffectsToHit above; the
-	 * ONE difference is the question it does not ask. A hit has to have DONE something for its statuses
-	 * to land, because a shot that bounced off a plate should set nothing alight. A fire is not a hit and
-	 * has no damage to bounce: standing in it is the whole of the reason, so nothing here reads a damage
-	 * number, a pen, a resist or an armour.
-	 *
-	 * It is a second door rather than a flag on the first because the two are different questions, and a
-	 * flag would make "did this count as a hit" something a caller could get wrong.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Damage")
-	static void ApplyStatusesOnContact(AActor* HitActor, UAbilitySystemComponent* SourceAbilitySystemComponent,
-		const UProsperitocracyStatTable* SourceStatBlock, TSubclassOf<UGameplayEffect> DamageEffectClass);
 
 	/** True if the context holds a valid effect context (a source stamped it / lines were added). */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Damage")

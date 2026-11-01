@@ -311,21 +311,21 @@ TSubclassOf<UProsperitocracyGameplayAbility> UProsperitocracyLoadoutComponent::F
 		return nullptr;
 	}
 
-	// The four slots, in bar order — the same four fields, listed in one other place, because a loadout's
+	// The four slots, in bar order — the same four records, listed in one other place, because a loadout's
 	// ability slots being a SET of four is a thing exactly two places have to know.
-	const TSubclassOf<UProsperitocracyGameplayAbility> Slots[] =
+	const FProsperitocracyAbilitySlot* Slots[] =
 	{
-		Playing->Ability1,
-		Playing->Ability2,
-		Playing->Ability3,
-		Playing->Ability4
+		&Playing->Ability1,
+		&Playing->Ability2,
+		&Playing->Ability3,
+		&Playing->Ability4
 	};
 
 	TSubclassOf<UProsperitocracyGameplayAbility> Found = nullptr;
 
-	for (const TSubclassOf<UProsperitocracyGameplayAbility>& Candidate : Slots)
+	for (const FProsperitocracyAbilitySlot* SlotRecord : Slots)
 	{
-		if (!Candidate)
+		if (!SlotRecord || !SlotRecord->Ability)
 		{
 			continue;
 		}
@@ -333,6 +333,7 @@ TSubclassOf<UProsperitocracyGameplayAbility> UProsperitocracyLoadoutComponent::F
 		// ASKED OF THE ABILITY, never of a list of which ability is which: an ability that is a weapon's
 		// second press says which slot's it is, so this needs no vocabulary and nothing to keep in step
 		// when a new one arrives.
+		const TSubclassOf<UProsperitocracyGameplayAbility>& Candidate = SlotRecord->Ability;
 		const UProsperitocracyGameplayAbility* AbilityCDO = Candidate->GetDefaultObject<UProsperitocracyGameplayAbility>();
 		if (!AbilityCDO || AbilityCDO->GetSecondPressOfSlot() != Slot)
 		{

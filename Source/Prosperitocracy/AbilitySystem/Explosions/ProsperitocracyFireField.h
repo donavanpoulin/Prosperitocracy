@@ -29,8 +29,8 @@ class AProsperitocracyStatHostActor;
  * climbed — because its Range is the distance it can TRAVEL, never a circle drawn on the ground. It is the
  * number that drops a piece when the fire's reach runs out.
  *
- * bItIsStillThisFires goes false when a NEWER fire covers that ground (his rule, 2026-10-01: the newest fire
- * owns the ground it covers), and comes back if that newer fire goes out with nothing else on top of it.
+ * A NEWER FIRE TAKES THE GROUND IT COVERS: the piece is REMOVED from this fire outright (his rule, 2026-10-01: the
+ * newest fire owns the ground it covers), and it comes back only if this fire is the one that walks there again.
  */
 USTRUCT()
 struct FProsperitocracyBurningGround
@@ -48,10 +48,6 @@ struct FProsperitocracyBurningGround
 	/** How far the fire walked to get here, in cm — the ground and every climb, spent out of its Range. */
 	UPROPERTY()
 	float WalkedToGetHereCm = 0.0f;
-
-	/** False once a newer fire has taken this ground; true again when that newer fire is gone. */
-	UPROPERTY()
-	bool bItIsStillThisFires = true;
 };
 
 /**
@@ -151,18 +147,7 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 
-	/**
-	 * How far the fire's own Range lets it travel, in cm — its Range read as the WIDTH he sees, halved because
-	 * the walk is measured from where it landed outward. On flat ground that is exactly the radius of the fire
-	 * he sees; up a slope or a wall the same number is spent climbing and the fire covers less ground with it.
-	 */
-	float GetHowFarItReachesCm() const { return HowFarItReachesCm; }
-
-	/** Every piece of ground this fire is burning right now, for anything that has to read the fire's shape. */
-	const TArray<FProsperitocracyBurningGround>& GetTheGroundItsBurningOn() const { return TheGroundItsBurningOn; }
-
-	/**
-	 * How much fire every fire in the world is asking for right now, in flames a second.
+	/** How much fire every fire in the world is asking for right now, in flames a second.
 	 *
 	 * A new fire reads this before it sizes itself: a world already burning at its ceiling lights the
 	 * new ground THINNER, never dimmer and never smaller — the ground, the Burn and the clock do not
@@ -299,6 +284,16 @@ protected:
 	float GetPieceWidthCm() const;
 	float GetPieceHeightCm() const;
 	float GetPieceStepCm() const;
+
+	/**
+	 * HOW FAR ONE PIECE'S BOX REACHES OUT FROM ITS SPOT, in cm — HALF A STEP, which is exactly what makes each
+	 * piece's box meet its neighbours' with no hole between them and no ground burning twice.
+	 *
+	 * This is the VOLUME THAT BURNS, and it comes off the fire's own number: nothing about a flame's size or how
+	 * far its card drifts decides what burns you. A card may poke a few centimetres past this, because a card is
+	 * a picture — the thing that burns you never does.
+	 */
+	float GetBurnBoxReachCm() const;
 
 	UPROPERTY(VisibleAnywhere, Category = "Prosperitocracy|Fire")
 	TObjectPtr<USceneComponent> TheRoot;

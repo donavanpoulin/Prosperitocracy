@@ -22,6 +22,7 @@
 #include "Stats/ProsperitocracyStatSystemStatics.h"
 #include "Physics/PhysicalMaterialWithTags.h"
 #include "GameFramework/PlayerState.h"
+#include "Engine/World.h"
 // CUT (2026-09-16): Camera/ProsperitocracyCameraMode.h — CameraMode drags the camera component and the
 // player camera manager; camera here is theirs (IA_CameraChange).
 
@@ -169,6 +170,11 @@ void UProsperitocracyGameplayAbility::OnGiveAbility(const FGameplayAbilityActorI
 {
 	Super::OnGiveAbility(ActorInfo, Spec);
 
+	// WHAT DRESSED IT, if the grant said so: a slot can hand its ability a block (a strike's call block),
+	// and that block is the ability's numbers from here on. Read at GIVE time — the spec is in hand exactly
+	// once — and a loadout change gives the ability again, so this cannot go stale.
+	GrantedStatBlock = Cast<UProsperitocracyStatTable>(Spec.SourceObject);
+
 	K2_OnAbilityAdded();
 
 	// The ability's GAS home: spawned as soon as the avatar is known (lazily retried on the
@@ -176,6 +182,12 @@ void UProsperitocracyGameplayAbility::OnGiveAbility(const FGameplayAbilityActorI
 	EnsureStatHost(ActorInfo);
 
 	TryActivateAbilityOnSpawn(ActorInfo, Spec);
+}
+
+const UProsperitocracyStatTable* UProsperitocracyGameplayAbility::GetStatBlock() const
+{
+	// WHAT THE GRANT NAMED WINS; the class's own block is the fallback for an ability nobody dressed.
+	return GrantedStatBlock ? GrantedStatBlock.Get() : StatBlock.Get();
 }
 
 void UProsperitocracyGameplayAbility::OnRemoveAbility(const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilitySpec& Spec)
@@ -187,6 +199,10 @@ void UProsperitocracyGameplayAbility::OnRemoveAbility(const FGameplayAbilityActo
 		StatHost->Destroy();
 		StatHost = nullptr;
 	}
+
+	// The block the grant named goes with the grant: a re-grant resolves its own, and a stale one would
+	// dress the next slot's ability with the last one's numbers.
+	GrantedStatBlock = nullptr;
 
 	Super::OnRemoveAbility(ActorInfo, Spec);
 }
@@ -440,10 +456,10 @@ void UProsperitocracyGameplayAbility::GetAbilitySource(FGameplayAbilitySpecHandl
 
 	OutEffectCauser = ActorInfo->AvatarActor.Get();
 
-	// An ability with a stat block IS its own source (see StatBlock): its stats live on the
+	// An ability with a stat block IS its own source (see GetStatBlock): its stats live on the
 	// ability's GAS home and GetDamageLines resolves them through the ONE evaluator. Fall back
 	// to the spec's source object otherwise (a weapon-granted ability keeps its weapon instance).
-	if (StatBlock)
+	if (GetStatBlock())
 	{
 		OutAbilitySource = this;
 		return;
@@ -457,7 +473,10 @@ void UProsperitocracyGameplayAbility::GetAbilitySource(FGameplayAbilitySpecHandl
 
 void UProsperitocracyGameplayAbility::EnsureStatHost(const FGameplayAbilityActorInfo* ActorInfo)
 {
-	if (StatHost || !StatBlock || !ActorInfo)
+	// THE BLOCK IT IS DRESSED WITH, not the class's own: a slot that handed this ability a block is what
+	// its numbers must be evaluated from.
+	const UProsperitocracyStatTable* TheBlock = GetStatBlock();
+	if (StatHost || !TheBlock || !ActorInfo)
 	{
 		return;
 	}
@@ -475,7 +494,7 @@ void UProsperitocracyGameplayAbility::EnsureStatHost(const FGameplayAbilityActor
 	StatHost = AvatarActor->GetWorld()->SpawnActor<AProsperitocracyStatHostActor>(AProsperitocracyStatHostActor::StaticClass(), AvatarActor->GetActorLocation(), FRotator::ZeroRotator, SpawnParams);
 	if (StatHost)
 	{
-		StatHost->InitializeFromStatBlock(StatBlock);
+		StatHost->InitializeFromStatBlock(TheBlock);
 	}
 }
 
@@ -492,6 +511,35 @@ float UProsperitocracyGameplayAbility::GetStatFinalValue(EProsperitocracyStat St
 		}
 	}
 	return 0.0f;
+}
+
+float UProsperitocracyGameplayAbility::GetCooldownSeconds() const
+{
+	// FINAL through this ability's own GAS home, so a Cooldown perk reaches the call like any other stat.
+	return GetStatFinalValue(EProsperitocracyStat::Cooldown);
+}
+
+bool UProsperitocracyGameplayAbility::IsStillOnCooldown() const
+{
+	const UWorld* World = GetWorld();
+	if (!World || World->GetTimeSeconds() >= CooldownReadyAt)
+	{
+		return false;
+	}
+
+	// A refusal says so. A key that "did nothing" is the exact thing this line exists to tell apart from a
+	// key that could not have done anything.
+	UE_LOG(LogProsperitocracy, Log, TEXT("[Cooldown] %s: on cooldown — %.2fs of %.2fs left"),
+		*GetPathName(), FMath::Max(0.0f, CooldownReadyAt - World->GetTimeSeconds()), GetCooldownSeconds());
+	return true;
+}
+
+void UProsperitocracyGameplayAbility::StartTheCooldown()
+{
+	if (const UWorld* World = GetWorld())
+	{
+		CooldownReadyAt = World->GetTimeSeconds() + GetCooldownSeconds();
+	}
 }
 
 void UProsperitocracyGameplayAbility::AddDamageLinesToContext(FGameplayEffectContextHandle& Context)

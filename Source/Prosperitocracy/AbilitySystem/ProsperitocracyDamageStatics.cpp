@@ -58,26 +58,34 @@ void UProsperitocracyDamageStatics::ApplyEffectsToHit(FGameplayEffectContextHand
 		return;
 	}
 
-	// The statuses go on the body that was hit, through the one component that owns statuses on a body
-	// — so any body that can carry one (a dummy today, an enemy later) carries them the same way.
+	// The statuses go on the body that was caught, through the one component that owns statuses on a body
+	// — so a body carries them the same way whether a shot hit it or fire touched it.
 	UProsperitocracyStatusComponent* Statuses = HitActor->FindComponentByClass<UProsperitocracyStatusComponent>();
 	if (!Statuses)
 	{
 		return;
 	}
 
-	// A hit must have DONE something for its statuses to land (the user's rule, 2026-09-20): a shot that
-	// bounced off a plate sets nothing alight. The answer is the execution's own — read from where the
-	// gate was decided, never worked out a second time here, where it could disagree with it.
-	const FProsperitocracyGameplayEffectContext* TypedContext = FProsperitocracyGameplayEffectContext::ExtractEffectContext(Context);
-	if (!TypedContext || !TypedContext->LandedAnyDamage())
+	// THE HIT, IF THERE WAS ONE. A valid context IS a hit and brings both of its facts with it: whether the
+	// damage LANDED — read from where the gate decided it, never worked out a second time here where it
+	// could disagree — and the part that was struck, so a status that works on a part keeps working on the
+	// part that caught it. No context is a CONTACT, which is the fire's case: a fire is not a hit and has no
+	// damage to bounce, so standing in it is the whole of the reason, and the status goes on the body as a
+	// whole with no gate and no part.
+	FHitResult Hit;
+	if (Context.IsValid())
 	{
-		return;
-	}
+		const FProsperitocracyGameplayEffectContext* TypedContext = FProsperitocracyGameplayEffectContext::ExtractEffectContext(Context);
+		if (!TypedContext || !TypedContext->LandedAnyDamage())
+		{
+			return;
+		}
 
-	// The hit, passed along: a status that works on a part keeps working on the part that caught it.
-	const FHitResult* HitResultPtr = TypedContext->GetHitResult();
-	const FHitResult Hit = HitResultPtr ? *HitResultPtr : FHitResult();
+		if (const FHitResult* HitResultPtr = TypedContext->GetHitResult())
+		{
+			Hit = *HitResultPtr;
+		}
+	}
 
 	for (const FProsperitocracyAppliedEffect& Applied : SourceStatBlock->AppliedEffects)
 	{
@@ -92,48 +100,5 @@ void UProsperitocracyDamageStatics::ApplyEffectsToHit(FGameplayEffectContextHand
 		}
 
 		Statuses->ApplyStatus(Applied.StatusTag, StatusBlock, SourceAbilitySystemComponent, DamageEffectClass, Hit);
-	}
-}
-
-void UProsperitocracyDamageStatics::ApplyStatusesOnContact(AActor* HitActor,
-	UAbilitySystemComponent* SourceAbilitySystemComponent, const UProsperitocracyStatTable* SourceStatBlock,
-	TSubclassOf<UGameplayEffect> DamageEffectClass)
-{
-	if (!HitActor || !SourceAbilitySystemComponent || !SourceStatBlock || SourceStatBlock->AppliedEffects.Num() == 0)
-	{
-		return;
-	}
-
-	// The same one component that owns statuses on a body, so any body that can carry one carries this
-	// the same way a burn off a bullet does.
-	UProsperitocracyStatusComponent* Statuses = HitActor->FindComponentByClass<UProsperitocracyStatusComponent>();
-	if (!Statuses)
-	{
-		return;
-	}
-
-	// THE HIT A FIRE IS: the body itself, at no particular place. There is no bullet hole and no part
-	// involved — the fire reached the body and nothing narrower, which is also why its Burn faces the
-	// target as a whole and no armour answers it. The exposure decides where its number comes up, the
-	// same branch a burn's tick already runs on.
-	const FHitResult TouchedTheBodyItself;
-
-	for (const FProsperitocracyAppliedEffect& Applied : SourceStatBlock->AppliedEffects)
-	{
-		const UProsperitocracyStatTable* StatusBlock = Applied.StatBlock.LoadSynchronous();
-		if (!StatusBlock)
-		{
-			// Same authoring bug, same warning: a thing naming a status with no block has no numbers.
-			UE_LOG(LogProsperitocracy, Warning, TEXT("[Status] %s names the status %s with no block — nothing applied."),
-				*GetNameSafe(SourceStatBlock), *Applied.StatusTag.ToString());
-			continue;
-		}
-
-		// Applied AGAIN, every time it is asked: a body standing in fire keeps being set alight. What that
-		// does to a status the body is ALREADY carrying is the status component's business, and its
-		// answer is his rule (2026-10-01): the one already on the body keeps its clock, and the fire
-		// lights it again the moment that one expires.
-		Statuses->ApplyStatus(Applied.StatusTag, StatusBlock, SourceAbilitySystemComponent, DamageEffectClass,
-			TouchedTheBodyItself);
 	}
 }

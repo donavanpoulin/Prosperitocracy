@@ -138,12 +138,6 @@ float UProsperitocracyGameplayAbility_BladeDash::GetPlayRate() const
 	return FinalRate / BaseRate;
 }
 
-float UProsperitocracyGameplayAbility_BladeDash::GetCooldownSeconds() const
-{
-	// FINAL through this ability's own GAS home, so a Cooldown perk reaches it like any other stat.
-	return GetStatFinalValue(EProsperitocracyStat::Cooldown);
-}
-
 float UProsperitocracyGameplayAbility_BladeDash::GetReachCm() const
 {
 	// One reading of the one Range row, in the unit a body is placed and an arc is sized in. Every
@@ -236,11 +230,8 @@ bool UProsperitocracyGameplayAbility_BladeDash::StartTheDash(AProsperitocracyCha
 	}
 
 	// THE COOLDOWN, asked before anything is spent, and its answer is a refusal rather than a silence.
-	UWorld* World = GetWorld();
-	if (World && World->GetTimeSeconds() < ReadyAt)
+	if (IsStillOnCooldown())
 	{
-		UE_LOG(LogProsperitocracy, Log, TEXT("[Dash] %s: on cooldown — %.2fs of %.2fs left"),
-			*GetPathName(), FMath::Max(0.0f, ReadyAt - World->GetTimeSeconds()), GetCooldownSeconds());
 		return false;
 	}
 
@@ -266,10 +257,7 @@ bool UProsperitocracyGameplayAbility_BladeDash::StartTheDash(AProsperitocracyCha
 
 	// The clock he watches starts the moment he spends it: the cooldown belongs to the attack he asked
 	// for, not to the animation finishing.
-	if (World)
-	{
-		ReadyAt = World->GetTimeSeconds() + GetCooldownSeconds();
-	}
+	StartTheCooldown();
 
 	DashingOn = Body;
 

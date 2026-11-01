@@ -7,8 +7,6 @@
 
 #include "ProsperitocracyGameplayAbility_Strike.generated.h"
 
-class AProsperitocracyProjectile;
-class UGameplayEffect;
 class UProsperitocracyStatTable;
 
 /**
@@ -28,10 +26,10 @@ namespace ProsperitocracyStrikeHandling
 /**
  * UProsperitocracyGameplayAbility_Strike
  *
- * EVERY CALLED STRIKE IS THIS CLASS. What makes one strike different from another is only its numbers —
- * how many fall, how long it falls for, how fast and how wide — and every one of those is a row on a
- * block, read FINAL. The incendiary strike is a child of this class that names its numbers; the next
- * strike is another child naming different ones, and nothing in this file changes for it.
+ * EVERY CALLED STRIKE IS THIS CLASS, and there is ONE Blueprint of it. What makes one strike different from
+ * another is only its block: how many fall, how long it falls for, how fast and how wide — every one of those
+ * a row, read FINAL — plus what falls, what that is worth and the one effect its damage runs on. So a new
+ * strike is a block and a shell, never a class, a child, or a copy of the ability.
  *
  * One press is the WHOLE bombardment: the first strike falls on the call and then one every 1/Rate until
  * the ability's Duration is up. Its Range is the circle the strikes land inside — the SIZE of the
@@ -77,33 +75,14 @@ protected:
 	float GetDurationSeconds() const;
 	float GetRatePerSecond() const;
 	float GetCircleRadiusCm() const;
-	float GetCooldownSeconds() const;
 
 	/** The bombardment stops saying why it stopped, and hands the ability back. */
 	void EndTheBombardment(const TCHAR* Why);
 
-	/**
-	 * THE STRIKE ITSELF: the thing that falls, and the block it flies with.
-	 *
-	 * Two assets and no code: the projectile's own body (the mesh and its quarter-scale are its blueprint's)
-	 * and the block that says what the blast is worth — the explosion mark on it is what enrols the strike in
-	 * the one explosion pass, so this ability knows nothing about balls, falloff, shoves or shakes.
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Prosperitocracy|Strike")
-	TSubclassOf<AProsperitocracyProjectile> StrikeProjectile;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Prosperitocracy|Strike")
-	TObjectPtr<UProsperitocracyStatTable> StrikeStatBlock;
-
-	/** The one effect the damage pipeline runs on, handed to each strike as it is born. */
-	UPROPERTY(EditDefaultsOnly, Category = "Prosperitocracy|Strike")
-	TSubclassOf<UGameplayEffect> StrikeDamageEffectClass;
-
 private:
-	/** When the bombardment was called, and when this ability's own Cooldown runs out. The clock starts on
-	 * the CALL, never on the last strike landing (the plan's rule). */
+	/** When the bombardment was CALLED. The Duration is counted from here, never from the last strike
+	 * landing (the plan's rule). The Cooldown is the base ability's. */
 	float CalledAt = 0.0f;
-	float ReadyAt = 0.0f;
 
 	/** The middle of the circle the strikes land inside, fixed at the call. */
 	FVector TheCircleCentre = FVector::ZeroVector;

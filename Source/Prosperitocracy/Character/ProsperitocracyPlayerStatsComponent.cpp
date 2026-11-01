@@ -386,7 +386,7 @@ void UProsperitocracyPlayerStatsComponent::DressAbilitiesFromLoadout(UProsperito
 	// once, here, in the same place the grant that uses it lives.
 	struct FBarSlot
 	{
-		TSubclassOf<UProsperitocracyGameplayAbility> Ability;
+		const FProsperitocracyAbilitySlot& Filled;
 		FGameplayTag Number;
 	};
 
@@ -405,26 +405,30 @@ void UProsperitocracyPlayerStatsComponent::DressAbilitiesFromLoadout(UProsperito
 	{
 		// Presence is scope: an empty slot is a slot this loadout did not fill, which is a legal build
 		// (Design/loadout.md) and not a missing entry.
-		if (!Slot.Ability)
+		if (!Slot.Filled.Ability)
 		{
 			continue;
 		}
 
-		UProsperitocracyGameplayAbility* AbilityCDO = Slot.Ability->GetDefaultObject<UProsperitocracyGameplayAbility>();
+		UProsperitocracyGameplayAbility* AbilityCDO = Slot.Filled.Ability->GetDefaultObject<UProsperitocracyGameplayAbility>();
 		if (!AbilityCDO)
 		{
 			// A slot holding something that is not one of our abilities is a misconfiguration worth
 			// naming: it would otherwise be granted and never work, which reads as a broken loadout.
 			UE_LOG(LogProsperitocracy, Warning,
 				TEXT("%s on %s: a loadout's ability slot holds %s, which is not one of our abilities — it is skipped."),
-				*GetName(), *GetNameSafe(GetOwner()), *GetNameSafe(Slot.Ability.Get()));
+				*GetName(), *GetNameSafe(GetOwner()), *GetNameSafe(Slot.Filled.Ability.Get()));
 			continue;
 		}
 
-		// GRANTED THE SAME SHAPE the character's own abilities are granted in: a spec whose level is 1,
-		// with this component as the source object.
+		// GRANTED THE SAME SHAPE the character's own abilities are granted in: a spec whose level is 1.
 		FGameplayAbilitySpec AbilitySpec(AbilityCDO, /*AbilityLevel=*/ 1);
-		AbilitySpec.SourceObject = this;
+
+		// WHAT THE SLOT HANDS IT: a slot that names a BLOCK dresses its ability with that block — that is how
+		// one strike ability becomes six strikes, and it is why the block lives on the slot and not on a
+		// Blueprint. A slot that names none grants the ability as it is, with this component as the source,
+		// which is what every ability in the game was granted with before slots could carry a block.
+		AbilitySpec.SourceObject = Slot.Filled.StatBlock ? static_cast<UObject*>(Slot.Filled.StatBlock.Get()) : static_cast<UObject*>(this);
 
 		// THE NUMBER, and only for an ability that FIRES FROM THE BAR. It rides on the GRANT rather than
 		// on the ability, because where it sits in the bar is this loadout's choice: the same ability
