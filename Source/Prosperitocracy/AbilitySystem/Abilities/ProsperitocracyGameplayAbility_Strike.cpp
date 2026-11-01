@@ -7,6 +7,7 @@
 #include "Engine/World.h"
 #include "GameplayEffect.h"
 #include "Projectiles/ProsperitocracyProjectile.h"
+#include "ProsperitocracyGameplayTags.h"
 #include "ProsperitocracyLogChannels.h"
 #include "Stats/ProsperitocracyStat.h"
 #include "Stats/ProsperitocracyStatTable.h"
@@ -19,6 +20,11 @@ UProsperitocracyGameplayAbility_Strike::UProsperitocracyGameplayAbility_Strike()
 	// The base's defaults are the right ones for a bombardment that is CALLED: instanced on the body that
 	// called it, fired on the input, and independent of every other ability — the man goes on fighting while
 	// it falls, and it refuses nobody's move.
+	//
+	// AND IT OUTLIVES A CUT: a stun stops what the body is DOING, and a strike is no longer the body's —
+	// it is already committed to the world and keeps falling. The tag says that on the class, so every
+	// strike there will ever be carries it without a single asset being remembered.
+	AbilityTags.AddTag(ProsperitocracyGameplayTags::Ability_Behavior_SurvivesStun);
 }
 
 bool UProsperitocracyGameplayAbility_Strike::CanActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayTagContainer* SourceTags, const FGameplayTagContainer* TargetTags, OUT FGameplayTagContainer* OptionalRelevantTags) const
