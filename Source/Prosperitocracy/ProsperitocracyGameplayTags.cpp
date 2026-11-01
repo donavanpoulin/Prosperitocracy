@@ -17,6 +17,7 @@ namespace ProsperitocracyGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Ability_ActivateFail_ActivationGroup, "Ability.ActivateFail.ActivationGroup", "Ability failed to activate because of its activation group.");
 
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Ability_Behavior_SurvivesDeath, "Ability.Behavior.SurvivesDeath", "An ability with this type tag should not be canceled due to death.");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Ability_Behavior_SurvivesStun, "Ability.Behavior.SurvivesStun", "An ability with this tag is NOT cancelled by a stun: it is already committed to the world and keeps going. No tag = a stun cuts it, which is the default.");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Ability_Behavior_FiresFromBar, "Ability.Behavior.FiresFromBar", "An ability with this tag is fired from the ability bar: it answers the number key (1-4) of the slot the loadout granted it in. No tag = no number does anything (a passive ability, or one living on another input).");
 
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(InputTag_Move, "InputTag.Move", "Move input.");

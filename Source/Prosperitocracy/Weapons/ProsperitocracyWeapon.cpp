@@ -42,6 +42,12 @@ bool AProsperitocracyWeapon::IsHeldInRig() const
 	return Character && Character->GetGunInHand() == this;
 }
 
+void AProsperitocracyWeapon::AbortAction_Implementation()
+{
+	// NOTHING IN FLIGHT, BY DEFAULT. A thing that owns no state of its own owes nothing here and says so
+	// by doing nothing — the same honesty as the empty primary and reload above.
+}
+
 void AProsperitocracyWeapon::PrimaryAction_Implementation()
 {
 	// Nothing. A thing with no primary action has none, and saying so here is what lets the input

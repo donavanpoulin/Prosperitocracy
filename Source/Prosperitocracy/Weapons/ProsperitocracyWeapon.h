@@ -170,6 +170,17 @@ public:
 	virtual void ReloadAction_Implementation();
 
 	/**
+	 * STOP WHATEVER YOU ARE IN THE MIDDLE OF — the door a stun closes on the thing in hand.
+	 *
+	 * A gun's reload is a blueprint graph, so only the gun can stop it; a blade's combo is code and ends
+	 * itself. The default does nothing, which is the honest answer for a thing with nothing in flight.
+	 * The body asks and never learns what answered.
+	 */
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Prosperitocracy|Weapon")
+	void AbortAction();
+	virtual void AbortAction_Implementation();
+
+	/**
 	 * This thing's SECONDARY action — what the right mouse button means when this is the weapon in the
 	 * hand. Declared here for the same reason the primary is: the input asks the thing in the hand to
 	 * do its own job and never learns what it is holding.

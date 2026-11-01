@@ -828,6 +828,14 @@ void AProsperitocracyBloodBlade::NotifyDamageDealt(AActor* Dealer, float DamageD
 	}
 }
 
+void AProsperitocracyBloodBlade::AbortAction_Implementation()
+{
+	// THE COMBO ENDS WHERE IT IS: nothing more is swept, the window is gone and the facing it was holding
+	// is let go. The body's own cut has already released the travel and taken the picture off, so a
+	// stunned man stops mid-swing and the move reads as ended, not as broken.
+	EndTheCombo();
+}
+
 void AProsperitocracyBloodBlade::PrimaryAction_Implementation()
 {
 	// Only the blade in the player's hand swings: a stowed blade reaches nothing and spends nothing.

@@ -19,6 +19,10 @@ namespace ProsperitocracyGameplayTags
 
 	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Behavior_SurvivesDeath);
 
+	// THE CUT, AND ITS ONE EXCEPTION. A stun cancels whatever ability the body is running — except one
+	// carrying this tag, the same shape as SurvivesDeath above: the ability says it outlives the cut, so
+	// nothing has to know what a strike is. A combo or a dash carries nothing and is cut by default.
+	PROSPERITOCRACY_API	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Behavior_SurvivesStun);
 	// THE BAR: an ability carrying this tag is fired from the ability bar, so the player's 1–4 key for
 	// the slot the loadout granted it in activates it. Empty means no number ever does — one absence
 	// answering both an ability that is PASSIVE and one that lives on another input (the tag below,

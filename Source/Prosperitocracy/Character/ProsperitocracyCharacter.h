@@ -781,6 +781,13 @@ protected:
 	virtual bool CanJumpInternal_Implementation() const override;
 
 	/**
+	 * THE CUT, called the frame the gate shuts: everything already in flight stops where it is, each in
+	 * the thing that owns it. The abilities it is running (except the ones that outlive a cut), its own
+	 * travel and its own picture, whatever the thing in its hand was in the middle of, and the aim.
+	 */
+	void AbortWhatImDoing();
+
+	/**
 	 * Where a STATUS on this body lives — the one component that carries a status's numbers, its
 	 * ticking, and the movement gate a stun closes.
 	 *

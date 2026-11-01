@@ -96,6 +96,12 @@ public:
 	virtual void PrimaryAction_Implementation() override;
 
 	/**
+	 * A STUN CUTS THE COMBO WHERE IT IS. The blade owns its combo's own clock, its window, its facing and
+	 * its sweep, so it is the one thing that can end them — a move ending, never a move breaking.
+	 */
+	virtual void AbortAction_Implementation() override;
+
+	/**
 	 * One press of the right mouse button: run this blade's own ability.
 	 *
 	 * The blade carries the ability it fires rather than containing the move — handed over by the loadout

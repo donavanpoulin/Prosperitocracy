@@ -5,6 +5,7 @@
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystem/ProsperitocracyAbilitySystemComponent.h"
+#include "AbilitySystem/Abilities/ProsperitocracyGameplayAbility.h"
 #include "AbilitySystem/ProsperitocracyStatusComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -379,6 +380,40 @@ bool AProsperitocracyCharacter::CanJumpInternal_Implementation() const
 	// A jump is the one verb the ENGINE asks itself about, so the gate is asked here once and the
 	// blueprint's own jump node needs no edit at all.
 	return IsAllowedToAct() && Super::CanJumpInternal_Implementation();
+}
+
+void AProsperitocracyCharacter::AbortWhatImDoing()
+{
+	// THE CUT — EVERYTHING ALREADY IN FLIGHT STOPS WHERE IT IS, and each owner stops its own thing. The
+	// body never learns what a reload, a combo or a strike is; it hands each owner the same news.
+
+	// 1. The abilities it is running — except the ones that outlive a cut. A strike is already committed
+	//    to the world and keeps falling; it says so with a tag on its own block, so nothing here knows
+	//    what a strike is. A combo, a dash or a bash carries nothing and is cut by default.
+	if (UProsperitocracyAbilitySystemComponent* AbilitySystemComponent = Cast<UProsperitocracyAbilitySystemComponent>(UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(this)))
+	{
+		AbilitySystemComponent->CancelAbilitiesByFunc(
+			[](const UProsperitocracyGameplayAbility* Ability, FGameplayAbilitySpecHandle)
+			{
+				return Ability && !Ability->GetAssetTags().HasTag(ProsperitocracyGameplayTags::Ability_Behavior_SurvivesStun);
+			},
+			/*bReplicateCancelAbility=*/ true);
+	}
+
+	// 2. Its own travel and its own picture: the attack LETS GO without finishing the distance it was
+	//    worth, and the montage stops on its own blend-out rather than snapping — a move ending, never a
+	//    move breaking.
+	ReleaseMovementLock();
+	EndMovePicture();
+
+	// 3. The thing in its hand — a gun stops its reload, a blade ends its combo — through its own door.
+	if (AProsperitocracyWeapon* Weapon = GetGunWeaponInHand())
+	{
+		Weapon->AbortAction();
+	}
+
+	// 4. And the aim, because aiming is a hold and a man who may not act is not still holding anything.
+	SecondaryActionReleasedTheWeaponInHand();
 }
 
 bool AProsperitocracyCharacter::IsTheWeaponInHandAiming() const
@@ -1685,7 +1720,7 @@ void AProsperitocracyCharacter::Tick(float DeltaSeconds)
 		bCouldActLastFrame = bMayAct;
 		if (!bMayAct)
 		{
-			SecondaryActionReleasedTheWeaponInHand();
+			AbortWhatImDoing();
 		}
 	}
 
