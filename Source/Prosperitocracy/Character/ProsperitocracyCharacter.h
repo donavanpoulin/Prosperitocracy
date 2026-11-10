@@ -642,21 +642,24 @@ public:
 	 * thrown by it.
 	 *
 	 * WHAT IT DOES IS THE STANDARD, in the standard's order (Epic's "Physics Driven Animation"): the
-	 * man stops walking, the capsule stops colliding — so it can never fight the bodies inside it —
-	 * the body's own mesh becomes a physics body, and the force goes on the bone the blast hit. The
-	 * SIMULATION itself is switched on by the portrait's own two nodes in the animation blueprint,
-	 * which read this body's state (the four getters below) every frame; those two node names appear
-	 * nowhere in this file, because the animation blueprint is where Epic puts them.
+	 * man stops walking, the capsule stops colliding — so it can never fight the bodies inside it — the
+	 * body's own mesh becomes a physics body, and the force goes in. The SIMULATION itself is switched on
+	 * by the portrait's own two nodes in the animation blueprint, which read this body's state (the four
+	 * getters below) every frame; those two node names appear nowhere in this file, because the animation
+	 * blueprint is where Epic puts them.
+	 *
+	 * THE FORCE IS THE ENGINE'S OWN RADIAL IMPULSE, not a vector we invent: every body of the ragdoll is
+	 * pushed away from the place it went off, along its own line, at the one speed the damage bought
+	 * (constant strength — the falloff is already inside that number, so there is never a second one).
+	 * A man caught at the hip is thrown up and out by his torso and sideways by his feet, which is what a
+	 * sphere centred on the ground actually does to a body; a single vector on the pelvis could only ever
+	 * be flat.
 	 *
 	 * WEIGHT DAMPS THE THROW: heavier is thrown less, off the body's own FINAL weight, so the number
 	 * is the same Weight stat everything else reads rather than a second one kept for throwing.
-	 *
-	 * HitBoneName — the bone the blast hit, read by the bang itself (a trace, Epic's own first step).
-	 * A bone this body's simulating mesh does not know — a rig pointing at another skeleton's part —
-	 * puts the force on the bone the whole body hangs from instead, and says so in the log.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Body")
-	void ThrowThisBody(const FVector& ShoveVelocityCmS, FName HitBoneName);
+	void ThrowThisBody(const FVector& Origin, float RadiusCm, float SpeedCmS);
 
 	/** True from the frame a blast throws this body until it is back on its feet. */
 	UFUNCTION(BlueprintPure, Category = "Prosperitocracy|Body")
@@ -1025,9 +1028,11 @@ protected:
 	/** Where the simulation starts: the bone the whole body hangs from, handed to the two nodes. */
 	FName BodyPhysicsBoneName = NAME_None;
 
-	/** The force and the bone it goes on, held for the frame it takes the bodies to start simulating. */
-	FVector PendingThrow = FVector::ZeroVector;
-	FName PendingThrowBone = NAME_None;
+	/** Where it went off, how far that ball reaches, and the speed every body is thrown at — held for the
+	 *  frame it takes the bodies to start simulating. */
+	FVector PendingThrowOrigin = FVector::ZeroVector;
+	float PendingThrowRadiusCm = 0.0f;
+	float PendingThrowSpeedCmS = 0.0f;
 
 	/**
 	 * THE HAND-BACK — the physics letting go, and it is a BLEND, done by the weight and by nothing else.

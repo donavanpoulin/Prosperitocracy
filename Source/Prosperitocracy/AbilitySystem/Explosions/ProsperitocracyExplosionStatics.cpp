@@ -175,11 +175,11 @@ void UProsperitocracyExplosionStatics::DetonateExplosion(IProsperitocracyAbility
 // blast cannot send you to space. The outer ball does less damage, so it shoves you less far, by
 // construction.
 //
-// AND THE BONE THE BLAST HIT travels with it, because the force has to land somewhere (Epic's own first
-// step for a hit reaction: "Get the name of the bone that was hit"). A ball has no bullet hole to read
-// one off, so its own ray is fired from the middle out through the point it caught, and the bone that
-// ray meets ON THE WAY OUT is the bone the blast hit. A part with no bones — a wall, a barrel — answers
-// with none, and the body the shove lands on decides what to do about that.
+// WHAT IS HANDED OVER IS WHERE IT HAPPENED, HOW FAR THE BALL REACHES, AND HOW HARD — never a direction.
+// The direction is each body's own, off the ball's surface, worked out by the body's door when it throws
+// the ragdoll (one radial impulse, every body). A sphere centred on the ground cannot throw a man down,
+// and a single vector for a whole body could only ever be flat: this is why the bang states a place and
+// a speed, and nothing else.
 // ---------------------------------------------------------------------------------------------------
 		const float DamageThatCameOff = TypedContext->GetLandedDamage();
 		const float ShoveSpeed = FMath::Min(DamageThatCameOff * ProsperitocracyExplosionHandling::ShoveSpeedPerDamagePoint,
@@ -188,19 +188,7 @@ void UProsperitocracyExplosionStatics::DetonateExplosion(IProsperitocracyAbility
 		{
 			if (UProsperitocracyPlayerStatsComponent* BodyStats = Target.Actor->FindComponentByClass<UProsperitocracyPlayerStatsComponent>())
 			{
-				FName HitBone = NAME_None;
-				if (Target.Part)
-				{
-					FHitResult BoneHit;
-					const FVector RayEnd = Target.Point + Target.Direction * ProsperitocracyExplosionHandling::BoneTracePastCm;
-					FCollisionQueryParams BoneParams(TEXT("BlastHitBone"), /*bTraceComplex=*/ true, Instigator);
-					if (Target.Part->LineTraceComponent(BoneHit, Place, RayEnd, BoneParams))
-					{
-						HitBone = BoneHit.BoneName;
-					}
-				}
-
-				BodyStats->NotifyBlastShove(Target.Direction * ShoveSpeed, HitBone);
+				BodyStats->NotifyBlastShove(Place, RadiusCm, ShoveSpeed);
 				++ShovedCount;
 			}
 		}
@@ -240,8 +228,8 @@ void UProsperitocracyExplosionStatics::DetonateExplosion(IProsperitocracyAbility
 // the block points at and never learns which it is, so a new explosive chooses its bang's look in the same
 // place it chooses its numbers.
 //
-// It is sized from the thing's own Range — what it reads FINAL against what its block ships, with the look
-// taking half of that growth (that rule lives in AProsperitocracyBlastVisual, where the picture is).
+// It is sized from the thing's own Range — the blast's real size, in metres, against the size the look is
+// drawn at (that rule lives in AProsperitocracyBlastVisual, where the picture is).
 // ---------------------------------------------------------------------------------------------------
 if (Block->BlastVisual)
 {
@@ -253,9 +241,9 @@ if (Block->BlastVisual)
 		Block->BlastVisual, Place, FRotator::ZeroRotator, VisualParams);
 	if (Visual)
 	{
-		// The thing's Range FINAL is what the picture is sized from; the block's authored Range is the
-		// reference it grows against — the same shape the blade's combo uses to read a rate against its base.
-		Visual->ShowTheBang(RangeMeters, Block->GetBaseValue(EProsperitocracyStat::Range));
+		// The thing's Range FINAL is what sizes the picture: the blast reaches that far, and the look is drawn
+		// at a fixed size, so the picture IS the blast's real size and nothing else has to be kept in step.
+		Visual->ShowTheBang(RangeMeters);
 	}
 	else
 	{

@@ -981,9 +981,9 @@ void UProsperitocracyPlayerStatsComponent::NotifyShotFired(float DragPercent, fl
 
 //~ Being thrown by a blast -----------------------------------------------------------------------
 
-void UProsperitocracyPlayerStatsComponent::NotifyBlastShove(const FVector& ShoveVelocityCmS, FName HitBoneName)
+void UProsperitocracyPlayerStatsComponent::NotifyBlastShove(const FVector& Origin, float RadiusCm, float SpeedCmS)
 {
-	if (ShoveVelocityCmS.IsNearlyZero())
+	if (SpeedCmS <= 0.0f || RadiusCm <= 0.0f)
 	{
 		return;
 	}
@@ -1001,7 +1001,7 @@ void UProsperitocracyPlayerStatsComponent::NotifyBlastShove(const FVector& Shove
 	// the state the animation blueprint's two nodes read, so the bang hands the shove over and NOTHING
 	// about going limp is decided down here. This door is the same for every body a blast catches — the
 	// player today and the horde when it exists — which is what makes the explosion pass universal.
-	Body->ThrowThisBody(ShoveVelocityCmS, HitBoneName);
+	Body->ThrowThisBody(Origin, RadiusCm, SpeedCmS);
 }
 
 //~ The picture's shake ---------------------------------------------------------------------------

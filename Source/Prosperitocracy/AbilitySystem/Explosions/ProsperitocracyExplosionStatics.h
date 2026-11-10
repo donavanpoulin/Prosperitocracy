@@ -63,44 +63,39 @@ namespace ProsperitocracyExplosionHandling
 	/**
 	 * [TUNE] The shove, in cm/s per point of damage that ACTUALLY CAME OFF the body.
 	 *
-	 * His rule (2026-09-30): the blast "goes through the pipeline with the dmg number of the source…
-	 * including falloff", and the shove reuses it — so the shove's strength IS the damage that landed,
-	 * with the gate and the falloff already inside it, turned into a speed. The outer ball does less
-	 * damage and therefore blasts you less far, by construction rather than by a second falloff.
+	 * His number, 2026-11-01: THREE, set off his own scale read through `Prosperitocracy.Push` — 500 is not
+	 * very strong, 1,500 is a medium explosion, 3,000 is the big bomb, 5,000 is massive, 20,000 is space.
+	 * The blast "goes through the pipeline with the dmg number of the source… including falloff", and the
+	 * shove reuses it — so the shove's strength IS the damage that landed, with the gate and the falloff
+	 * already inside it, turned into a speed. The outer ball does less damage and therefore blasts you
+	 * less far, by construction rather than by a second falloff.
 	 *
-	 * For scale: a man runs at 600 cm/s, so a 100-damage blast at this number shoves at 1200.
+	 * What it gives the roster on a kit with 18% resist: the big bomb's 984 landed is 2,950, the medium's
+	 * 738 is 2,214, a rocket barrage 492, a rocket strike 393, the incendiary barrage 345, the incendiary
+	 * strike 246.
 	 */
-	constexpr float ShoveSpeedPerDamagePoint = 12.0f;
+	constexpr float ShoveSpeedPerDamagePoint = 3.0f;
 
 	/**
 	 * [TUNE] The ceiling on the shove, in cm/s — so a very powerful explosion cannot send you to space.
 	 *
 	 * Nothing to do with the falloff (his correction, 2026-09-30): the falloff is what makes the OUTER
 	 * ball shove less, this is what stops the INNER ball from launching you out of the level.
-	 */
-	constexpr float MaxShoveSpeedCmS = 2000.0f;
-
-	/**
-	 * HOW FAR PAST THE POINT IT CAUGHT THE BLAST'S RAY REACHES, in cm.
 	 *
-	 * Epic's own first step for a hit reaction is "Get the name of the bone that was hit", and a ball has
-	 * no bullet hole to read one off: so the bang fires its own ray from the middle of the ball out
-	 * through the point it caught, and the bone that ray meets on the way out is the bone the blast hit.
-	 * This is how far past that point the ray is aimed, so it leaves through the surface instead of
-	 * stopping short of it — a body is caught where the ball's surface meets it, and the bone behind that
-	 * point is the one the force belongs on.
-	 *
-	 * Nothing is derived from it and nothing is tuned by it: it is the length of one probe.
+	 * His number, 2026-11-01: TWENTY THOUSAND, the same scale he reads off `Prosperitocracy.Push`. It was
+	 * 2,000 — which every blast over 167 damage sat on, so every bomb in the game handed over the same
+	 * shove and the whole roster threw a man identically.
 	 */
-	constexpr float BoneTracePastCm = 20.0f;
+	constexpr float MaxShoveSpeedCmS = 20000.0f;
 
 	/**
 	 * WHERE A THING'S DAMAGE STARTS FALLING OFF, given its own FINAL rows — the ONE door both a gun and
 	 * an explosion reach the universal falloff through.
 	 *
 	 * A gun: its own Falloff row is where its ramp starts, and its Range row is where the damage hits 0.
-	 * An explosion: Range is the WIDTH of its ball, so the damage hits 0 at HALF of it, and the ramp
-	 * starts halfway out to there. An explosive authors no Falloff number at all — the rule IS the number.
+	 * An explosion: its Range IS the distance its ball reaches from the middle, so the damage hits 0 AT
+	 * the Range and the ramp starts halfway out to it. An explosive authors no Falloff number at all —
+	 * the rule IS the number.
 	 *
 	 * Read LIVE, per hit, off the final rows the caller hands in: that is what makes a Range perk move an
 	 * explosion's ball AND its ramp together, with no derived number stored anywhere to go stale.

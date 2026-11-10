@@ -149,10 +149,14 @@ void UProsperitocracyGameplayAbility_Strike::TheBombardmentKeepsFalling()
 	UWorld* World = GetWorld();
 	const float Duration = GetDurationSeconds();
 
-	// THE DURATION IS THE WHOLE CLOCK: counted from the call, read FINAL, and nothing counts strikes
-	// against it. Past it, the bombardment is over — and the ability goes with it, because it was only ever
-	// the falling.
-	if (!World || (World->GetTimeSeconds() - CalledAt) > Duration)
+	// THE DURATION IS THE WHOLE CLOCK, BUT ONLY A CALL THAT HAS ONE CAN BE PAST IT: counted from the call,
+	// read FINAL, nothing counts strikes against it — and it is asked of the BLOCK, because presence is
+	// scope. A bomb carries no Duration at all, so it is never measured against a zero: a threshold of zero
+	// seconds is not "it is over", it is "there is no clock here".
+	const UProsperitocracyStatTable* TheCallBlock = GetStatBlock();
+	const bool bItHasAClock = TheCallBlock && TheCallBlock->Carries(EProsperitocracyStat::Duration);
+
+	if (!World || (bItHasAClock && (World->GetTimeSeconds() - CalledAt) > Duration))
 	{
 		EndTheBombardment(World ? TEXT("its Duration ran out") : TEXT("the world went away"));
 		return;
@@ -174,7 +178,6 @@ void UProsperitocracyGameplayAbility_Strike::TheBombardmentKeepsFalling()
 
 	// WHAT THIS CALL DROPS, off its own block — the shell and the block it wears. Read here rather than
 	// remembered, so a block edited between two strikes cannot leave the ability holding an old answer.
-	const UProsperitocracyStatTable* TheCallBlock = GetStatBlock();
 	if (!TheCallBlock || !TheCallBlock->WhatFalls || !TheCallBlock->WhatLands)
 	{
 		EndTheBombardment(TEXT("its block no longer names what falls"));

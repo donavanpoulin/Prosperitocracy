@@ -1185,7 +1185,7 @@ void AProsperitocracyCharacter::BeginPlay()
 	}
 }
 
-void AProsperitocracyCharacter::ThrowThisBody(const FVector& ShoveVelocityCmS, FName HitBoneName)
+void AProsperitocracyCharacter::ThrowThisBody(const FVector& Origin, float RadiusCm, float SpeedCmS)
 {
 	USkeletalMeshComponent* Body = GetMesh();
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
@@ -1198,26 +1198,22 @@ void AProsperitocracyCharacter::ThrowThisBody(const FVector& ShoveVelocityCmS, F
 		return;
 	}
 
-	// THE BONE THE SIMULATION STARTS AT — the one the whole body hangs from. The FORCE goes on the bone
-	// the blast hit (Epic's own step one), and when that bone is not one this body's simulating mesh
-	// knows — the bang caught a part on another skeleton, which this rig can have — the force goes on
-	// this same bone instead of vanishing into a name the physics has never heard of.
+	// THE SIMULATION STARTS AT THE BONE THE WHOLE BODY HANGS FROM — that is what the animation blueprint's
+	// two nodes are handed, and the only place a bone is named in a throw now.
 	const FName SimulateFrom = ProsperitocracyBodyThrown::SimulateFromBone;
-	const bool bBoneIsTheBodys = !HitBoneName.IsNone() && Body->GetBoneIndex(HitBoneName) != INDEX_NONE;
-	const FName ForceBone = bBoneIsTheBodys ? HitBoneName : SimulateFrom;
 
 	// THE THROW IS DAMPED BY WHAT HE IS CARRYING, worked out once, here, so every bang in the game
 	// throws him by the same rule however it was authored (see GetThrowWeightMultiplier).
-	const FVector Throw = ShoveVelocityCmS * GetThrowWeightMultiplier();
+	const float ThrowSpeedCmS = SpeedCmS * GetThrowWeightMultiplier();
 
 	// A BANG WHILE HE IS ALREADY DOWN ADDS FORCE AND RE-RUNS NOTHING. A strike is many bangs and the
 	// shape has to hold for a barrage; the body is already limp, so the handover is not done twice —
-	// it simply takes the force, on the bone this one hit.
+	// it simply takes the force again, thrown off the ball's surface like the first one.
 	if (bBodyLimp)
 	{
-		Body->AddImpulse(Throw, ForceBone, /*bVelChange=*/ true);
-		UE_LOG(LogProsperitocracy, Log, TEXT("[Thrown] is hit again while limp: %.0f cm/s on '%s'"),
-			Throw.Size(), *ForceBone.ToString());
+		Body->AddRadialImpulse(Origin, RadiusCm, ThrowSpeedCmS, ERadialImpulseFalloff::RIF_Constant, /*bVelChange=*/ true);
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Thrown] is hit again while limp: %.0f cm/s off the ball's surface"),
+			ThrowSpeedCmS);
 		return;
 	}
 
@@ -1262,17 +1258,18 @@ void AProsperitocracyCharacter::ThrowThisBody(const FVector& ShoveVelocityCmS, F
 	Body->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 
 	// 4. AND THE FORCE IS HELD FOR ONE FRAME. The bodies are switched on by the animation blueprint's
-	//    own node, which reads the state above on its own update, so an impulse put on right now would
+	//    own node, which reads the state above on its own update, so a force put on right now would
 	//    land on a body that is not simulating yet — TickLimpBody puts it on, once, on the next frame.
-	//    A VELOCITY CHANGE and not an impulse, deliberately: the number the explosion worked out IS the
-	//    speed the body gets, and the body's WEIGHT is what damps it, never the mass of a shape.
-	PendingThrow = Throw;
-	PendingThrowBone = ForceBone;
+	//    A VELOCITY CHANGE and not a mass-scaled impulse, deliberately: the number the explosion worked
+	//    out IS the speed every body gets, and the body's WEIGHT is what damps it, never the mass of a shape.
+	PendingThrowOrigin = Origin;
+	PendingThrowRadiusCm = RadiusCm;
+	PendingThrowSpeedCmS = ThrowSpeedCmS;
 	bThrowWaiting = true;
 
 	UE_LOG(LogProsperitocracy, Log,
-		TEXT("[Thrown] is blasted: %.0f cm/s on '%s' (the blast's own shove was %.0f, thrown at x%.2f of it) — limp from '%s': movement None, capsule collision off, mesh physics on"),
-		Throw.Size(), *ForceBone.ToString(), ShoveVelocityCmS.Size(), GetThrowWeightMultiplier(),
+		TEXT("[Thrown] is blasted: %.0f cm/s on every body of the ragdoll (the blast's own shove was %.0f, thrown at x%.2f of it) — limp from '%s': movement None, capsule collision off, mesh physics on"),
+		ThrowSpeedCmS, SpeedCmS, GetThrowWeightMultiplier(),
 		*SimulateFrom.ToString());
 }
 
@@ -1310,13 +1307,17 @@ void AProsperitocracyCharacter::TickLimpBody(float DeltaSeconds)
 		return;
 	}
 
-	// THE FORCE, one frame late, on a body that is actually simulating.
+	// THE FORCE, one frame late, on a body that is actually simulating — and it is the engine's own radial
+	// impulse over EVERY body of the ragdoll, each thrown away from the place it went off along its own
+	// line. Constant strength: the falloff is already inside the number the damage bought, so the engine
+	// adds none of its own and every body leaves at the one speed.
 	if (bThrowWaiting)
 	{
 		bThrowWaiting = false;
-		Body->AddImpulse(PendingThrow, PendingThrowBone, /*bVelChange=*/ true);
-		UE_LOG(LogProsperitocracy, Log, TEXT("[Thrown] takes the force: %.0f cm/s on '%s'"),
-			PendingThrow.Size(), *PendingThrowBone.ToString());
+		Body->AddRadialImpulse(PendingThrowOrigin, PendingThrowRadiusCm, PendingThrowSpeedCmS,
+			ERadialImpulseFalloff::RIF_Constant, /*bVelChange=*/ true);
+		UE_LOG(LogProsperitocracy, Log, TEXT("[Thrown] takes the force: %.0f cm/s off the ball's surface, every body"),
+			PendingThrowSpeedCmS);
 	}
 
 	BodyLimpSeconds += DeltaSeconds;

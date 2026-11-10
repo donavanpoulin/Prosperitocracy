@@ -22,9 +22,11 @@ class UPointLightComponent;
  * block names the look it puts up (UProsperitocracyStatTable::BlastVisual), so a firey explosive and a
  * shrapnel one differ by pointing at different actors and nothing anywhere needs a line of code for it.
  *
- * WHAT THIS CLASS OWNS IS HOW THE PICTURE GROWS: the look takes HALF the Range's growth (his rule), so an
- * explosion whose Range reads twice its block's base looks half again as big rather than twice. The effect
- * and the light's reach take the same factor, so a bigger blast is a bigger light.
+ * WHAT THIS CLASS OWNS IS HOW BIG THE PICTURE IS: THE BLAST'S OWN SIZE, in metres, against the size this look
+ * is drawn at (his rule, 2026-11-01 — the rocket strike's 6 m bang IS the size the effect ships at, so it puts
+ * the look up at 1:1 and every other blast is its real size beside it). A 4 m incendiary bang is two thirds of
+ * that picture and a 14 m bomb two and a third times it. The light's reach takes the Range itself and its worth
+ * the square of the same factor, so a bigger blast is a bigger light.
  */
 UCLASS()
 class AProsperitocracyBlastVisual : public AActor
@@ -35,11 +37,11 @@ public:
 	AProsperitocracyBlastVisual();
 
 	/**
-	 * SHOW IT, sized from the thing that went off: what its Range reads NOW against what its block shipped
-	 * with. Both numbers come from the explosion — one from the one evaluator, one from the thing's own
-	 * block — so a Range perk grows the picture and there is no second size anywhere to keep in step.
+	 * SHOW IT, sized from the blast the thing makes: its Range FINAL, in metres, over the size this look is
+	 * drawn at. One number, read through the one evaluator, so a Range perk sizes the picture and there is no
+	 * second size anywhere to keep in step.
 	 */
-	void ShowTheBang(float RangeFinalMeters, float RangeBaseMeters);
+	void ShowTheBang(float RangeFinalMeters);
 
 protected:
 	/** The effect's own end, and this actor's: no fade is authored here and nothing runs on a clock. */
@@ -54,13 +56,13 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "Prosperitocracy|Blast")
 	TObjectPtr<UPointLightComponent> Light;
 
-	/** [TUNE] The share of the Range's growth the picture takes — half of it, so a range upgrade reads as a
-	 *  bigger blast without ballooning when range and rate upgrades stack. */
-	static constexpr float ShareOfRangeGrowthInTheLook = 0.5f;
+	/** THE SIZE THIS LOOK IS DRAWN AT, in metres of blast Range — his number, 2026-11-01: the rocket strike's
+	 *  bang, so a 6 m blast puts the effect up at 1:1 and every other blast is its real size against it. */
+	static constexpr float TheBlastItsPictureIsDrawnForMeters = 6.0f;
 
-	/** [TUNE] MINE — what a bang throws, in candelas, and how wide its light is against the blast it makes. The
-	 *  blast's radius is HALF its Range — the same reading the fire takes of its own Range — and the number used is
-	 *  the FINAL one, so a Range perk makes a bigger light without a line of code here. */
+	/** [TUNE] MINE — what a bang throws, in candelas, and how wide its light is against the blast it makes: the
+	 *  Range IS the ball's radius, so the flash reaches that Range × this. The number used is the FINAL one, so a
+	 *  Range perk makes a bigger light without a line of code here. */
 	static constexpr float CandelasABangIsLitWith = 4000.0f;
 	static constexpr float HowWideABangsLightIsAgainstItsRange = 1.5f;
 	static constexpr float TheLeastABangsLightReachesCm = 200.0f;

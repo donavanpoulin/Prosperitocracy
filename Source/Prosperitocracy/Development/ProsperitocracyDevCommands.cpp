@@ -1115,8 +1115,9 @@ namespace ProsperitocracyDevHurt
 		/** [TUNE] The shove used when no number is typed, in cm/s. A man runs at 600. */
 		constexpr float DefaultSpeedCmS = 900.0f;
 
-		/** [TUNE] How much of the shove is UP, so he leaves his feet rather than skidding: 0.5 is ~27°. */
-		constexpr float Lift = 0.5f;
+		/** [TUNE] How far the push reaches from his feet — wide enough to hold his whole body, so every
+		 *  one of his bodies is thrown by it. */
+		constexpr float RadiusCm = 500.0f;
 	}
 
 	void HandlePushCommand(const TArray<FString>& Args, UWorld* World)
@@ -1136,18 +1137,17 @@ namespace ProsperitocracyDevHurt
 			return;
 		}
 
-		// THE DIRECTION IS HIS OWN FACING with a lift in it: a bang at his feet takes him up and out of
-		// the way he was standing, and that is the throw a man can read at a glance.
-		const float Facing = Body->GetAimRotation().Yaw;
-		const FVector Shove = (FRotator(0.0f, Facing, 0.0f).Vector() + FVector(0.0f, 0.0f, Push::Lift)).GetSafeNormal() * Speed;
+		// A BANG AT HIS FEET, and nothing invented: the origin is the ground he is standing on, so his
+		// torso is thrown up and out while his feet go sideways — the shape a blast actually has. No
+		// direction and no lift of its own: the number typed IS the speed, exactly as a blast's shove is.
+		FVector Feet = Body->GetActorLocation();
+		Feet.Z = Body->GetComponentsBoundingBox().Min.Z;
 
-		// NO BONE NAMED: the force lands on the bone the whole body hangs from, which is exactly what the
-		// body does with a bang that caught nothing in particular.
-		Body->ThrowThisBody(Shove, NAME_None);
+		Body->ThrowThisBody(Feet, Push::RadiusCm, Speed);
 
 		ProsperitocracyDev::Report(TEXT("Push"), 0, FString::Printf(
-			TEXT("thrown at %.0f cm/s along %.0f° — through the blast's own door, so limp and the way up come with it. The log has the timeline."),
-			Speed, Facing));
+			TEXT("thrown at %.0f cm/s from his feet, every body — through the blast's own door, so limp and the way up come with it. The log has the timeline."),
+			Speed));
 	}
 
 	static FAutoConsoleCommandWithWorldAndArgs PushCommand(

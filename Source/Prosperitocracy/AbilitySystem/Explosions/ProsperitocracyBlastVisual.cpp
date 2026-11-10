@@ -33,12 +33,13 @@ AProsperitocracyBlastVisual::AProsperitocracyBlastVisual()
 	Light->SetCastShadows(false);
 }
 
-void AProsperitocracyBlastVisual::ShowTheBang(float RangeFinalMeters, float RangeBaseMeters)
+void AProsperitocracyBlastVisual::ShowTheBang(float RangeFinalMeters)
 {
-	// HALF THE GROWTH IS WHAT THE PICTURE TAKES. With no base to compare against — a block that carries no
-	// Range — the picture is the size it was authored at rather than a guess at what it should be.
-	const float Growth = (RangeBaseMeters > 0.0f) ? (RangeFinalMeters / RangeBaseMeters) : 1.0f;
-	const float LookScale = FMath::Max(0.1f, 1.0f + ((Growth - 1.0f) * ShareOfRangeGrowthInTheLook));
+	// THE PICTURE IS THE BLAST'S OWN SIZE: how far the ball reaches, in metres, over the size this look is
+	// drawn at. A thing carrying no Range puts the look up at the size it ships at rather than at a guess.
+	const float LookScale = (RangeFinalMeters > 0.0f)
+		? FMath::Max(0.1f, RangeFinalMeters / TheBlastItsPictureIsDrawnForMeters)
+		: 1.0f;
 
 	SetActorScale3D(FVector(LookScale));
 
@@ -62,8 +63,8 @@ void AProsperitocracyBlastVisual::ShowTheBang(float RangeFinalMeters, float Rang
 	SetLifeSpan(LongestABangMayBeSeenSeconds);
 
 	UE_LOG(LogProsperitocracy, Log,
-		TEXT("[Blast] %s: the picture is x%.2f — Range reads %.1fm against the %.1fm its block ships (the look takes half the growth), and the flash reaches %.1fm."),
-		*GetName(), LookScale, RangeFinalMeters, RangeBaseMeters, HowFarTheFlashReachesCm / 100.0f);
+		TEXT("[Blast] %s: the picture is x%.2f — the blast reaches %.1fm against the %.1fm the look is drawn at, and the flash reaches %.1fm."),
+		*GetName(), LookScale, RangeFinalMeters, TheBlastItsPictureIsDrawnForMeters, HowFarTheFlashReachesCm / 100.0f);
 }
 
 void AProsperitocracyBlastVisual::Tick(float DeltaSeconds)

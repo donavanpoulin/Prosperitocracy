@@ -275,18 +275,18 @@ public:
 	void NotifyShotFired(float DragPercent, float CarryPercent, const FVector& ShotDirection);
 
 	/**
-	 * THROWN BY A BLAST: one shove, in cm/s, along the direction the blast HIT this body from, and the
-	 * bone the bang's own ray met leaving the body.
+	 * THROWN BY A BLAST: where it went off, how far its ball reaches, and one speed in cm/s.
 	 *
 	 * A blast does not push a man along his own line the way a shot does — it throws him off the ball's
-	 * surface, so this is a THROW and not a speed. Nothing is decided here: the size and the direction
-	 * are the EXPLOSION's, worked out where the bang happened (its strength IS the damage that came off
-	 * this body — Design/explosions.md), and the BODY answers for what it does with it —
-	 * `AProsperitocracyCharacter::ThrowThisBody` takes the man off his feet and lets the physics have
-	 * him, damped by his own weight. This component only carries the bang to the body.
+	 * surface, so this is a THROW and not a speed. Nothing is decided here: WHERE it went off and the SPEED
+	 * are the EXPLOSION's — the speed IS the damage that came off this body, with the falloff already in it
+	 * (Design/explosions.md) — and the BODY answers for what it does with them:
+	 * `AProsperitocracyCharacter::ThrowThisBody` takes the man off his feet and lets the physics have him,
+	 * each body thrown off the ball's surface, damped by his own weight. This component only carries the
+	 * bang to the body.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Prosperitocracy|Stats")
-	void NotifyBlastShove(const FVector& ShoveVelocityCmS, FName HitBoneName);
+	void NotifyBlastShove(const FVector& Origin, float RadiusCm, float SpeedCmS);
 
 	/**
 	 * THE PICTURE'S DOOR: the thing that just acted hands over its own Shake row, read FINAL, and the
